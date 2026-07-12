@@ -95,6 +95,8 @@ data class ViewSpec(
     val dateField: String? = null,
     /** Gallery views: which schema field provides the image path. */
     val imageField: String? = null,
+    /** Optional durable reminder derived from one org date field. */
+    val reminder: DateReminderRule? = null,
     /** Per-view actions (org-native operations shown as buttons/swipe actions). */
     val actions: List<ActionDef> = emptyList(),
     /** Where the view lives in the chrome (`:NAV:`); ignored when [group] is set. */
@@ -114,6 +116,12 @@ data class ViewSpec(
             .trim('-')
             .ifEmpty { "view" }
 }
+
+@Serializable
+data class DateReminderRule(
+    val dateField: String,
+    val relativeDays: Int = 0,
+)
 
 /**
  * Where a view's records come from. Mirrors jetpacs-crud-orgapp--parse-source:

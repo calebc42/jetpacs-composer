@@ -319,4 +319,23 @@ class ModelOpsTest {
                 .any { it.message.startsWith(messageStart) })
         }
     }
+
+    @Test
+    fun validateRequiresStableReminderIdentityAndDateField() {
+        val view = ViewSpec(
+            title = "Tasks",
+            kind = ViewKind.RECORDS,
+            schema = listOf(SchemaField("ITEM"), SchemaField("DEADLINE")),
+            colTypes = listOf(ColType.Text, ColType.Date),
+            reminder = DateReminderRule("DEADLINE", -3),
+        )
+        val messages = ModelOps.validate(AppSpec(id = "reminders", views = listOf(view)))
+            .map { it.message }
+        assertTrue(messages.any { "ID field" in it })
+
+        val valid = view.copy(schema = view.schema + SchemaField("ID"),
+                              colTypes = view.colTypes + ColType.Text)
+        assertTrue(ModelOps.validate(AppSpec(id = "reminders", views = listOf(valid)))
+            .none { "reminder" in it.message.lowercase() })
+    }
 }

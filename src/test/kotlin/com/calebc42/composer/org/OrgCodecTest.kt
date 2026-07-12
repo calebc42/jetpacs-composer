@@ -3,6 +3,7 @@ package com.calebc42.composer.org
 
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ColType
+import com.calebc42.composer.model.DateReminderRule
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.ViewKind
 import java.io.File
@@ -73,6 +74,44 @@ class OrgCodecTest {
         val spec = OrgCodec.parse(text)
         assertEquals(ColType.Ref("customers", "NAME"), spec.views.single().colTypes[1])
         assertEquals(spec, OrgCodec.parse(OrgCodec.write(spec)))
+    }
+
+    @Test
+    fun dateReminderRuleRoundTrips() {
+        val text = """
+            #+JETPACS_APP: reminders
+            #+JETPACS_APP_FORMAT: 2
+
+            * Tasks
+            :PROPERTIES:
+            :KIND: records
+            :SCHEMA: %ITEM %ID %DEADLINE
+            :COLTYPES: text text date
+            :ON: date-field
+            :REL: -3d
+            :DATEFIELD: DEADLINE
+            :END:
+        """.trimIndent()
+        val spec = OrgCodec.parse(text)
+        assertEquals(DateReminderRule("DEADLINE", -3), spec.views.single().reminder)
+        assertEquals(spec, OrgCodec.parse(OrgCodec.write(spec)))
+    }
+
+    @Test
+    fun malformedDateReminderRuleIsRejected() {
+        val text = """
+            #+JETPACS_APP: reminders
+            #+JETPACS_APP_FORMAT: 2
+            * Tasks
+            :PROPERTIES:
+            :KIND: records
+            :SCHEMA: %ITEM
+            :ON: date-field
+            :REL: tomorrow
+            :DATEFIELD: DEADLINE
+            :END:
+        """.trimIndent()
+        assertFailsWith<OrgCodec.FormatException> { OrgCodec.parse(text) }
     }
 
     @Test

@@ -338,6 +338,12 @@ Defer CSV→records/notes (subtree synthesis).
 
 ### B5. Org-native DATE_FIELD reminders — [high / L]
 
+**Declarative layer landed, framework-gated:** composer/parser validation,
+core-org date derivation, stable reminder IDs, and load/after-push syncing are
+implemented behind `jetpacs-reminders-owner-set`. Until the owner-merge
+framework seam lands, the runtime warns and deliberately sends no global
+replace-set, preserving other apps' alarms.
+
 From NocoBase's `DateFieldScheduleTrigger`. A view carries a declarative
 `:ON:` rule (`:REL: -3d :DATEFIELD: DEADLINE`). On load and after each
 push, the runtime scans the source's `DEADLINE`/`SCHEDULED` (via **core

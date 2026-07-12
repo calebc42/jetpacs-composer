@@ -382,6 +382,23 @@ object ModelOps {
                         i,
                     ))
             }
+            view.reminder?.let { reminder ->
+                if (!isRecords)
+                    add(Problem("Date reminders require a record-like view", i))
+                if (view.schema.none {
+                        it.prop.equals(reminder.dateField, ignoreCase = true)
+                    })
+                    add(Problem(
+                        "Reminder date field \"${reminder.dateField}\" is not in this view's schema",
+                        i,
+                    ))
+                if (reminder.relativeDays !in -3650..3650)
+                    add(Problem("Reminder offset must be within ±3650 days", i))
+                if (view.kind != ViewKind.NOTES && view.schema.none {
+                        it.prop.equals("ID", ignoreCase = true)
+                    })
+                    add(Problem("Date reminders require an ID field for stable identity", i))
+            }
 
             val todoKeywords = if (spec.todoSequence.isEmpty()) {
                 setOf("TODO", "DONE")

@@ -271,6 +271,32 @@ as an `unknown' marker (rendered as text) instead of erroring."
     (should (equal (plist-get view :coltypes)
                    '(text (ref "Customers" "NAME"))))))
 
+(ert-deftest jetpacs-crud-parse-date-reminder-rule ()
+  (let ((file (make-temp-file
+               "crud-reminder" nil ".org"
+               "#+JETPACS_APP: reminders\n#+JETPACS_APP_FORMAT: 2\n* Tasks\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM %ID %DEADLINE\n:ON: date-field\n:REL: -3d\n:DATEFIELD: DEADLINE\n:END:\n")))
+    (unwind-protect
+        (let* ((spec (jetpacs-crud-parse-app file))
+               (view (car (plist-get spec :views))))
+          (should (equal (plist-get view :reminder)
+                         '(:date-field "DEADLINE" :relative-days -3))))
+      (delete-file file))))
+
+(ert-deftest jetpacs-crud-derives-stable-date-reminder ()
+  (let ((spec '(:id "tasks"))
+        (view '(:name "all" :title "Tasks"
+                :reminder (:date-field "DEADLINE" :relative-days -3))))
+    (cl-letf (((symbol-function 'jetpacs-crud--reminder-records)
+               (lambda (&rest _)
+                 '((:fields (("ITEM" . "Ship") ("ID" . "task-1")
+                             ("DEADLINE" . "<2099-01-10>")))))))
+      (let ((reminder (car (jetpacs-crud--view-reminders spec view))))
+        (should (equal (alist-get 'id reminder)
+                       "crud:tasks:all:task-1:DEADLINE:-3"))
+        (should (equal (alist-get 'title reminder) "Ship"))
+        (should (= (alist-get 'at_ms reminder)
+                   (jetpacs-crud--reminder-time-ms "<2099-01-10>" -3)))))))
+
 (ert-deftest jetpacs-crud-export-csv-neutralizes-formulas-and-quotes ()
   (should
    (equal (jetpacs-crud--matrix-csv

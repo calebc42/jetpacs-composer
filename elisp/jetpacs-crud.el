@@ -39,6 +39,9 @@ SPEC is the plist described in docs/FORMAT.md: :id :label :icon :order
 :file and :views, where each view is a plist :name :title :icon :order
 :kind :source :coltypes :columns.")
 
+(defvar jetpacs-crud--reminder-owner-warning-shown nil
+  "Non-nil after warning once about the missing owner-merge reminder seam.")
+
 (defun jetpacs-crud--app (id)
   "The registered spec for app ID, or nil."
   (cdr (assoc id jetpacs-crud--apps)))
@@ -1434,6 +1437,75 @@ the first member's (all four of hello-world's Tasks members add records)."
 
 ;; ─── Registration ────────────────────────────────────────────────────────────
 
+(defun jetpacs-crud--reminder-records (spec view)
+  "Records for reminder derivation, ignoring transient search UI state."
+  (let* ((search-id (format "search_%s" (plist-get view :name)))
+         (original (symbol-function 'jetpacs-ui-state)))
+    (cl-letf (((symbol-function 'jetpacs-ui-state)
+               (lambda (id) (unless (equal id search-id) (funcall original id)))))
+      (if (eq (plist-get view :kind) 'notes)
+          (jetpacs-crud--scan-notes spec view)
+        (jetpacs-crud--scan-records spec view)))))
+
+(defun jetpacs-crud--reminder-time-ms (value relative-days)
+  "Epoch milliseconds for org date VALUE plus RELATIVE-DAYS, or nil."
+  (when (and value (not (string-empty-p value)))
+    (condition-case nil
+        (truncate (* 1000 (+ (float-time (org-time-string-to-time value))
+                             (* relative-days 86400))))
+      (error nil))))
+
+(defun jetpacs-crud--view-reminders (spec view)
+  "Derive durable reminder wire objects for VIEW's declared rule."
+  (when-let ((rule (and (memq (plist-get view :kind)
+                              '(records notes board calendar gallery tree))
+                         (plist-get view :reminder))))
+    (let ((field (plist-get rule :date-field))
+          (relative (plist-get rule :relative-days))
+          (now-ms (truncate (* 1000 (float-time)))))
+      (delq nil
+            (mapcar
+             (lambda (record)
+               (let* ((fields (plist-get record :fields))
+                      (rid (or (plist-get record :id)
+                               (alist-get "ID" fields nil nil #'equal)))
+                      (title (or (alist-get "ITEM" fields nil nil #'equal)
+                                 "Org record"))
+                      (at-ms (jetpacs-crud--reminder-time-ms
+                              (alist-get field fields nil nil #'equal) relative)))
+                 (when (and rid at-ms (> at-ms now-ms))
+                   `((id . ,(format "crud:%s:%s:%s:%s:%d"
+                                   (plist-get spec :id) (plist-get view :name)
+                                   rid field relative))
+                     (title . ,title)
+                     (body . ,(format "%s · %s" (plist-get view :title) field))
+                     (at_ms . ,at-ms)))))
+             (jetpacs-crud--reminder-records spec view))))))
+
+(defun jetpacs-crud--sync-reminders ()
+  "Publish reminders through an owner-merge seam, never global replace-set."
+  (if (fboundp 'jetpacs-reminders-owner-set)
+      (dolist (entry jetpacs-crud--apps)
+        (let* ((id (car entry))
+               (spec (cdr entry))
+               (reminders (apply #'append
+                                 (mapcar (lambda (view)
+                                           (jetpacs-crud--view-reminders spec view))
+                                         (plist-get spec :views)))))
+          (jetpacs-reminders-owner-set id reminders)))
+    (when (and (not jetpacs-crud--reminder-owner-warning-shown)
+               (cl-some (lambda (entry)
+                          (cl-some (lambda (view) (plist-get view :reminder))
+                                   (plist-get (cdr entry) :views)))
+                        jetpacs-crud--apps))
+      (setq jetpacs-crud--reminder-owner-warning-shown t)
+      (display-warning
+       'jetpacs-crud
+       "Date reminders declared but Jetpacs lacks owner-merged reminders; no alarms were replaced"
+       :warning))))
+
+(add-hook 'jetpacs-shell-after-push-hook #'jetpacs-crud--sync-reminders)
+
 (defun jetpacs-crud--view-groups (views)
   "Ordered list of (GROUP-NAME . MEMBERS) for the VIEWS carrying a :group.
 Groups appear in first-member order; members keep their VIEWS order.
@@ -1513,10 +1585,13 @@ The default is one bottom tab per view.  Returns the app id."
           :icon (plist-get spec :icon)
           :views (nreverse registered)
           :order (plist-get spec :order))))
+    (jetpacs-crud--sync-reminders)
     id))
 
 (defun jetpacs-crud-unregister (id)
   "Tear down CRUD app ID: its views, launcher entry, and registry row."
+  (when (fboundp 'jetpacs-reminders-owner-set)
+    (jetpacs-reminders-owner-set id nil))
   (jetpacs-app-unregister id)
   (setf (alist-get id jetpacs-crud--apps nil t #'equal) nil)
   id)

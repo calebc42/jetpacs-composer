@@ -33,6 +33,7 @@ import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
+import com.calebc42.composer.model.DateReminderRule
 import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.model.OrgBuiltin
 import com.calebc42.composer.model.SchemaField
@@ -573,6 +574,61 @@ private fun RecordsSchemaEditor(
             )
         }
         else -> {} // no extra config needed
+    }
+
+    if (view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD,
+            ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE)) {
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Checkbox(
+                checked = view.reminder != null,
+                onCheckedChange = { enabled ->
+                    edit {
+                        it.copy(reminder = if (enabled) {
+                            DateReminderRule(
+                                it.schema.firstOrNull { field ->
+                                    field.prop in setOf("DEADLINE", "SCHEDULED")
+                                }?.prop ?: it.schema.firstOrNull()?.prop.orEmpty(),
+                            )
+                        } else null)
+                    }
+                },
+            )
+            Text("Date reminder")
+            view.reminder?.let { reminder ->
+                var reminderFieldOpen by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { reminderFieldOpen = true }) {
+                        Text(reminder.dateField.ifEmpty { "(select field)" })
+                    }
+                    DropdownMenu(expanded = reminderFieldOpen,
+                        onDismissRequest = { reminderFieldOpen = false }) {
+                        view.schema.forEach { field ->
+                            DropdownMenuItem(
+                                text = { Text(field.label ?: field.prop) },
+                                onClick = {
+                                    edit { it.copy(reminder = reminder.copy(dateField = field.prop)) }
+                                    reminderFieldOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = reminder.relativeDays.toString(),
+                    onValueChange = { value ->
+                        value.toIntOrNull()?.let { days ->
+                            editText("reminder.offset") {
+                                it.copy(reminder = reminder.copy(relativeDays = days))
+                            }
+                        }
+                    },
+                    label = { Text("days relative") }, singleLine = true,
+                    modifier = Modifier.width(130.dp),
+                )
+            }
+        }
     }
 }
 

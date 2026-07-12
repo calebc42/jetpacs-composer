@@ -201,6 +201,9 @@ Point must be on the heading line."
          (group-by-raw (funcall prop "GROUP_BY"))
          (date-field-raw (funcall prop "DATE_FIELD"))
          (image-field-raw (funcall prop "IMAGE_FIELD"))
+         (on-raw (funcall prop "ON"))
+         (rel-raw (funcall prop "REL"))
+         (reminder-field-raw (funcall prop "DATEFIELD"))
          (actions-raw (funcall prop "ACTIONS"))
          (order-raw (funcall prop "ORDER"))
          (nav-raw (funcall prop "NAV"))
@@ -211,6 +214,18 @@ Point must be on the heading line."
     (when (and (eq kind 'notes) (not source-raw))
       (user-error "%s: a notes view needs a :SOURCE: (a vault dir or \
 file::*Heading) under %S" app-file title))
+    (when (and (not on-raw) (or rel-raw reminder-field-raw))
+      (user-error "%s: :REL: and :DATEFIELD: require :ON: date-field under %S"
+                  app-file title))
+    (when on-raw
+      (unless (equal (downcase (string-trim on-raw)) "date-field")
+        (user-error "%s: :ON: must be date-field under %S" app-file title))
+      (unless (and rel-raw reminder-field-raw)
+        (user-error "%s: :ON: date-field needs :REL: and :DATEFIELD: under %S"
+                    app-file title))
+      (unless (string-match-p "\\`[+-]?[0-9]+d\\'" (string-trim rel-raw))
+        (user-error "%s: :REL: must be whole days, e.g. -3d under %S"
+                    app-file title)))
     (list :name (jetpacs-crud-orgapp--slug title)
           :title title
           :icon (or (funcall prop "ICON")
@@ -244,6 +259,11 @@ file::*Heading) under %S" app-file title))
           :group-by (and group-by-raw (string-trim group-by-raw))
           :date-field (and date-field-raw (string-trim date-field-raw))
           :image-field (and image-field-raw (string-trim image-field-raw))
+          :reminder (and on-raw
+                         (list :date-field (string-trim reminder-field-raw)
+                               :relative-days
+                               (string-to-number (string-remove-suffix
+                                                  "d" (string-trim rel-raw)))))
           :actions (and actions-raw
                         (jetpacs-crud-orgapp--parse-actions actions-raw
                                                             app-file))

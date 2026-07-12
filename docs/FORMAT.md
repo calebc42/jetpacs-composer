@@ -47,6 +47,9 @@ lives in the heading's property drawer:
 | `:DATE_FIELD:` | Calendar views: schema field containing the org timestamp/date (default `DEADLINE`). |
 | `:IMAGE_FIELD:` | Gallery views: schema field containing the image URL/path (default `IMAGE`). |
 | `:ACTIONS:` | Records-like views: closed, space-separated org action tokens (see below). |
+| `:ON:` | Optional closed automation type; currently only `date-field`. |
+| `:REL:` | With `:ON: date-field`, a whole-day offset such as `-3d`, `0d`, or `+1d`. |
+| `:DATEFIELD:` | With `:ON: date-field`, the schema property supplying the org date/timestamp. |
 | `:NAV:` | `tab` (default) or `drawer` — where the view lives in the chrome (see below). |
 | `:GROUP:` | A destination name; views sharing one collapse into a single tabbed bottom destination (see below). |
 
@@ -117,6 +120,23 @@ width and pass its declared column type (`number`, `date`, `checkbox`, or
 `enum`) before any source mutation begins; the first error reports its CSV row,
 column, and label. A valid batch appends atomically through the normal org-table
 mutation path. CSV import does not synthesize records or notes.
+
+### Date-field reminders
+
+A record-like view may derive durable reminders from org dates:
+
+```org
+:ON: date-field
+:REL: -3d
+:DATEFIELD: DEADLINE
+```
+
+The rule reads the declared schema field through core org, adds the whole-day
+offset, and identifies each reminder by app, view, stable record ID, field, and
+offset. Records therefore need an `ID` schema field; notes use their native ID.
+Transient search text does not suppress alarms. Reminder publication requires
+Jetpacs' owner-merged reminder seam: Composer will warn and arm nothing on an
+older framework rather than overwrite another app's device-global reminder set.
 
 ## Table views (`:KIND: table`)
 

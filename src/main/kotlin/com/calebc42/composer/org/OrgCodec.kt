@@ -6,6 +6,7 @@ import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
+import com.calebc42.composer.model.DateReminderRule
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.TodoKeyword
@@ -148,6 +149,7 @@ object OrgCodec {
             groupBy = props["GROUP_BY"]?.trim()?.ifEmpty { null },
             dateField = props["DATE_FIELD"]?.trim()?.ifEmpty { null },
             imageField = props["IMAGE_FIELD"]?.trim()?.ifEmpty { null },
+            reminder = parseReminder(props),
             actions = props["ACTIONS"]?.let { parseActions(it) } ?: emptyList(),
             nav = when (props["NAV"]?.trim()?.lowercase()) {
                 "drawer" -> ViewNav.DRAWER
@@ -235,6 +237,23 @@ object OrgCodec {
             it.removePrefix("*").trim()
         }
         return SourceRef.File(parts[0].trim(), heading)
+    }
+
+    private fun parseReminder(props: Map<String, String>): DateReminderRule? {
+        val on = props["ON"]?.trim()?.lowercase() ?: run {
+            if (props["REL"] != null || props["DATEFIELD"] != null)
+                throw FormatException("REL and DATEFIELD require ON date-field")
+            return null
+        }
+        if (on != "date-field")
+            throw FormatException("ON must be date-field")
+        val field = props["DATEFIELD"]?.trim()?.takeIf { it.isNotEmpty() }
+            ?: throw FormatException("ON date-field needs DATEFIELD")
+        val relative = props["REL"]?.trim()
+            ?: throw FormatException("ON date-field needs REL, e.g. -3d")
+        val match = Regex("""([+-]?\d+)d""").matchEntire(relative)
+            ?: throw FormatException("REL must be whole days, e.g. -3d or +1d")
+        return DateReminderRule(field, match.groupValues[1].toInt())
     }
 
     private fun parseColTypes(value: String): List<ColType> =
@@ -384,6 +403,11 @@ object OrgCodec {
             view.groupBy?.let { add("GROUP_BY" to it) }
             view.dateField?.let { add("DATE_FIELD" to it) }
             view.imageField?.let { add("IMAGE_FIELD" to it) }
+            view.reminder?.let {
+                add("ON" to "date-field")
+                add("REL" to "%+dd".format(it.relativeDays))
+                add("DATEFIELD" to it.dateField)
+            }
             if (view.actions.isNotEmpty())
                 add("ACTIONS" to view.actions.joinToString(" ") { it.toToken() })
             if (view.nav == ViewNav.DRAWER) add("NAV" to "drawer")
