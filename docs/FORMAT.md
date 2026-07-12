@@ -248,6 +248,32 @@ planning line will not. **Keep BYO files under version control or
 backups.** This is the same deal desktop org-mode users already accept
 from `org-entry-put`, made explicit.
 
+### Redeploying an app (update in place)
+
+An app's document lives on the device under the apps directory; the
+first install writes it verbatim. A **later install of the same id
+updates in place** instead of clobbering — it adopts the redeployed
+document's *structure* while keeping the device's *data*:
+
+- Adopted from the new document: the file keywords, the set of views and
+  their order, view prose, and every view's **property drawer** (`:KIND:`,
+  `:ICON:`, `:SCHEMA:`, `:NAV:`, `:GROUP:`, …). So a layout or config
+  change reaches the device on the next deploy.
+- Kept from the device: each still-present view's **body** — the inline
+  table rows, checklist items, and records the user has edited. Views are
+  matched **by heading title**; a view the new document drops is removed
+  (its data with it), a new view arrives with its template body, and
+  *renaming* a view in the composer resets that view's data (it reads as
+  drop-plus-add).
+- If the merged result cannot be parsed back — a corrupt on-device file —
+  the existing document is kept untouched rather than risk its data, and a
+  warning is logged.
+
+So iterating on structure is safe: redeploy and the new drawers/views
+appear without wiping inline data. The one thing not carried across a
+redeploy is on-device edits to a view's *prose* — that follows the body,
+so composer prose changes don't overwrite it once the view has data.
+
 ## Actions (the closed vocabulary)
 
 The wire names these and only these; all are implemented in

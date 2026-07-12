@@ -351,6 +351,118 @@ as an `unknown' marker (rendered as text) instead of erroring."
           (should (null (jetpacs-lint-spec body)))
           (should (jetpacs-render-to-json body)))))))
 
+;; ─── Update-in-place install (preserve on-device data on redeploy) ──────────
+;;
+;; A redeployed bundle carries the current structure but the composer's
+;; template data.  jetpacs-crud-install must adopt the new structure while
+;; keeping whatever the device has edited under each still-present view.
+
+(defmacro jetpacs-crud-tests--with-apps-dir (var &rest body)
+  "Bind `jetpacs-crud-apps-directory' to a fresh temp dir named VAR for BODY."
+  (declare (indent 1) (debug (symbolp body)))
+  `(let* ((,var (make-temp-file "jetpacs-crud-install" t))
+          (jetpacs-crud-apps-directory ,var))
+     (push ,var jetpacs-crud-tests--temp-dirs)
+     ,@body))
+
+(ert-deftest jetpacs-crud-install-updates-drawer-keeps-inline-rows ()
+  "A redeploy adopts the new property drawer but preserves inline rows."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir dir
+      (let ((file (expand-file-name "shop.org" dir))
+            (v1 (concat "#+JETPACS_APP: shop\n#+TITLE: Shop\n\n"
+                        "* Items\n:PROPERTIES:\n:ICON: table_chart\n"
+                        ":ORDER: 10\n:COLTYPES: text number\n:END:\n\n"
+                        "| Item | Qty |\n|------+-----|\n| Milk | 2 |\n")))
+        (jetpacs-crud-install "shop" v1)
+        ;; The device adds a row.
+        (jetpacs-crud-orgapp--write
+         file (replace-regexp-in-string
+               "| Milk | 2 |\n" "| Milk | 2 |\n| Eggs | 12 |\n"
+               (jetpacs-crud-orgapp--slurp file)))
+        ;; Redeploy: same view, drawer gains :NAV: drawer + a new icon,
+        ;; carrying only the template row.
+        (jetpacs-crud-install
+         "shop" (concat "#+JETPACS_APP: shop\n#+TITLE: Shop\n\n"
+                        "* Items\n:PROPERTIES:\n:ICON: inventory\n"
+                        ":ORDER: 10\n:COLTYPES: text number\n:NAV: drawer\n:END:\n\n"
+                        "| Item | Qty |\n|------+-----|\n| Milk | 2 |\n"))
+        (let ((result (jetpacs-crud-orgapp--slurp file)))
+          (should (string-match-p ":NAV: drawer" result)) ; new structure
+          (should (string-match-p ":ICON: inventory" result))
+          (should (string-match-p "Eggs" result))         ; kept device data
+          (should (string-match-p "12" result)))))))
+
+(ert-deftest jetpacs-crud-install-preserves-records-adds-and-drops ()
+  "A redeploy keeps device-added records, drops removed views, adds new ones."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir dir
+      (let ((file (expand-file-name "todo.org" dir))
+            (v1 (concat "#+JETPACS_APP: todo\n#+TITLE: Todo\n#+TODO: TODO | DONE\n\n"
+                        "* Tasks\n:PROPERTIES:\n:KIND: records\n:ORDER: 10\n"
+                        ":SCHEMA: %ITEM(Task) %TODO(Status)\n"
+                        ":COLTYPES: text enum(TODO,DONE)\n:END:\n\n"
+                        "** TODO Buy milk\n"
+                        "* Notes\n:PROPERTIES:\n:ORDER: 20\n:END:\n\n"
+                        "| Note |\n|------|\n| hi |\n")))
+        (jetpacs-crud-install "todo" v1)
+        ;; The device adds a record under Tasks.
+        (jetpacs-crud-orgapp--write
+         file (replace-regexp-in-string
+               "\\*\\* TODO Buy milk\n" "** TODO Buy milk\n** DONE Call mom\n"
+               (jetpacs-crud-orgapp--slurp file)))
+        ;; Redeploy: Tasks gains a FILTER, Notes is gone, Board is new.
+        (jetpacs-crud-install
+         "todo" (concat "#+JETPACS_APP: todo\n#+TITLE: Todo\n#+TODO: TODO | DONE\n\n"
+                        "* Tasks\n:PROPERTIES:\n:KIND: records\n:ORDER: 10\n"
+                        ":SCHEMA: %ITEM(Task) %TODO(Status)\n"
+                        ":COLTYPES: text enum(TODO,DONE)\n:FILTER: (todo)\n:END:\n\n"
+                        "** TODO Buy milk\n"
+                        "* Board\n:PROPERTIES:\n:KIND: board\n:ORDER: 30\n"
+                        ":SCHEMA: %ITEM(Card) %TODO(Status)\n"
+                        ":COLTYPES: text enum(TODO,DONE)\n:GROUP_BY: TODO\n:END:\n\n"
+                        "** TODO Ship it\n"))
+        (let ((result (jetpacs-crud-orgapp--slurp file))
+              (spec (jetpacs-crud--app "todo")))
+          (should (string-match-p ":FILTER: (todo)" result)) ; new drawer
+          (should (string-match-p "Call mom" result))        ; kept device record
+          (should-not (string-match-p "^\\* Notes" result))  ; dropped
+          (should (string-match-p "^\\* Board" result))      ; added
+          (should (string-match-p "Ship it" result))
+          (let ((titles (mapcar (lambda (v) (plist-get v :title))
+                                (plist-get spec :views))))
+            (should (member "Tasks" titles))
+            (should (member "Board" titles))
+            (should-not (member "Notes" titles))))))))
+
+(ert-deftest jetpacs-crud-install-first-time-writes-verbatim ()
+  "The first install of an id writes the document text unchanged."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir dir
+      (let ((file (expand-file-name "shop.org" dir))
+            (text (concat "#+JETPACS_APP: shop\n#+TITLE: Shop\n\n"
+                          "* Items\n:PROPERTIES:\n:COLTYPES: text\n:END:\n\n"
+                          "| Item |\n|------|\n| Milk |\n")))
+        (jetpacs-crud-install "shop" text)
+        (should (equal (jetpacs-crud-orgapp--slurp file) text))))))
+
+(ert-deftest jetpacs-crud-install-keeps-old-on-bad-merge ()
+  "A structurally invalid redeploy leaves the on-device document intact."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir dir
+      (let ((file (expand-file-name "shop.org" dir)))
+        (jetpacs-crud-install
+         "shop" (concat "#+JETPACS_APP: shop\n#+TITLE: Shop\n\n"
+                        "* Items\n:PROPERTIES:\n:COLTYPES: text\n:END:\n\n"
+                        "| Item |\n|------|\n| Milk |\n"))
+        ;; A redeploy that would merge to a view-less (invalid) document:
+        ;; install must not error, keep the file, and still register the old.
+        (should (equal (jetpacs-crud-install
+                        "shop" "#+JETPACS_APP: shop\n#+TITLE: Shop\n\nno views\n")
+                       "shop"))
+        (should (string-match-p "Milk" (jetpacs-crud-orgapp--slurp file)))
+        (should (jetpacs-crud--app "shop"))))))
+
 (ert-deftest jetpacs-crud-goldens ()
   "The pantry bodies' wire JSON, byte-for-byte."
   (jetpacs-crud-tests--with-clean-state

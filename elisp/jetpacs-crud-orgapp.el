@@ -311,17 +311,127 @@ extra state."
 Replaces any prior registration of the same id (live reload)."
   (jetpacs-crud-register (jetpacs-crud-parse-app file)))
 
+;; ─── Update-in-place merge (preserve on-device data across redeploys) ────────
+;;
+;; A redeployed bundle carries the CURRENT structure but the composer's
+;; template data.  The on-device document may hold data the user has since
+;; edited (inline table rows, checklist items, records added on the phone).
+;; The merge below adopts the new structure — file keywords, the view set
+;; and order, prose, and every view's property drawer — while keeping each
+;; still-present view's body verbatim.  Views are matched by heading title;
+;; the level-1 heading is the section boundary (records are its level-2
+;; children, so they ride along in the body).
+
+(defun jetpacs-crud-orgapp--slurp (file)
+  "FILE's contents as a UTF-8 string."
+  (with-temp-buffer
+    (let ((coding-system-for-read 'utf-8))
+      (insert-file-contents file))
+    (buffer-string)))
+
+(defun jetpacs-crud-orgapp--write (file text)
+  "Write TEXT to FILE as UTF-8, creating its directory."
+  (make-directory (file-name-directory file) t)
+  (let ((coding-system-for-write 'utf-8))
+    (with-temp-file file (insert text))))
+
+(defun jetpacs-crud-orgapp--drawer-end ()
+  "From point on a heading line, the position where the entry's body begins.
+Skips an immediately-following :PROPERTIES:...:END: drawer; otherwise the
+line after the heading."
+  (save-excursion
+    (forward-line 1)
+    (when (looking-at-p "[ \t]*:PROPERTIES:[ \t]*$")
+      (when (re-search-forward "^[ \t]*:END:[ \t]*$" nil t)
+        (forward-line 1)))
+    (point)))
+
+(defun jetpacs-crud-orgapp--section-end ()
+  "From point on a level-1 heading line, the position of the next level-1
+heading, or `point-max'."
+  (save-excursion
+    (forward-line 1)
+    (if (re-search-forward "^\\* " nil t)
+        (match-beginning 0)
+      (point-max))))
+
+(defun jetpacs-crud-orgapp--heading-bodies (text)
+  "Alist (TITLE . BODY) for each level-1 heading in org TEXT.
+BODY is everything under the heading after its property drawer, through
+the next level-1 heading — the inline data and any records or prose.  The
+first heading of a repeated title wins (titles are unique in a valid app)."
+  (with-temp-buffer
+    (let ((org-inhibit-startup t)) (delay-mode-hooks (org-mode)))
+    (insert text)
+    (goto-char (point-min))
+    (let ((bodies nil))
+      (while (re-search-forward "^\\* " nil t)
+        (beginning-of-line)
+        (let* ((title (string-trim (org-get-heading t t t t)))
+               (end (jetpacs-crud-orgapp--section-end))
+               (body (buffer-substring-no-properties
+                      (jetpacs-crud-orgapp--drawer-end) end)))
+          (unless (assoc title bodies)
+            (push (cons title body) bodies))
+          (goto-char end)))
+      (nreverse bodies))))
+
+(defun jetpacs-crud-orgapp--merge-preserving-data (new-text old-text)
+  "Merge NEW-TEXT's structure with the per-view data in OLD-TEXT.
+Adopts NEW-TEXT's keywords, view set, order, prose, and property drawers,
+but replaces each shared view's body (matched by heading title) with
+OLD-TEXT's — preserving inline table rows, checklist items, and records a
+device may have edited.  A view only in OLD-TEXT is dropped; a view only
+in NEW-TEXT keeps its template body.  Returns the merged text."
+  (let ((old-bodies (jetpacs-crud-orgapp--heading-bodies old-text)))
+    (with-temp-buffer
+      (let ((org-inhibit-startup t)) (delay-mode-hooks (org-mode)))
+      (insert new-text)
+      (goto-char (point-min))
+      (while (re-search-forward "^\\* " nil t)
+        (beginning-of-line)
+        (let* ((title (string-trim (org-get-heading t t t t)))
+               (cell (assoc title old-bodies))
+               (end (jetpacs-crud-orgapp--section-end)))
+          (if (not cell)
+              (goto-char end)
+            (let ((body-start (jetpacs-crud-orgapp--drawer-end)))
+              (delete-region body-start end)
+              (goto-char body-start)
+              (insert (cdr cell))))))
+      (buffer-string))))
+
 (defun jetpacs-crud-install (id text)
   "Install app ID from document TEXT and register it.
-Writes TEXT to `jetpacs-crud-apps-directory'/ID.org unless that file
-already exists — an existing document may hold user data (inline
-tables) and is never clobbered; delete it to reinstall fresh."
+First install writes TEXT verbatim.  A later install (the file already
+exists) UPDATES IN PLACE, preserving on-device data: TEXT's structure —
+file keywords, the view set and order, prose, and every view's property
+drawer — is adopted, while each view still present keeps its on-device
+body (inline table rows, checklist items, records).  A view TEXT drops is
+removed; a new view arrives with its template body.  Matching is by
+heading title, so renaming a view in the composer resets that view's data.
+If the merge cannot be parsed back (a corrupt on-device file), the
+existing document is kept untouched rather than risk its data."
   (let ((file (expand-file-name (concat id ".org")
                                 jetpacs-crud-apps-directory)))
-    (unless (file-exists-p file)
-      (make-directory jetpacs-crud-apps-directory t)
-      (let ((coding-system-for-write 'utf-8))
-        (with-temp-file file (insert text))))
+    (if (not (file-exists-p file))
+        (jetpacs-crud-orgapp--write file text)
+      (condition-case err
+          (let ((merged (jetpacs-crud-orgapp--merge-preserving-data
+                         text (jetpacs-crud-orgapp--slurp file)))
+                (tmp (make-temp-file "jetpacs-crud-merge" nil ".org")))
+            (unwind-protect
+                (progn
+                  (jetpacs-crud-orgapp--write tmp merged)
+                  (jetpacs-crud-parse-app tmp) ; validate before committing
+                  (jetpacs-crud-orgapp--write file merged))
+              (ignore-errors (delete-file tmp))))
+        (error
+         (display-warning
+          'jetpacs-crud
+          (format "%s: kept the on-device document; update merge failed: %s"
+                  id (error-message-string err))
+          :warning))))
     (jetpacs-crud-register-file file)))
 
 (defun jetpacs-crud-load-directory (&optional directory)
