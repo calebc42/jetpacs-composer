@@ -1,0 +1,12 @@
+#+JETPACS_APP: inventory
+#+TITLE: Inventory
+#+JETPACS_ICON: inventory_2
+
+* Items
+:PROPERTIES:
+:ICON: table_chart
+:COLTYPES: text number date enum(Low,Mid,High) checkbox
+:END:
+
+| Item | Qty | Expires | Stock | Restock |
+|------+-----+---------+-------+---------|

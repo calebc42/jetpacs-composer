@@ -70,5 +70,8 @@ class EditorSession private constructor(
 
         fun new(id: String, label: String): EditorSession =
             EditorSession(AppSpec(id = id, label = label), file = null)
+
+        /** A session over a wizard- or template-built spec (unsaved). */
+        fun fromSpec(spec: AppSpec): EditorSession = EditorSession(spec, file = null)
     }
 }

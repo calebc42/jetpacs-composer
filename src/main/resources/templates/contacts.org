@@ -1,0 +1,12 @@
+#+JETPACS_APP: contacts
+#+TITLE: Contacts
+#+JETPACS_ICON: contacts
+
+* People
+:PROPERTIES:
+:ICON: person
+:COLTYPES: text text text date
+:END:
+
+| Name | Phone | Email | Birthday |
+|------+-------+-------+----------|

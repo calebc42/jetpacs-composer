@@ -311,7 +311,7 @@ private fun ChecklistEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Un
 // ─── Column-type picker ──────────────────────────────────────────────────────
 
 @Composable
-private fun ColTypePicker(current: ColType, onPick: (ColType) -> Unit) {
+internal fun ColTypePicker(current: ColType, onPick: (ColType) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(onClick = { open = true }) { Text(current.toToken()) }

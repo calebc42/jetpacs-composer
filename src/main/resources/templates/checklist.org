@@ -1,0 +1,10 @@
+#+JETPACS_APP: checklist
+#+TITLE: Checklist
+#+JETPACS_ICON: checklist
+
+* Today
+:PROPERTIES:
+:KIND: checklist
+:END:
+
+- [ ] First thing

@@ -39,7 +39,7 @@ private fun App() {
                     .onSuccess { session = it; error = null }
                     .onFailure { error = "${file.name}: ${it.message}" }
             },
-            onNew = { id, label -> session = EditorSession.new(id, label) },
+            onSpec = { spec -> session = EditorSession.fromSpec(spec) },
             error = error,
         )
     } else {

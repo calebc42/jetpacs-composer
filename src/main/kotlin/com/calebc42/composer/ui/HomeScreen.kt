@@ -28,23 +28,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.project.RecentFiles
+import com.calebc42.composer.project.Templates
 import java.io.File
 
 @Composable
 fun HomeScreen(
     onOpen: (File) -> Unit,
-    onNew: (id: String, label: String) -> Unit,
+    onSpec: (AppSpec) -> Unit,
     error: String?,
 ) {
     val recent = remember { RecentFiles.load().recent.map(::File).filter { it.exists() } }
-    var newId by remember { mutableStateOf("") }
-    var newLabel by remember { mutableStateOf("") }
+    var wizard by remember { mutableStateOf(false) }
+    var templateError by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().padding(24.dp)) {
         Text("jetpacs-composer", style = MaterialTheme.typography.headlineMedium)
         Text("Declarative CRUD apps over org files, for the Jetpacs launcher.",
              style = MaterialTheme.typography.bodyMedium)
-        error?.let {
+        (error ?: templateError)?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.error)
         }
@@ -52,19 +53,22 @@ fun HomeScreen(
 
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(newId, { newId = it.lowercase() },
-                              label = { Text("app id (slug)") },
-                              singleLine = true, modifier = Modifier.width(200.dp))
-            OutlinedTextField(newLabel, { newLabel = it },
-                              label = { Text("label") },
-                              singleLine = true, modifier = Modifier.width(200.dp))
-            Button(
-                onClick = { onNew(newId, newLabel.ifBlank { newId }) },
-                enabled = AppSpec.ID_RE.matches(newId),
-            ) { Text("New app") }
+            Button(onClick = { wizard = true }) { Text("New app…") }
             OutlinedButton(onClick = {
                 pickOrgFile("Open app.org")?.let(onOpen)
             }) { Text("Open…") }
+            Text("Templates:", style = MaterialTheme.typography.bodyMedium)
+            Templates.names.forEach { name ->
+                OutlinedButton(onClick = {
+                    runCatching { Templates.load(name) }
+                        .onSuccess(onSpec)
+                        .onFailure { templateError = "$name: ${it.message}" }
+                }) { Text(name) }
+            }
+        }
+        if (wizard) {
+            NewAppWizard(onCreate = { wizard = false; onSpec(it) },
+                         onDismiss = { wizard = false })
         }
 
         Spacer(Modifier.height(24.dp))
