@@ -104,8 +104,11 @@ Positional, one token per table column:
 | `checkbox` | `[X]` / `[ ]` | tap toggles directly | checkbox icon |
 
 Unknown future column-type tokens load as opaque text fields and are preserved
-verbatim. `ref(View)` is reserved but remains export-blocked until reference
-resolution is implemented by the runtime.
+verbatim. `ref(View)` stores the target record's stable org `:ID:`. `View` must
+name a records or notes view in the same app; records targets must include `ID`
+in their schema. The runtime resolves the target title and drills in by
+`(app, view, id)`, never by sending a source path over the wire. Long-press a
+reference value to edit its raw ID until a native record picker is available.
 
 ## Table views (`:KIND: table`)
 

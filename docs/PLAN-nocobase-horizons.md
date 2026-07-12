@@ -271,6 +271,10 @@ record, FAB adds a top-level node.
 
 ### B2. Wire `ColType.Ref` — within-app many-to-one with drill-in — [high / L]
 
+**In progress:** same-app records/notes target validation, composer target
+picker, title resolution, and ID-addressed drill-in have landed. A native
+record-picker input and configurable display field remain.
+
 From NocoBase m2o interfaces. Store the FK as the target record's org
 `:ID:` (rename-proof, human-readable, reuses `:ID:` addressing at
 `crud.el:1316`); a `--ref-resolve` looks up the target view *in the same

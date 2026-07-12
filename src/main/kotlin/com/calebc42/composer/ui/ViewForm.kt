@@ -187,7 +187,11 @@ fun AppForm(session: EditorSession) {
 
 @Composable
 fun ViewForm(session: EditorSession, index: Int) {
-    val view = session.spec.views[index]
+    val spec = session.spec
+    val view = spec.views[index]
+    val referenceTargets = spec.views.filter {
+        it.kind == ViewKind.RECORDS || it.kind == ViewKind.NOTES
+    }
     fun edit(transform: (ViewSpec) -> ViewSpec) =
         session.update { ModelOps.updateView(it, index, transform) }
     fun editText(key: String, transform: (ViewSpec) -> ViewSpec) =
@@ -311,7 +315,7 @@ fun ViewForm(session: EditorSession, index: Int) {
     when {
         view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit, ::editText)
         view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE) -> {
-            RecordsSchemaEditor(session.spec, view, ::edit, ::editText)
+            RecordsSchemaEditor(spec, view, ::edit, ::editText)
             Spacer(Modifier.height(16.dp))
             ActionEditor(
                 actions = view.actions,
@@ -321,8 +325,8 @@ fun ViewForm(session: EditorSession, index: Int) {
                 },
             )
         }
-        view.source == null -> InlineTableEditor(view, ::edit, ::editText)
-        else -> ExternalColumnsEditor(view, ::edit, ::editText)
+        view.source == null -> InlineTableEditor(view, referenceTargets, ::edit, ::editText)
+        else -> ExternalColumnsEditor(view, referenceTargets, ::edit, ::editText)
     }
 }
 
@@ -390,6 +394,9 @@ private fun RecordsSchemaEditor(
             )
             ColTypePicker(
                 view.colTypes.getOrElse(i) { ColType.Text },
+                referenceTargets = spec.views.filter {
+                    it.kind == ViewKind.RECORDS || it.kind == ViewKind.NOTES
+                },
                 onPick = { t ->
                     edit {
                         val width = it.schema.size
@@ -631,7 +638,12 @@ private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit)
 // ─── Inline table: schema + data in one grid ────────────────────────────────
 
 @Composable
-private fun InlineTableEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
+private fun InlineTableEditor(
+    view: ViewSpec,
+    referenceTargets: List<ViewSpec>,
+    edit: ViewEdit,
+    editText: ViewTextEdit,
+) {
     val table = ModelOps.firstTable(view)
         ?: BodyElement.Table(emptyList(), emptyList())
 
@@ -654,6 +666,7 @@ private fun InlineTableEditor(view: ViewSpec, edit: ViewEdit, editText: ViewText
             )
             ColTypePicker(
                 view.colTypes.getOrElse(col) { ColType.Text },
+                referenceTargets = referenceTargets,
                 onPick = { t -> edit { ModelOps.setColumnType(it, col, t) } },
                 onTyping = { t -> editText("column.$col.type") {
                     ModelOps.setColumnType(it, col, t)
@@ -708,7 +721,12 @@ private fun InlineTableEditor(view: ViewSpec, edit: ViewEdit, editText: ViewText
 // ─── External table: names + types only (data lives on the device) ──────────
 
 @Composable
-private fun ExternalColumnsEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
+private fun ExternalColumnsEditor(
+    view: ViewSpec,
+    referenceTargets: List<ViewSpec>,
+    edit: ViewEdit,
+    editText: ViewTextEdit,
+) {
     Text("Columns (scaffolded on the device when the file is missing)",
          style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
@@ -730,6 +748,7 @@ private fun ExternalColumnsEditor(view: ViewSpec, edit: ViewEdit, editText: View
             )
             ColTypePicker(
                 view.colTypes.getOrElse(col) { ColType.Text },
+                referenceTargets = referenceTargets,
                 onPick = { t ->
                     edit {
                         val width = it.columns.size
@@ -807,6 +826,7 @@ private fun ChecklistEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEd
 @Composable
 internal fun ColTypePicker(
     current: ColType,
+    referenceTargets: List<ViewSpec> = emptyList(),
     onPick: (ColType) -> Unit,
     onTyping: (ColType) -> Unit = onPick,
 ) {
@@ -826,6 +846,16 @@ internal fun ColTypePicker(
                     open = false
                 },
             )
+            if (referenceTargets.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("ref(…)") },
+                    onClick = {
+                        onPick((current as? ColType.Ref)
+                            ?: ColType.Ref(referenceTargets.first().name))
+                        open = false
+                    },
+                )
+            }
         }
     }
     if (current is ColType.Enum) {
@@ -842,11 +872,23 @@ internal fun ColTypePicker(
         )
     } else if (current is ColType.Ref) {
         Spacer(Modifier.width(4.dp))
-        OutlinedTextField(
-            current.targetView,
-            { v -> onTyping(ColType.Ref(v.trim().ifEmpty { "target" })) },
-            label = { Text("target view") }, singleLine = true,
-            modifier = Modifier.width(140.dp),
-        )
+        var targetOpen by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { targetOpen = true }) {
+                Text(referenceTargets.find { it.name == current.targetView }?.title
+                    ?: current.targetView)
+            }
+            DropdownMenu(expanded = targetOpen, onDismissRequest = { targetOpen = false }) {
+                referenceTargets.forEach { target ->
+                    DropdownMenuItem(
+                        text = { Text(target.title) },
+                        onClick = {
+                            onPick(ColType.Ref(target.name))
+                            targetOpen = false
+                        },
+                    )
+                }
+            }
+        }
     }
 }

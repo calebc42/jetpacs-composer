@@ -445,6 +445,17 @@ Returns the target record's title, or VAL if not found/resolved."
       (jetpacs-crud--ref-resolve spec (cadr ctype) text))
      (t text))))
 
+(defun jetpacs-crud--ref-action (spec ctype value)
+  "Return a same-app detail action for reference VALUE of CTYPE.
+Nil values remain inert.  The wire carries the target view and stable ID,
+never the target source path."
+  (when (and (consp ctype) (eq (car ctype) 'ref)
+             value (not (string-empty-p value)))
+    (jetpacs-action "crud.record.detail"
+                    :args `((app . ,(plist-get spec :id))
+                            (view . ,(cadr ctype))
+                            (id . ,value)))))
+
 (defun jetpacs-crud--cell-node (spec view col cell &optional header)
   "Build the table-cell node for CELL (TEXT . POS) at data column COL.
 HEADER cells are inert; body cells tap-edit (or tap-toggle for checkbox
@@ -458,9 +469,11 @@ columns) and long-press for the row menu."
      (list (jetpacs-span (if header text
                            (jetpacs-crud--cell-display spec view col text))))
      :on-tap (unless header
-               (jetpacs-action (if (jetpacs-crud--checkbox-col-p view col)
-                                   "crud.cell.toggle" "crud.cell.edit")
-                            :args args))
+               (or (jetpacs-crud--ref-action
+                    spec (jetpacs-crud--coltype view col) text)
+                   (jetpacs-action (if (jetpacs-crud--checkbox-col-p view col)
+                                       "crud.cell.toggle" "crud.cell.edit")
+                                :args args)))
      :on-long-tap (unless header
                     (jetpacs-action "crud.row.menu" :args args
                                  :when-offline "drop")))))
@@ -725,10 +738,20 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                            (list (jetpacs-row
                                   (jetpacs-text (or label prop) 'caption nil nil nil 1)
                                   (jetpacs-spacer :width 12)
-                                  (jetpacs-text (if (string-empty-p value) "—" value)
+                                  (jetpacs-text (if (string-empty-p value)
+                                                    "—"
+                                                  (if (and (consp ctype)
+                                                           (eq (car ctype) 'ref))
+                                                      (jetpacs-crud--ref-resolve
+                                                       spec (cadr ctype) value)
+                                                    value))
                                              'body 1)))
-                           :on-tap (jetpacs-action "crud.field.edit"
-                                                :args (funcall args-for prop))
+                           :on-tap (or (jetpacs-crud--ref-action spec ctype value)
+                                       (jetpacs-action "crud.field.edit"
+                                                    :args (funcall args-for prop)))
+                           :on-long-tap (when (and (consp ctype) (eq (car ctype) 'ref))
+                                          (jetpacs-action "crud.field.edit"
+                                                       :args (funcall args-for prop)))
                            :padding 2)))
                (when footer (list footer))))))
      :swipe-start (jetpacs-crud--action-swipe (nth 0 actions) args-for)

@@ -183,26 +183,31 @@ class ModelOpsTest {
     }
 
     @Test
-    fun validateBlocksRefsAndChecksReferencedFields() {
+    fun validateAllowsRefsToAddressableRecordViews() {
         val target = ViewSpec(
             title = "Customers",
             kind = ViewKind.RECORDS,
-            schema = listOf(SchemaField("ITEM")),
-            colTypes = listOf(ColType.Text),
+            schema = listOf(SchemaField("ITEM"), SchemaField("ID")),
+            colTypes = listOf(ColType.Text, ColType.Text),
         )
         val referrer = base.views.single().copy(
             colTypes = listOf(ColType.Ref("customers")),
         )
         val refProblems = ModelOps.validate(
             AppSpec(id = "refs", views = listOf(referrer, target)))
-        assertTrue(refProblems.any {
-            "not implemented" in it.message && it.severity == ModelOps.Severity.Error
-        })
-        assertTrue(refProblems.none { "not a live view" in it.message })
+        assertTrue(refProblems.none { "Reference target" in it.message })
 
         val missingTarget = referrer.copy(colTypes = listOf(ColType.Ref("missing")))
         assertTrue(ModelOps.validate(AppSpec(id = "refs", views = listOf(missingTarget)))
             .any { "not a live view" in it.message })
+
+        val unaddressable = target.copy(schema = listOf(SchemaField("ITEM")))
+        assertTrue(ModelOps.validate(AppSpec(id = "refs", views = listOf(referrer, unaddressable)))
+            .any { "needs an ID field" in it.message })
+
+        val tableTarget = target.copy(kind = ViewKind.TABLE)
+        assertTrue(ModelOps.validate(AppSpec(id = "refs", views = listOf(referrer, tableTarget)))
+            .any { "must be a records or notes view" in it.message })
 
         val badFields = ViewSpec(
             title = "Board",

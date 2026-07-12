@@ -357,13 +357,21 @@ object ModelOps {
                     add(Problem("An enum option is blank", i, Severity.Warning))
             }
             view.colTypes.filterIsInstance<ColType.Ref>().forEach { ref ->
-                add(Problem(
-                    "Reference columns are not implemented by the current runtime",
-                    i,
-                ))
-                if (ref.targetView !in liveViews)
+                val target = spec.views.find { it.name == ref.targetView }
+                if (target == null)
                     add(Problem(
                         "Reference target \"${ref.targetView}\" is not a live view",
+                        i,
+                    ))
+                else if (target.kind !in setOf(ViewKind.RECORDS, ViewKind.NOTES))
+                    add(Problem(
+                        "Reference target \"${ref.targetView}\" must be a records or notes view",
+                        i,
+                    ))
+                else if (target.kind == ViewKind.RECORDS &&
+                    target.schema.none { it.prop.equals("ID", ignoreCase = true) })
+                    add(Problem(
+                        "Reference target \"${ref.targetView}\" needs an ID field",
                         i,
                     ))
             }
