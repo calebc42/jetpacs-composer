@@ -1,0 +1,22 @@
+#+JETPACS_APP: pantry
+#+TITLE: Pantry
+#+JETPACS_ICON: kitchen
+
+* Inventory
+:PROPERTIES:
+:ICON: table_chart
+:COLTYPES: text number date enum(Low,Mid,High) checkbox
+:END:
+
+| Item | Qty | Expires    | Stock | Restock |
+|------+-----+------------+-------+---------|
+| Rice | 2   | 2026-09-01 | Mid   | [ ]     |
+| Milk | 1   | 2026-07-14 | Low   | [X]     |
+
+* Shopping
+:PROPERTIES:
+:KIND: checklist
+:END:
+
+- [ ] Olive oil
+- [X] Coffee

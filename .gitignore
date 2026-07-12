@@ -1,0 +1,18 @@
+# Gradle / Kotlin (the desktop editor)
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+.kotlin/
+
+# IDEs
+.idea/
+*.iml
+local.properties
+
+# Generated app bundles (build artifacts, not sources)
+jetpacs-app-*.el
+
+# Emacs droppings
+*~
+\#*\#
+.\#*

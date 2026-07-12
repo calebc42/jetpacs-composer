@@ -1,0 +1,10 @@
+#+JETPACS_APP: broken
+
+* Data
+:PROPERTIES:
+:COLTYPES: text florb
+:END:
+
+| A | B |
+|---+---|
+| 1 | 2 |

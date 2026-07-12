@@ -1,0 +1,12 @@
+#+JETPACS_APP: stockroom
+#+TITLE: Stockroom
+
+* Stock
+:PROPERTIES:
+:SOURCE: stock-backend.org::*Stock
+:COLUMNS: Part | Count
+:COLTYPES: text number
+:END:
+
+This view's data lives in stock-backend.org, scaffolded on first
+registration from the :COLUMNS: declaration above.

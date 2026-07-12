@@ -1,0 +1,15 @@
+#+jetpacs_app: shelf
+#+title: Shelf
+#+jetpacs_icon: inventory_2
+#+jetpacs_order: 42
+
+* Things
+:properties:
+:coltypes: text number
+:icon: category
+:order: 7
+:end:
+
+| Name | Count |
+|------+-------|
+| Box  | 3     |

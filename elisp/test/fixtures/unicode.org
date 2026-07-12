@@ -1,0 +1,13 @@
+#+JETPACS_APP: pantry-jp
+#+TITLE: 食料品 🍙
+#+JETPACS_ICON: rice_bowl
+
+* 在庫リスト
+:PROPERTIES:
+:COLTYPES: text number
+:END:
+
+| 品名     | 数量 |
+|----------+------|
+| お米 🍚  | 5    |
+| 味噌     | 2    |

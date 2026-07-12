@@ -1,0 +1,13 @@
+#+JETPACS_APP: dupes
+
+* My List!
+
+| A |
+|---|
+
+* My... List
+:PROPERTIES:
+:KIND: checklist
+:END:
+
+- [ ] one
