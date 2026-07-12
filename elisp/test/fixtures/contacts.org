@@ -1,0 +1,17 @@
+#+JETPACS_APP: contacts
+#+TITLE: Contacts
+
+* People
+:PROPERTIES:
+:KIND: notes
+:SOURCE: vault/
+:SCHEMA: %ITEM(Name) %Phone %Tier
+:COLTYPES: text text enum(Gold,Silver,Bronze)
+:END:
+
+* Team
+:PROPERTIES:
+:KIND: notes
+:SOURCE: roster.org::*Team
+:SCHEMA: %ITEM(Name) %Role
+:END:

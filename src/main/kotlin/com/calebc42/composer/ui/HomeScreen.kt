@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +38,7 @@ import java.io.File
 fun HomeScreen(
     onOpen: (File) -> Unit,
     onSpec: (AppSpec) -> Unit,
+    onSettings: () -> Unit,
     error: String?,
 ) {
     val recent = remember { RecentFiles.load().recent.map(::File).filter { it.exists() } }
@@ -42,7 +46,16 @@ fun HomeScreen(
     var templateError by remember { mutableStateOf<String?>(null) }
 
     Column(Modifier.fillMaxSize().padding(24.dp)) {
-        Text("jetpacs-composer", style = MaterialTheme.typography.headlineMedium)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("jetpacs-composer", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.weight(1f))
+            androidx.compose.material3.IconButton(onClick = onSettings) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings"
+                )
+            }
+        }
         Text("Declarative CRUD apps over org files, for the Jetpacs launcher.",
              style = MaterialTheme.typography.bodyMedium)
         (error ?: templateError)?.let {

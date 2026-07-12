@@ -94,7 +94,7 @@ class OrgCodecTest {
         assertNull(people.filter)
 
         val gold = spec.views[1]
-        assertEquals("""Tier="Gold"""", gold.filter)
+        assertEquals("""(property "Tier" "Gold")""", gold.filter)
 
         // Inline records (level-2 headings) pass through as raw body.
         val scratch = spec.views[2]

@@ -32,12 +32,12 @@ heading's property drawer:
 |---|---|
 | `:ICON:` | Tab icon (Material name; default `table_chart` for tables, `checklist` for checklists). |
 | `:ORDER:` | Tab order (integer; default: 10, 20, … in document order). |
-| `:KIND:` | `table` (default), `checklist`, or `records`. |
+| `:KIND:` | `table` (default), `checklist`, `records`, or `notes`. |
 | `:SOURCE:` | Where the data lives — see below. Default `inline`. |
 | `:COLTYPES:` | Table and records views: per-column/field types, space-separated, positional. |
 | `:COLUMNS:` | Table views with an external `:SOURCE:`: column names, `|`-separated, used to scaffold the backend table when its file doesn't exist yet. |
-| `:SCHEMA:` | Records views (required): the fields, as org column-view-style tokens — `%PROP` or `%PROP(Label)`. |
-| `:FILTER:` | Records views: an org match string (the `org-map-entries` / agenda-tags syntax, e.g. `+active+Tier="Gold"`), selecting which records show. |
+| `:SCHEMA:` | Records and notes views (required): the fields, as org column-view-style tokens — `%PROP` or `%PROP(Label)`. |
+| `:FILTER:` | Records and notes views: a query selecting which records show — an org-ql sexp, filter tokens, or free text (see below). |
 
 ### `:SOURCE:`
 
@@ -47,6 +47,9 @@ heading's property drawer:
 - `/absolute/path/file.org` — the first table/list in that file.
 - `/absolute/path/file.org::*Heading title` — the first table/list
   under that heading.
+- `/absolute/path/vault/` (trailing slash) — **notes** views only: a
+  vulpea vault directory, where every `.org` note file is one record
+  (see Notes views).
 
 If an external source file does not exist at registration time, the
 runtime creates it when it can: table views need `:COLUMNS:` (for the
@@ -104,7 +107,7 @@ optionally typed positionally by `:COLTYPES:`:
 :SOURCE: /sdcard/org/contacts.org::*Contacts
 :SCHEMA: %ITEM(Name) %TODO(Status) %Phone %Tier %DEADLINE(Renewal)
 :COLTYPES: text text text text date
-:FILTER: Tier="Gold"
+:FILTER: (property "Tier" "Gold")
 :END:
 ```
 
@@ -119,8 +122,29 @@ Core org does the heavy lifting — this is deliberate:
   `Tier_ALL` property (drawer or `#+PROPERTY:` line) — supplies the
   choice list for `Tier`; when present it wins over `:COLTYPES:`.
   `TODO` gets its choices from the keyword sequence the same way.
-- **Filtering is org's own match syntax** (`:FILTER:`), not a new
-  language.
+- **Filtering speaks org-ql's query language** (`:FILTER:`) — see below.
+
+### `:FILTER:` — selecting records
+
+The filter is parsed into an [org-ql](https://github.com/alphapapa/org-ql)
+sexp. Three ways to write one, from most to least explicit:
+
+| Shape | Example | Meaning |
+|---|---|---|
+| org-ql sexp | `(and (todo "NEXT") (tags "work"))` | full boolean query |
+| filter tokens | `todo:NEXT tags:work,home priority:A` | tokens AND together; commas are any-of |
+| free text | `renewal gold` | each word is a substring match on heading + body |
+
+An empty `:FILTER:` shows every record; a malformed query is an error,
+so an empty result always means "nothing matched", never "didn't parse".
+
+The runtime carries a **built-in interpreter** for the common terms —
+`and` / `or` / `not`, `todo` / `done`, `tags`, `priority`, `heading`,
+`regexp`, `property`, `level`, `scheduled` / `deadline`. These work on
+every device with no extra packages. Terms beyond this subset require
+the `org-ql` package installed on the device; using one without it is a
+clear error naming org-ql, not a silent empty view. (Filtering applies
+to records and notes views; table views are unfiltered — see non-goals.)
 
 Rendering: one card per record — title line (`ITEM`, prefixed by the
 `TODO` keyword when in the schema), then one tappable row per remaining
@@ -130,6 +154,52 @@ appended at the end of the source subtree).
 
 A missing external source is scaffolded (file + heading); records
 themselves come from the FAB or from your own editing.
+
+## Notes views (`:KIND: notes`) — a vulpea vault as the datasource
+
+A notes view is a records view whose datasource is a
+[vulpea](https://github.com/d12frosted/vulpea) note database. It is the
+one datasource that needs a package on the device: **vulpea (v2+)**.
+Without it the view renders a "Notes need vulpea" placeholder and the
+rest of the app runs normally — the bundle never depends on vulpea, it
+uses it when present.
+
+`:SCHEMA:` and `:FILTER:` work exactly as for records; fields are org
+**properties** on each note, which vulpea indexes. The `:SOURCE:` picks
+one of two record shapes:
+
+- `contacts/` (a trailing-slash directory) — **file-per-record**: every
+  `.org` note file in the vault is one record. Adding a record writes a
+  new note file (`<slug>.org`, with an `:ID:`); deleting one deletes the
+  file.
+- `people.org::*Team` — **heading-per-record**: the id'd headings
+  directly under that heading are the records, same as a records view
+  but addressed by their stable note `:ID:` rather than file position.
+
+```org
+* People
+:PROPERTIES:
+:KIND: notes
+:SOURCE: /sdcard/org/contacts/
+:SCHEMA: %ITEM(Name) %Phone %Tier
+:COLTYPES: text text enum(Gold,Silver,Bronze)
+:FILTER: (property "Tier" "Gold")
+:END:
+```
+
+Why vulpea rather than a raw file scan: its SQLite index supplies the
+list without opening every file, and a record keeps a stable `:ID:`
+across external edits (Syncthing, git) — so a tapped card still resolves
+to the right note after the vault has been re-sorted underneath it. The
+runtime only ever *reads* from vulpea and asks it to re-index a file it
+just wrote; the writes themselves go through org and `org-id`. On the
+device, install vulpea and enable `vulpea-db-autosync-mode` (the starter
+init does this) so the index tracks the vault.
+
+The wire adds `crud.note.add`, `crud.note.field.edit`, and
+`crud.note.menu` for these views; the record's `:ID:` travels on the
+wire, but a handler still refuses any note whose file falls outside the
+view's declared `:SOURCE:`.
 
 ## What the runtime does to your files (read before pointing at one)
 
@@ -161,7 +231,8 @@ declared sources before touching anything.
 
 `crud.cell.edit` · `crud.cell.toggle` · `crud.row.add` ·
 `crud.row.menu` · `crud.checkbox.toggle` · `crud.item.add` ·
-`crud.field.edit` · `crud.record.add` · `crud.record.menu`
+`crud.field.edit` · `crud.record.add` · `crud.record.menu` ·
+`crud.note.add` · `crud.note.field.edit` · `crud.note.menu`
 
 Every mutation ends in: save file → repush all views (positions are
 recomputed from a fresh parse on every render, so they can never go

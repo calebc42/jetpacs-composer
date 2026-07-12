@@ -12,12 +12,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -42,9 +50,9 @@ sealed interface Selection {
 }
 
 @Composable
-fun EditorScreen(session: EditorSession, onClose: () -> Unit) {
+fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> Unit) {
     var selection by remember { mutableStateOf<Selection>(Selection.App) }
-    var preview by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deploying by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
@@ -59,10 +67,16 @@ fun EditorScreen(session: EditorSession, onClose: () -> Unit) {
                 style = MaterialTheme.typography.titleMedium,
             )
             Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = { preview = session.documentText() }) {
+            androidx.compose.material3.IconButton(onClick = onSettings) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings"
+                )
+            }
+            OutlinedButton(onClick = { preview = session.documentText() to "org" }) {
                 Text("app.org")
             }
-            OutlinedButton(onClick = { preview = session.bundleText() }) {
+            OutlinedButton(onClick = { preview = session.bundleText() to "elisp" }) {
                 Text("Exported elisp")
             }
             Button(onClick = {
@@ -130,20 +144,67 @@ fun EditorScreen(session: EditorSession, onClose: () -> Unit) {
 
     if (deploying) DeployDialog(session, onDismiss = { deploying = false })
 
-    preview?.let { text ->
+    preview?.let { (text, type) ->
+        val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
         AlertDialog(
             onDismissRequest = { preview = null },
             confirmButton = {
                 TextButton(onClick = { preview = null }) { Text("Close") }
             },
-            title = { Text("Preview") },
+            dismissButton = {
+                TextButton(onClick = { 
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                }) { Text("Copy to Clipboard") }
+            },
+            title = { Text(if (type == "org") "app.org Preview" else "Exported Elisp Preview") },
             text = {
-                Column(Modifier.height(420.dp).verticalScroll(rememberScrollState())) {
-                    Text(text, fontFamily = FontFamily.Monospace,
-                         style = MaterialTheme.typography.bodySmall)
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Column(Modifier.fillMaxWidth().height(420.dp).verticalScroll(rememberScrollState())) {
+                        Text(
+                            text = highlightSyntax(text, type),
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             },
         )
+    }
+}
+
+private fun highlightSyntax(text: String, type: String): androidx.compose.ui.text.AnnotatedString {
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(text)
+        if (type == "org") {
+            // Very simple org-mode highlighting
+            val lines = text.split("\n")
+            var currentIndex = 0
+            for (line in lines) {
+                if (line.startsWith("*")) {
+                    addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF2196F3), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), currentIndex, currentIndex + line.length)
+                } else if (line.trim().startsWith(":") && line.trim().endsWith(":")) {
+                    addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF4CAF50)), currentIndex, currentIndex + line.length)
+                } else if (line.trim().startsWith("#+")) {
+                    addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF9E9E9E)), currentIndex, currentIndex + line.length)
+                }
+                currentIndex += line.length + 1
+            }
+        } else if (type == "elisp") {
+            // Very simple elisp highlighting
+            val stringRegex = "\".*?\"".toRegex()
+            val commentRegex = ";;.*".toRegex()
+            val keywordRegex = "\\b(defun|setq|require|provide|let|if|when|cond)\\b".toRegex()
+            
+            for (match in stringRegex.findAll(text)) {
+                addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF4CAF50)), match.range.first, match.range.last + 1)
+            }
+            for (match in commentRegex.findAll(text)) {
+                addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF9E9E9E)), match.range.first, match.range.last + 1)
+            }
+            for (match in keywordRegex.findAll(text)) {
+                addStyle(androidx.compose.ui.text.SpanStyle(color = androidx.compose.ui.graphics.Color(0xFF2196F3), fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), match.range.first, match.range.last + 1)
+            }
+        }
     }
 }
 
@@ -157,19 +218,34 @@ private fun OutlinePane(
         Modifier.width(260.dp).fillMaxHeight()
             .verticalScroll(rememberScrollState()).padding(8.dp),
     ) {
-        OutlineRow("App: ${session.spec.id}", selection == Selection.App) {
-            onSelect(Selection.App)
-        }
+        OutlineRow(
+            label = "App: ${session.spec.id}",
+            selected = selection == Selection.App,
+            onClick = { onSelect(Selection.App) }
+        )
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
         session.spec.views.forEachIndexed { i, view ->
             OutlineRow(
-                when (view.kind) {
+                label = when (view.kind) {
                     ViewKind.CHECKLIST -> "☑ ${view.title}"
                     ViewKind.RECORDS -> "☰ ${view.title}"
                     ViewKind.TABLE -> "▦ ${view.title}"
                 },
-                selection == Selection.View(i),
-            ) { onSelect(Selection.View(i)) }
+                selected = selection == Selection.View(i),
+                onClick = { onSelect(Selection.View(i)) },
+                onMoveUp = if (i > 0) { {
+                    session.update { ModelOps.moveView(it, i, -1) }
+                    onSelect(Selection.View(i - 1))
+                } } else null,
+                onMoveDown = if (i < session.spec.views.size - 1) { {
+                    session.update { ModelOps.moveView(it, i, +1) }
+                    onSelect(Selection.View(i + 1))
+                } } else null,
+                onDelete = {
+                    session.update { ModelOps.removeView(it, i) }
+                    onSelect(Selection.App)
+                }
+            )
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -187,38 +263,51 @@ private fun OutlinePane(
             session.update { ModelOps.addView(it, "New records", ViewKind.RECORDS) }
             onSelect(Selection.View(session.spec.views.size))
         }) { Text("+ Records") }
-        (selection as? Selection.View)?.let { sel ->
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedButton(onClick = {
-                    session.update { ModelOps.moveView(it, sel.index, -1) }
-                    if (sel.index > 0) onSelect(Selection.View(sel.index - 1))
-                }) { Text("↑") }
-                OutlinedButton(onClick = {
-                    session.update { ModelOps.moveView(it, sel.index, +1) }
-                    if (sel.index < session.spec.views.size - 1)
-                        onSelect(Selection.View(sel.index + 1))
-                }) { Text("↓") }
-                OutlinedButton(onClick = {
-                    session.update { ModelOps.removeView(it, sel.index) }
-                    onSelect(Selection.App)
-                }) { Text("Delete") }
-            }
-        }
     }
 }
 
 @Composable
-private fun OutlineRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.bodyLarge,
+private fun OutlineRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onMoveUp: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
             .background(
                 if (selected) MaterialTheme.colorScheme.secondaryContainer
                 else MaterialTheme.colorScheme.surface,
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-    )
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f)
+        )
+        if (selected && (onMoveUp != null || onMoveDown != null || onDelete != null)) {
+            if (onMoveUp != null) {
+                androidx.compose.material3.IconButton(onClick = onMoveUp, modifier = Modifier.size(24.dp)) {
+                    androidx.compose.material3.Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move Up")
+                }
+            }
+            if (onMoveDown != null) {
+                androidx.compose.material3.IconButton(onClick = onMoveDown, modifier = Modifier.size(24.dp)) {
+                    androidx.compose.material3.Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move Down")
+                }
+            }
+            if (onDelete != null) {
+                androidx.compose.material3.IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
+                    androidx.compose.material3.Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
 }
+
+

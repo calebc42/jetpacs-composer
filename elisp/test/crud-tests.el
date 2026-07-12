@@ -21,6 +21,16 @@
   (when (file-directory-p core)
     (add-to-list 'load-path core)))
 
+;; Optional: make vulpea available so the notes CRUD test runs instead of
+;; skipping.  Its deps (emacsql, dash, s) come from installed ELPA packages;
+;; vulpea itself from the checkout named by $VULPEA_DIR.  Without either, the
+;; notes CRUD test skips (see its `skip-unless') and everything else is
+;; unaffected — the runtime never hard-depends on vulpea.
+(ignore-errors (package-activate-all))
+(let ((vulpea-dir (getenv "VULPEA_DIR")))
+  (when (and vulpea-dir (file-directory-p vulpea-dir))
+    (add-to-list 'load-path vulpea-dir)))
+
 (require 'ert)
 (require 'jetpacs-lint)
 (require 'jetpacs-crud)
@@ -608,6 +618,202 @@ Only for intentional wire changes; review the diff."
     (should-error (jetpacs-crud-action-cell-edit
                    '((app . "pantry") (view . "inventory")) nil)
                   :type 'user-error)))
+
+;; ─── FILTER query engine ─────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-crud-query-parse-shapes ()
+  "The three FILTER input shapes normalize to org-ql sexps."
+  ;; Empty / blank → no query (every record).
+  (should (null (jetpacs-crud--parse-query nil)))
+  (should (null (jetpacs-crud--parse-query "   ")))
+  ;; A sexp is read and its bare argument symbols stringified.
+  (should (equal (jetpacs-crud--parse-query "(todo NEXT)") '(todo "NEXT")))
+  (should (equal (jetpacs-crud--parse-query "(property \"Tier\" \"Gold\")")
+                 '(property "Tier" "Gold")))
+  ;; Filter tokens AND together; comma splits any-of.
+  (should (equal (jetpacs-crud--parse-query "todo:NEXT tags:work,home")
+                 '(and (todo "NEXT") (tags "work" "home"))))
+  (should (equal (jetpacs-crud--parse-query "priority:A") '(priority "A")))
+  ;; Bare words become substring (regexp) matches.
+  (should (equal (jetpacs-crud--parse-query "foo bar")
+                 '(and (regexp "foo") (regexp "bar"))))
+  ;; A malformed sexp signals rather than matching nothing silently.
+  (should-error (jetpacs-crud--parse-query "(unbalanced")
+                :type 'user-error))
+
+(defmacro jetpacs-crud-tests--in-org (content &rest body)
+  "Run BODY in an `org-mode' temp buffer holding CONTENT.
+A TODO/NEXT/DONE keyword sequence is in force for state tests."
+  (declare (indent 1) (debug (form body)))
+  `(with-temp-buffer
+     (let ((org-todo-keywords '((sequence "TODO" "NEXT" "|" "DONE")))
+           (org-mode-hook nil))
+       (insert ,content)
+       (org-mode)
+       (goto-char (point-min))
+       ,@body)))
+
+(defun jetpacs-crud-tests--match-at (title filter)
+  "Non-nil when the heading titled TITLE matches FILTER string.
+Assumes the current buffer is an org buffer positioned anywhere."
+  (goto-char (point-min))
+  (re-search-forward (concat "^\\*+ .*" (regexp-quote title)))
+  (org-back-to-heading t)
+  (jetpacs-crud--entry-matches-p (jetpacs-crud--parse-query filter)))
+
+(ert-deftest jetpacs-crud-query-interpreter ()
+  "The built-in interpreter covers the common org-ql subset."
+  (jetpacs-crud-tests--in-org
+      "* NEXT Alpha :work:
+:PROPERTIES:
+:Tier: Gold
+:END:
+body mentions xylophone here
+* DONE Beta :home:
+* TODO Gamma :work:home:
+** [#A] Delta
+"
+    ;; todo, with and without keywords
+    (should (jetpacs-crud-tests--match-at "Alpha" "(todo \"NEXT\")"))
+    (should-not (jetpacs-crud-tests--match-at "Beta" "(todo \"NEXT\")"))
+    (should (jetpacs-crud-tests--match-at "Alpha" "(todo)"))     ; any not-done
+    (should-not (jetpacs-crud-tests--match-at "Beta" "(todo)"))  ; DONE
+    (should (jetpacs-crud-tests--match-at "Beta" "(done)"))
+    (should-not (jetpacs-crud-tests--match-at "Alpha" "(done)"))
+    ;; tags, any-of
+    (should (jetpacs-crud-tests--match-at "Alpha" "(tags \"work\")"))
+    (should-not (jetpacs-crud-tests--match-at "Beta" "(tags \"work\")"))
+    (should (jetpacs-crud-tests--match-at "Gamma" "(tags \"work\" \"home\")"))
+    ;; property, value and presence
+    (should (jetpacs-crud-tests--match-at "Alpha" "(property \"Tier\" \"Gold\")"))
+    (should-not (jetpacs-crud-tests--match-at "Gamma"
+                                              "(property \"Tier\" \"Gold\")"))
+    (should (jetpacs-crud-tests--match-at "Alpha" "(property \"Tier\")"))
+    (should-not (jetpacs-crud-tests--match-at "Gamma" "(property \"Tier\")"))
+    ;; regexp over heading + body
+    (should (jetpacs-crud-tests--match-at "Alpha" "(regexp \"xylophone\")"))
+    (should-not (jetpacs-crud-tests--match-at "Gamma" "(regexp \"xylophone\")"))
+    ;; level and priority
+    (should (jetpacs-crud-tests--match-at "Alpha" "(level 1)"))
+    (should (jetpacs-crud-tests--match-at "Delta" "(level 2)"))
+    (should (jetpacs-crud-tests--match-at "Delta" "(priority = \"A\")"))
+    (should (jetpacs-crud-tests--match-at "Delta" "(priority > \"B\")")) ; A>B
+    ;; boolean composition
+    (should (jetpacs-crud-tests--match-at
+             "Alpha" "(and (todo \"NEXT\") (tags \"work\"))"))
+    (should (jetpacs-crud-tests--match-at "Beta" "(or (done) (tags \"work\"))"))
+    (should (jetpacs-crud-tests--match-at "Gamma" "(not (done))"))
+    ;; an unsupported term names org-ql rather than matching silently
+    (should-error
+     (progn (goto-char (point-min))
+            (re-search-forward "Alpha")
+            (org-back-to-heading t)
+            (jetpacs-crud--entry-matches-p '(clocked)))
+     :type 'user-error)))
+
+;; ─── Notes (vulpea-backed) views ─────────────────────────────────────────────
+
+(ert-deftest jetpacs-crud-parse-notes ()
+  "A notes view parses its kind, both SOURCE shapes, and schema."
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "contacts.org"))
+           (spec (jetpacs-crud-parse-app file))
+           (people (jetpacs-crud--view spec "people"))
+           (team (jetpacs-crud--view spec "team")))
+      (should (eq (plist-get people :kind) 'notes))
+      (should (eq (plist-get team :kind) 'notes))
+      ;; Directory SOURCE → (:dir …) with a trailing slash.
+      (should (string-suffix-p "/" (plist-get (plist-get people :source) :dir)))
+      ;; file::*Heading SOURCE → (:file … :heading …).
+      (should (equal (plist-get (plist-get team :source) :heading) "Team"))
+      (should (string-suffix-p "roster.org"
+                               (plist-get (plist-get team :source) :file)))
+      (should (equal (mapcar #'car (plist-get people :schema))
+                     '("ITEM" "Phone" "Tier"))))))
+
+(ert-deftest jetpacs-crud-notes-requires-schema-and-source ()
+  "A notes view without SCHEMA or without SOURCE is a format error."
+  (let ((no-schema "#+JETPACS_APP: a\n\n* V\n:PROPERTIES:\n:KIND: notes\n\
+:SOURCE: vault/\n:END:\n")
+        (no-source "#+JETPACS_APP: a\n\n* V\n:PROPERTIES:\n:KIND: notes\n\
+:SCHEMA: %ITEM\n:END:\n"))
+    (let ((f1 (make-temp-file "crud-notes" nil ".org" no-schema))
+          (f2 (make-temp-file "crud-notes" nil ".org" no-source)))
+      (should-error (jetpacs-crud-parse-app f1) :type 'user-error)
+      (should-error (jetpacs-crud-parse-app f2) :type 'user-error))))
+
+(ert-deftest jetpacs-crud-notes-degrades-without-vulpea ()
+  "Without vulpea a notes view renders a placeholder and lints clean —
+the runtime still loads and builds on bare jetpacs-core."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((jetpacs-crud--vulpea nil))   ; force the absent path deterministically
+      (jetpacs-crud-register-file (jetpacs-crud-tests--stage "contacts.org"))
+      (let* ((entry (assoc "contacts.people" jetpacs-shell-views))
+             (view (funcall (plist-get (cdr entry) :builder) nil)))
+        (should (null (jetpacs-lint-spec view)))
+        (should (jetpacs-render-to-json view))
+        ;; The placeholder names the missing dependency.
+        (should (string-match-p "vulpea" (format "%S" view)))))))
+
+(ert-deftest jetpacs-crud-notes-crud-roundtrip ()
+  "End-to-end notes CRUD over a real vulpea vault (skipped without vulpea).
+Uses an isolated, temporary vulpea index (mirrors vulpea's own test
+harness) so the run never touches the developer's real note database."
+  (skip-unless (require 'vulpea nil t))
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((jetpacs-crud--vulpea 'unknown)
+           (root (make-temp-file "jetpacs-notes" t))
+           (vault (expand-file-name "vault/" root))
+           (vulpea-directory vault)
+           (vulpea-db-location (expand-file-name "vulpea.db" root))
+           (vulpea-db--connection nil)
+           (app-text (format "#+JETPACS_APP: contacts\n\n* People\n:PROPERTIES:\n\
+:KIND: notes\n:SOURCE: %s\n:SCHEMA: %%ITEM(Name) %%Phone\n:END:\n" "vault/"))
+           (app-file (expand-file-name "contacts.org" root)))
+      (push root jetpacs-crud-tests--temp-dirs)
+      (make-directory vault t)
+      (with-temp-file app-file (insert app-text))
+      (unwind-protect
+          (progn
+            (vulpea-db)                 ; a fresh, isolated index
+            (jetpacs-crud-register-file app-file)
+            (let* ((spec (jetpacs-crud--app "contacts"))
+                   (view (jetpacs-crud--view spec "people")))
+              ;; Add a note through the action, then the scan should see it.
+              (let ((typed (list "Ada Lovelace" "555-0100")))
+                (cl-letf (((symbol-function 'read-string)
+                           (lambda (&rest _) (pop typed))))
+                  (jetpacs-crud-action-note-add
+                   '((app . "contacts") (view . "people")) nil)))
+              (let ((records (jetpacs-crud--scan-notes spec view)))
+                (should (= (length records) 1))
+                (should (equal (alist-get "ITEM" (plist-get (car records) :fields)
+                                          nil nil #'equal)
+                               "Ada Lovelace"))
+                (should (equal (alist-get "Phone" (plist-get (car records) :fields)
+                                          nil nil #'equal)
+                               "555-0100"))
+                ;; Edit the phone via the note action, addressed by id.
+                (let ((id (plist-get (car records) :id)))
+                  (cl-letf (((symbol-function 'read-string)
+                             (lambda (&rest _) "555-0199")))
+                    (jetpacs-crud-action-note-field-edit
+                     `((app . "contacts") (view . "people") (id . ,id)
+                       (prop . "Phone"))
+                     nil))
+                  (should (equal (alist-get
+                                  "Phone"
+                                  (plist-get (car (jetpacs-crud--scan-notes spec view))
+                                             :fields)
+                                  nil nil #'equal)
+                                 "555-0199"))
+                  ;; Delete it; the vault empties.
+                  (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+                    (jetpacs-crud-action-note-menu
+                     `((app . "contacts") (view . "people") (id . ,id)) nil))
+                  (should (null (jetpacs-crud--scan-notes spec view)))))))
+        (when (and (boundp 'vulpea-db--connection) vulpea-db--connection)
+          (vulpea-db-close))))))
 
 (provide 'crud-tests)
 ;;; crud-tests.el ends here

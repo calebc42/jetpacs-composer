@@ -1,6 +1,10 @@
 #!/bin/sh
 # Run the jetpacs-crud test suite in batch Emacs (28+).
 # On this project's Windows host:  wsl -d Debian -- elisp/test/run-tests.sh
+#
+# The notes (vulpea) CRUD test skips unless vulpea is reachable.  To run it,
+# install its deps once (emacsql dash s, into ~/.emacs.d/elpa) and point at a
+# vulpea checkout:  VULPEA_DIR=~/pkb/resources/emacs/vulpea sh elisp/test/run-tests.sh
 set -e
 cd "$(dirname "$0")/../.." || exit 1
 

@@ -55,7 +55,7 @@ data class ViewSpec(
     val columns: List<String> = emptyList(),
     /** Records views: the `:SCHEMA:` fields. */
     val schema: List<SchemaField> = emptyList(),
-    /** Records views: the `:FILTER:` org match string. */
+    /** Records views: the `:FILTER:` query (org-ql sexp, tokens, or free text). */
     val filter: String? = null,
     /** The view's body content, in order; edited in place, never lost. */
     val body: List<BodyElement> = emptyList(),

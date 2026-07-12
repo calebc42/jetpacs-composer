@@ -15,7 +15,7 @@
 :KIND: records
 :SOURCE: people.org::*Contacts
 :SCHEMA: %ITEM(Name) %Phone
-:FILTER: Tier="Gold"
+:FILTER: (property "Tier" "Gold")
 :END:
 
 * Scratch

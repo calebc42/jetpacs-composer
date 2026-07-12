@@ -5,9 +5,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
+enum class ThemePreference { SYSTEM, LIGHT, DARK }
+
 @Serializable
 data class ComposerConfig(
     val recent: List<String> = emptyList(),
+    val theme: ThemePreference = ThemePreference.SYSTEM,
+    val defaultAppPath: String? = null,
+    val defaultExportPath: String? = null,
 )
 
 /** %APPDATA%\jetpacs-composer\config.json (XDG-ish fallback elsewhere). */
@@ -28,10 +33,13 @@ object RecentFiles {
     fun remember(path: String) {
         val config = load()
         val recent = (listOf(path) + config.recent.filter { it != path }).take(10)
+        save(config.copy(recent = recent))
+    }
+
+    fun save(config: ComposerConfig) {
         runCatching {
             configFile.parentFile.mkdirs()
-            configFile.writeText(json.encodeToString(config.copy(recent = recent)),
-                                 Charsets.UTF_8)
+            configFile.writeText(json.encodeToString(config), Charsets.UTF_8)
         }
     }
 }

@@ -97,20 +97,25 @@ case-insensitively anyway)."
     (nreverse fields)))
 
 (defun jetpacs-crud-orgapp--parse-source (value app-file)
-  "Parse a `:SOURCE:' VALUE: nil for inline, else (:file F :heading H).
-Relative paths resolve against APP-FILE's directory."
+  "Parse a `:SOURCE:' VALUE.
+nil for inline; (:dir D) for a trailing-slash vault directory (notes
+views — one note file per record); else (:file F :heading H).  Relative
+paths resolve against APP-FILE's directory."
   (let ((value (string-trim value)))
     (unless (string-equal-ignore-case value "inline")
-      (let* ((split (split-string value "::" t "[ \t]+"))
-             (path (car split))
-             (target (cadr split))
-             (heading (when target
-                        (unless (string-prefix-p "*" target)
-                          (user-error "%s: SOURCE target must be *Heading, got %S"
-                                      app-file target))
-                        (string-trim (substring target 1)))))
-        (list :file (expand-file-name path (file-name-directory app-file))
-              :heading heading)))))
+      (if (string-suffix-p "/" value)
+          (list :dir (file-name-as-directory
+                      (expand-file-name value (file-name-directory app-file))))
+        (let* ((split (split-string value "::" t "[ \t]+"))
+               (path (car split))
+               (target (cadr split))
+               (heading (when target
+                          (unless (string-prefix-p "*" target)
+                            (user-error "%s: SOURCE target must be *Heading, got %S"
+                                        app-file target))
+                          (string-trim (substring target 1)))))
+          (list :file (expand-file-name path (file-name-directory app-file))
+                :heading heading))))))
 
 (defun jetpacs-crud-orgapp--parse-view (app-file index)
   "Parse the view at the level-1 heading at point (0-based INDEX).
@@ -122,6 +127,7 @@ Point must be on the heading line."
                  ((or `nil "table") 'table)
                  ("checklist" 'checklist)
                  ("records" 'records)
+                 ("notes" 'notes)
                  (other (user-error "%s: unknown KIND %S under %S"
                                     app-file other title))))
          (source-raw (funcall prop "SOURCE"))
@@ -130,15 +136,19 @@ Point must be on the heading line."
          (schema-raw (funcall prop "SCHEMA"))
          (filter-raw (funcall prop "FILTER"))
          (order-raw (funcall prop "ORDER")))
-    (when (and (eq kind 'records) (not schema-raw))
-      (user-error "%s: a records view needs a :SCHEMA: under %S"
-                  app-file title))
+    (when (and (memq kind '(records notes)) (not schema-raw))
+      (user-error "%s: a %s view needs a :SCHEMA: under %S"
+                  app-file (symbol-name kind) title))
+    (when (and (eq kind 'notes) (not source-raw))
+      (user-error "%s: a notes view needs a :SOURCE: (a vault dir or \
+file::*Heading) under %S" app-file title))
     (list :name (jetpacs-crud-orgapp--slug title)
           :title title
           :icon (or (funcall prop "ICON")
                     (pcase kind
                       ('checklist "checklist")
                       ('records "list_alt")
+                      ('notes "sticky_note_2")
                       (_ "table_chart")))
           :order (if order-raw (string-to-number order-raw)
                    (* 10 (1+ index)))

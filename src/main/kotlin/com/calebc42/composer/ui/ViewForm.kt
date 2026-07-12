@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -58,12 +60,31 @@ fun AppForm(session: EditorSession) {
     }
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        var showAppIconPicker by remember { mutableStateOf(false) }
         OutlinedTextField(
             spec.icon.orEmpty(),
             { v -> session.update { it.copy(icon = v.ifBlank { null }) } },
             label = { Text("icon (Material name)") }, singleLine = true,
             modifier = Modifier.width(200.dp),
+            trailingIcon = {
+                androidx.compose.material3.IconButton(onClick = { showAppIconPicker = true }) {
+                    androidx.compose.material3.Icon(
+                        Icons.Default.Edit, // palette-like
+                        contentDescription = "Pick icon"
+                    )
+                }
+            }
         )
+        if (showAppIconPicker) {
+            IconPicker(
+                onIconSelected = { 
+                    session.update { it.copy(icon = it.icon) /* fake update? no, real */ }
+                    session.update { spec -> spec.copy(icon = it) }
+                    showAppIconPicker = false
+                },
+                onDismiss = { showAppIconPicker = false }
+            )
+        }
         OutlinedTextField(
             spec.order?.toString().orEmpty(),
             { v -> session.update { it.copy(order = v.toIntOrNull()) } },
@@ -96,12 +117,30 @@ fun ViewForm(session: EditorSession, index: Int) {
             label = { Text("title (tab label)") }, singleLine = true,
             modifier = Modifier.width(220.dp),
         )
+        var showViewIconPicker by remember { mutableStateOf(false) }
         OutlinedTextField(
             view.icon.orEmpty(),
             { v -> edit { it.copy(icon = v.ifBlank { null }) } },
             label = { Text("tab icon") }, singleLine = true,
-            modifier = Modifier.width(180.dp),
+            modifier = Modifier.width(200.dp),
+            trailingIcon = {
+                androidx.compose.material3.IconButton(onClick = { showViewIconPicker = true }) {
+                    androidx.compose.material3.Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "Pick icon"
+                    )
+                }
+            }
         )
+        if (showViewIconPicker) {
+            IconPicker(
+                onIconSelected = { 
+                    edit { spec -> spec.copy(icon = it) }
+                    showViewIconPicker = false
+                },
+                onDismiss = { showViewIconPicker = false }
+            )
+        }
         OutlinedTextField(
             view.order?.toString().orEmpty(),
             { v -> edit { it.copy(order = v.toIntOrNull()) } },
@@ -213,7 +252,7 @@ private fun RecordsSchemaEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -
     OutlinedTextField(
         view.filter.orEmpty(),
         { v -> edit { it.copy(filter = v.trim().ifBlank { null }) } },
-        label = { Text("filter (org match syntax, e.g. +active+Tier=\"Gold\")") },
+        label = { Text("filter (org-ql: todo:NEXT tags:work, or a sexp)") },
         singleLine = true, modifier = Modifier.width(420.dp),
     )
 }
