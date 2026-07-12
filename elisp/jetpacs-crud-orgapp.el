@@ -68,6 +68,34 @@ an error naming FILE — the format is closed."
               types)))
     (nreverse types)))
 
+(defconst jetpacs-crud-orgapp--special-props
+  '("ITEM" "TODO" "DEADLINE" "SCHEDULED" "PRIORITY" "TAGS")
+  "Org special properties recognized in a `:SCHEMA:' (upcased on parse).")
+
+(defun jetpacs-crud-orgapp--parse-schema (value file)
+  "Parse a `:SCHEMA:' VALUE into a list of (PROP . LABEL).
+Tokens are org column-view style: %PROP or %PROP(Label).  Property
+names that case-insensitively match an org special property are
+upcased; drawer property names keep their case (org reads them
+case-insensitively anyway)."
+  (let ((start 0) (fields nil))
+    (while (string-match "%\\([A-Za-z_][A-Za-z_0-9-]*\\)\\((\\([^)]*\\))\\)?"
+                         value start)
+      (let* ((raw (match-string 1 value))
+             (label (match-string 3 value))
+             (prop (if (member (upcase raw) jetpacs-crud-orgapp--special-props)
+                       (upcase raw)
+                     raw)))
+        (setq start (match-end 0))
+        (push (cons prop label) fields)))
+    (unless fields
+      (user-error "%s: SCHEMA needs at least one %%PROP token" file))
+    (let ((props (mapcar #'car fields)))
+      (when (/= (length props)
+                (length (delete-dups (mapcar #'upcase (copy-sequence props)))))
+        (user-error "%s: duplicate property in SCHEMA" file)))
+    (nreverse fields)))
+
 (defun jetpacs-crud-orgapp--parse-source (value app-file)
   "Parse a `:SOURCE:' VALUE: nil for inline, else (:file F :heading H).
 Relative paths resolve against APP-FILE's directory."
@@ -93,16 +121,25 @@ Point must be on the heading line."
          (kind (pcase (and kind-raw (downcase (string-trim kind-raw)))
                  ((or `nil "table") 'table)
                  ("checklist" 'checklist)
+                 ("records" 'records)
                  (other (user-error "%s: unknown KIND %S under %S"
                                     app-file other title))))
          (source-raw (funcall prop "SOURCE"))
          (coltypes-raw (funcall prop "COLTYPES"))
          (columns-raw (funcall prop "COLUMNS"))
+         (schema-raw (funcall prop "SCHEMA"))
+         (filter-raw (funcall prop "FILTER"))
          (order-raw (funcall prop "ORDER")))
+    (when (and (eq kind 'records) (not schema-raw))
+      (user-error "%s: a records view needs a :SCHEMA: under %S"
+                  app-file title))
     (list :name (jetpacs-crud-orgapp--slug title)
           :title title
           :icon (or (funcall prop "ICON")
-                    (if (eq kind 'checklist) "checklist" "table_chart"))
+                    (pcase kind
+                      ('checklist "checklist")
+                      ('records "list_alt")
+                      (_ "table_chart")))
           :order (if order-raw (string-to-number order-raw)
                    (* 10 (1+ index)))
           :kind kind
@@ -114,7 +151,12 @@ Point must be on the heading line."
           :columns (and columns-raw
                         (cl-remove-if #'string-empty-p
                                       (mapcar #'string-trim
-                                              (split-string columns-raw "|")))))))
+                                              (split-string columns-raw "|"))))
+          :schema (and schema-raw
+                       (jetpacs-crud-orgapp--parse-schema schema-raw app-file))
+          :filter (and filter-raw
+                       (let ((f (string-trim filter-raw)))
+                         (and (not (string-empty-p f)) f))))))
 
 ;; ─── The parser ──────────────────────────────────────────────────────────────
 

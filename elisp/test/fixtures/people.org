@@ -1,0 +1,25 @@
+#+TODO: LEAD ACTIVE | LOST
+#+PROPERTY: Tier_ALL Gold Silver Bronze
+
+Prose before any heading. The runtime must never touch this line.
+
+* Contacts
+A body note under the source heading — also untouchable.
+
+** ACTIVE Ada Lovelace
+:PROPERTIES:
+:Phone: 555-0100
+:Tier: Gold
+:END:
+Notes about Ada that must survive every field edit.
+
+** LEAD Grace Hopper
+:PROPERTIES:
+:Phone: 555-0199
+:Tier: Silver
+:END:
+
+* Unrelated
+Records views only manage direct children of their source heading.
+
+** Not a contact

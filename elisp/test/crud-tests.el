@@ -385,6 +385,215 @@ Only for intentional wire changes; review the diff."
       (should (string-match-p "| *Bolt *| *12 *|"
                               (jetpacs-crud-tests--slurp backend))))))
 
+;; ─── Records views (headings + property drawers) ────────────────────────────
+
+(defun jetpacs-crud-tests--record-pos (id view-name title)
+  "Position of the record whose ITEM is TITLE in ID's VIEW-NAME."
+  (let* ((spec (jetpacs-crud--app id))
+         (view (jetpacs-crud--view spec view-name)))
+    (plist-get
+     (cl-find title (jetpacs-crud--scan-records spec view)
+              :key (lambda (r)
+                     (alist-get "ITEM" (plist-get r :fields) nil nil #'equal))
+              :test #'equal)
+     :pos)))
+
+(ert-deftest jetpacs-crud-records-parse-and-scan ()
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "crm.org" "people.org")))
+      (jetpacs-crud-register-file file)
+      (let* ((spec (jetpacs-crud--app "crm"))
+             (people (jetpacs-crud--view spec "people")))
+        ;; %todo upcased to the special property; labels kept.
+        (should (equal (mapcar #'car (plist-get people :schema))
+                       '("ITEM" "TODO" "Phone" "Tier" "DEADLINE")))
+        (should (equal (cdr (assoc "TODO" (plist-get people :schema)))
+                       "Status"))
+        ;; Only the direct children of *Contacts are records.
+        (let ((records (jetpacs-crud--scan-records spec people)))
+          (should (= (length records) 2))
+          (should (equal (mapcar (lambda (r)
+                                   (alist-get "ITEM" (plist-get r :fields)
+                                              nil nil #'equal))
+                                 records)
+                         '("Ada Lovelace" "Grace Hopper")))
+          ;; Fields ride org-entry-get: specials and drawer props alike.
+          (let ((ada (car records)))
+            (should (equal (alist-get "TODO" (plist-get ada :fields)
+                                      nil nil #'equal)
+                           "ACTIVE"))
+            (should (equal (alist-get "Phone" (plist-get ada :fields)
+                                      nil nil #'equal)
+                           "555-0100"))))
+        ;; The filtered view sees only Gold-tier records.
+        (let ((gold (jetpacs-crud--view spec "gold")))
+          (should (equal (mapcar (lambda (r)
+                                   (alist-get "ITEM" (plist-get r :fields)
+                                              nil nil #'equal))
+                                 (jetpacs-crud--scan-records spec gold))
+                         '("Ada Lovelace"))))
+        ;; Inline records: children of the view heading in the app doc.
+        (let ((scratch (jetpacs-crud--view spec "scratch")))
+          (should (= (length (jetpacs-crud--scan-records spec scratch)) 1)))))))
+
+(ert-deftest jetpacs-crud-records-views-lint-clean ()
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-register-file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+    (dolist (entry jetpacs-shell-views)
+      (let ((view (funcall (plist-get (cdr entry) :builder) nil)))
+        (should (null (jetpacs-lint-spec view)))
+        (should (jetpacs-render-to-json view))))))
+
+(ert-deftest jetpacs-crud-field-edit-preserves-record-body ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "555-0111")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "Phone")) nil)))
+      (let ((content (jetpacs-crud-tests--slurp data)))
+        (should (string-match-p ":Phone: *555-0111" content))
+        (should (string-match-p "Notes about Ada that must survive" content))
+        (should (string-match-p "Prose before any heading" content))))))
+
+(ert-deftest jetpacs-crud-field-edit-todo-uses-real-keywords ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file)))
+           (offered nil))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Grace Hopper")))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (setq offered collection) "LOST")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "TODO")) nil)))
+      ;; The file's own #+TODO: sequence, not a hardcoded one.
+      (should (member "LEAD" offered))
+      (should (member "LOST" offered))
+      (should (string-match-p "^\\*\\* LOST Grace Hopper"
+                              (jetpacs-crud-tests--slurp data))))))
+
+(ert-deftest jetpacs-crud-field-edit-enum-from-prop-all ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file)))
+           (offered nil))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Grace Hopper")))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (setq offered collection) "Bronze")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "Tier")) nil)))
+      ;; Options came from the file's Tier_ALL declaration.
+      (should (member "Bronze" offered))
+      (should (string-match-p ":Tier: *Bronze"
+                              (jetpacs-crud-tests--slurp data))))))
+
+(ert-deftest jetpacs-crud-field-edit-deadline-writes-planning-line ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (&rest _) "2027-01-01")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "DEADLINE"))
+           nil)))
+      (should (string-match-p "DEADLINE: <2027-01-01"
+                              (jetpacs-crud-tests--slurp data))))))
+
+(ert-deftest jetpacs-crud-field-edit-title-keeps-todo-keyword ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (&rest _) "Ada King")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "ITEM")) nil)))
+      (should (string-match-p "^\\*\\* ACTIVE Ada King"
+                              (jetpacs-crud-tests--slurp data))))))
+
+(ert-deftest jetpacs-crud-record-add-lands-inside-source-subtree ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      ;; TODO and Tier have file-declared choices, so they prompt via
+      ;; completing-read; title/Phone/DEADLINE via read-string.
+      (let ((typed (list "Katherine Johnson" "555-0202" ""))
+            (chosen (list "ACTIVE" "Gold")))
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (&rest _) (pop typed)))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest _) (pop chosen))))
+          (jetpacs-crud-action-record-add
+           '((app . "crm") (view . "people")) nil)))
+      (let ((content (jetpacs-crud-tests--slurp data)))
+        ;; New record exists, with its drawer, BEFORE * Unrelated.
+        (should (string-match-p "^\\*\\* ACTIVE Katherine Johnson" content))
+        (should (string-match-p ":Phone: *555-0202" content))
+        (should (< (string-match "Katherine Johnson" content)
+                   (string-match "^\\* Unrelated" content)))))))
+
+(ert-deftest jetpacs-crud-field-clear-removes-specials-for-real ()
+  "Clearing TODO/DEADLINE must go through org's removal commands —
+`org-entry-put' with nil is a silent no-op for special properties."
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      ;; Give Ada a deadline, then clear both her deadline and her state.
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (&rest _) "2027-01-01")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "DEADLINE"))
+           nil)))
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "DEADLINE"))
+           nil)))
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (pos . ,pos) (prop . "TODO")) nil)))
+      (let ((content (jetpacs-crud-tests--slurp data)))
+        (should-not (string-match-p "DEADLINE:" content))
+        (should (string-match-p "^\\*\\* Ada Lovelace" content))))))
+
+(ert-deftest jetpacs-crud-record-delete-confirmed-and-scoped ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Grace Hopper")))
+        ;; Declined confirmation deletes nothing.
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) nil)))
+          (jetpacs-crud-action-record-menu
+           `((app . "crm") (view . "people") (pos . ,pos)) nil))
+        (should (string-match-p "Grace Hopper" (jetpacs-crud-tests--slurp data)))
+        ;; Confirmed deletes exactly that subtree.
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (&rest _) t)))
+          (jetpacs-crud-action-record-menu
+           `((app . "crm") (view . "people") (pos . ,pos)) nil)))
+      (let ((content (jetpacs-crud-tests--slurp data)))
+        (should-not (string-match-p "Grace Hopper" content))
+        (should (string-match-p "Ada Lovelace" content))
+        (should (string-match-p "^\\* Unrelated" content))))))
+
+(ert-deftest jetpacs-crud-records-schema-required ()
+  (let ((text "#+JETPACS_APP: bad\n\n* View\n:PROPERTIES:\n:KIND: records\n:END:\n"))
+    (let ((file (make-temp-file "crud-noschema" nil ".org" text)))
+      (should-error (jetpacs-crud-parse-app file) :type 'user-error))))
+
 ;; ─── Validation boundary ─────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-crud-rejects-unknown-app-and-view ()

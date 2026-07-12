@@ -163,7 +163,11 @@ private fun OutlinePane(
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
         session.spec.views.forEachIndexed { i, view ->
             OutlineRow(
-                "${if (view.kind == ViewKind.CHECKLIST) "☑" else "▦"} ${view.title}",
+                when (view.kind) {
+                    ViewKind.CHECKLIST -> "☑ ${view.title}"
+                    ViewKind.RECORDS -> "☰ ${view.title}"
+                    ViewKind.TABLE -> "▦ ${view.title}"
+                },
                 selection == Selection.View(i),
             ) { onSelect(Selection.View(i)) }
         }
@@ -178,6 +182,11 @@ private fun OutlinePane(
                 onSelect(Selection.View(session.spec.views.size))
             }) { Text("+ Checklist") }
         }
+        Spacer(Modifier.height(4.dp))
+        OutlinedButton(onClick = {
+            session.update { ModelOps.addView(it, "New records", ViewKind.RECORDS) }
+            onSelect(Selection.View(session.spec.views.size))
+        }) { Text("+ Records") }
         (selection as? Selection.View)?.let { sel ->
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {

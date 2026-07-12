@@ -5,6 +5,7 @@ import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
+import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.ViewKind
 import com.calebc42.composer.model.ViewSpec
@@ -35,6 +36,7 @@ object OrgCodec {
     private val TABLE_RULE_RE = Regex("""^\s*\|[-+].*$""")
     private val CHECKBOX_RE = Regex("""^\s*[-+*] +\[([ xX-])\] +(.*)$""")
     private val COLTYPE_RE = Regex("""([a-z]+)(\(([^)]*)\))?""")
+    private val SCHEMA_RE = Regex("""%([A-Za-z_][A-Za-z_0-9-]*)(\(([^)]*)\))?""")
 
     fun parse(text: String): AppSpec {
         val lines = text.lines()
@@ -105,8 +107,11 @@ object OrgCodec {
         val kind = when (props["KIND"]?.trim()?.lowercase()) {
             null, "", "table" -> ViewKind.TABLE
             "checklist" -> ViewKind.CHECKLIST
+            "records" -> ViewKind.RECORDS
             else -> throw FormatException("unknown KIND \"${props["KIND"]}\" under \"$title\"")
         }
+        if (kind == ViewKind.RECORDS && props["SCHEMA"].isNullOrBlank())
+            throw FormatException("a records view needs a :SCHEMA: under \"$title\"")
         return ViewSpec(
             title = title,
             icon = props["ICON"],
@@ -116,8 +121,23 @@ object OrgCodec {
             colTypes = props["COLTYPES"]?.let { parseColTypes(it) } ?: emptyList(),
             columns = props["COLUMNS"]?.split("|")?.map { it.trim() }
                 ?.filter { it.isNotEmpty() } ?: emptyList(),
+            schema = props["SCHEMA"]?.let { parseSchema(it) } ?: emptyList(),
+            filter = props["FILTER"]?.trim()?.ifEmpty { null },
             body = parseBody(bodyLines),
         )
+    }
+
+    private fun parseSchema(value: String): List<SchemaField> {
+        val fields = SCHEMA_RE.findAll(value).map { m ->
+            SchemaField.of(m.groupValues[1],
+                           m.groupValues[3].ifEmpty { null })
+        }.toList()
+        if (fields.isEmpty())
+            throw FormatException("SCHEMA needs at least one %PROP token")
+        val names = fields.map { it.prop.uppercase() }
+        if (names.size != names.distinct().size)
+            throw FormatException("duplicate property in SCHEMA")
+        return fields
     }
 
     private fun parseSource(value: String): SourceRef? {
@@ -231,14 +251,23 @@ object OrgCodec {
         val props = buildList {
             view.icon?.let { add("ICON" to it) }
             view.order?.let { add("ORDER" to it.toString()) }
-            if (view.kind == ViewKind.CHECKLIST) add("KIND" to "checklist")
+            when (view.kind) {
+                ViewKind.CHECKLIST -> add("KIND" to "checklist")
+                ViewKind.RECORDS -> add("KIND" to "records")
+                ViewKind.TABLE -> {}
+            }
             view.source?.let {
                 add("SOURCE" to (it.file + (it.heading?.let { h -> "::*$h" } ?: "")))
             }
+            if (view.schema.isNotEmpty())
+                add("SCHEMA" to view.schema.joinToString(" ") { f ->
+                    "%${f.prop}" + (f.label?.let { "($it)" } ?: "")
+                })
             if (view.colTypes.isNotEmpty())
                 add("COLTYPES" to view.colTypes.joinToString(" ") { it.toToken() })
             if (view.columns.isNotEmpty())
                 add("COLUMNS" to view.columns.joinToString(" | "))
+            view.filter?.let { add("FILTER" to it) }
         }
         if (props.isEmpty()) return
         appendLine(":PROPERTIES:")

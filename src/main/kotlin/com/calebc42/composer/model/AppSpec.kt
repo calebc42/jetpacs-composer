@@ -27,7 +27,20 @@ data class AppSpec(
 }
 
 @Serializable
-enum class ViewKind { TABLE, CHECKLIST }
+enum class ViewKind { TABLE, CHECKLIST, RECORDS }
+
+/** One `%PROP(Label)` token of a records view's `:SCHEMA:`. */
+@Serializable
+data class SchemaField(val prop: String, val label: String? = null) {
+    companion object {
+        val SPECIAL = setOf("ITEM", "TODO", "DEADLINE", "SCHEDULED",
+                            "PRIORITY", "TAGS")
+
+        /** Upcase names matching org special properties (parser parity). */
+        fun of(raw: String, label: String? = null) = SchemaField(
+            if (raw.uppercase() in SPECIAL) raw.uppercase() else raw, label)
+    }
+}
 
 @Serializable
 data class ViewSpec(
@@ -40,6 +53,10 @@ data class ViewSpec(
     val colTypes: List<ColType> = emptyList(),
     /** Column names for scaffolding an external table source. */
     val columns: List<String> = emptyList(),
+    /** Records views: the `:SCHEMA:` fields. */
+    val schema: List<SchemaField> = emptyList(),
+    /** Records views: the `:FILTER:` org match string. */
+    val filter: String? = null,
     /** The view's body content, in order; edited in place, never lost. */
     val body: List<BodyElement> = emptyList(),
 ) {

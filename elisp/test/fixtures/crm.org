@@ -1,0 +1,30 @@
+#+JETPACS_APP: crm
+#+TITLE: People CRM
+#+JETPACS_ICON: contacts
+
+* People
+:PROPERTIES:
+:KIND: records
+:SOURCE: people.org::*Contacts
+:SCHEMA: %ITEM(Name) %todo(Status) %Phone %Tier %DEADLINE(Renewal)
+:COLTYPES: text text text text date
+:END:
+
+* Gold
+:PROPERTIES:
+:KIND: records
+:SOURCE: people.org::*Contacts
+:SCHEMA: %ITEM(Name) %Phone
+:FILTER: Tier="Gold"
+:END:
+
+* Scratch
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM %Note
+:END:
+
+** First scratch record
+:PROPERTIES:
+:Note: inline records live right here in the app doc
+:END:

@@ -185,7 +185,7 @@ heading alone.  Inline sources and existing files are left untouched."
          (heading (and source (plist-get source :heading)))
          (columns (plist-get view :columns)))
     (when (and file (not (file-exists-p file))
-               (or columns (eq (plist-get view :kind) 'checklist)))
+               (or columns (memq (plist-get view :kind) '(checklist records))))
       (make-directory (file-name-directory file) t)
       (let ((coding-system-for-write 'utf-8))
         (with-temp-file file
@@ -322,6 +322,121 @@ STATE is the checkbox character; POS the item's line start."
                       :title "Nothing here yet"
                       :caption "Tap + to add the first item"))))))
 
+;; ─── Records: headings + property drawers, org's native record shape ────────
+;;
+;; Core org is the engine here, on purpose (the jetpacs thesis applied
+;; to data): `org-entry-get'/`org-entry-put' are the field accessors —
+;; and they treat ITEM/TODO/DEADLINE/SCHEDULED/PRIORITY as first-class,
+;; so a TODO field cycles the file's real keyword sequence and DEADLINE
+;; writes a real planning line.  Filtering is `org-map-entries' with
+;; org's own match syntax; enum options come from org's allowed-values
+;; convention (PROP_ALL).  See FORMAT.md "What the runtime does to your
+;; files" for the layout-normalization contract this buys us into.
+
+(defun jetpacs-crud--schema-props (view)
+  "VIEW's schema as a list of (PROP . LABEL)."
+  (plist-get view :schema))
+
+(defun jetpacs-crud--field-type (view prop)
+  "The declared type of PROP in VIEW (positional in the schema)."
+  (let ((idx (cl-position prop (jetpacs-crud--schema-props view)
+                          :key #'car :test #'equal)))
+    (or (and idx (nth idx (plist-get view :coltypes))) 'text)))
+
+(defun jetpacs-crud--scan-records (spec view)
+  "VIEW's records: a list of plists (:pos POS :fields ALIST).
+Records are the direct children of the source heading (level-1
+headings of the file when the source names none), filtered by the
+view's org match string.  Fields are read via `org-entry-get', so
+special properties come from org itself."
+  (let* ((source (jetpacs-crud--view-source spec view))
+         (file (car source))
+         (heading (cdr source))
+         (props (mapcar #'car (jetpacs-crud--schema-props view))))
+    (when (file-readable-p file)
+      (jetpacs-crud--with-source file
+        (save-restriction
+          (let ((base 0))
+            (when heading
+              (unless (jetpacs-crud--goto-heading heading)
+                (user-error "Heading %s not found in %s" heading file))
+              (setq base (org-outline-level))
+              (org-narrow-to-subtree))
+            (let ((target (1+ base))
+                  (records nil))
+              (org-map-entries
+               (lambda ()
+                 (when (= (org-outline-level) target)
+                   (push (list :pos (point)
+                               :fields (mapcar
+                                        (lambda (p)
+                                          (cons p (or (org-entry-get (point) p)
+                                                      "")))
+                                        props))
+                         records)))
+               (let ((filter (plist-get view :filter)))
+                 (and filter (not (string-empty-p filter)) filter)))
+              (nreverse records))))))))
+
+(defun jetpacs-crud--record-card (spec view record)
+  "The card node for RECORD of VIEW in SPEC."
+  (let* ((fields (plist-get record :fields))
+         (pos (plist-get record :pos))
+         (schema (jetpacs-crud--schema-props view))
+         (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
+                  (if (and item (not (string-empty-p item))) item "Untitled")))
+         (todo (alist-get "TODO" fields nil nil #'equal))
+         (args-for (lambda (prop)
+                     `((app . ,(plist-get spec :id))
+                       (view . ,(plist-get view :name))
+                       (pos . ,pos)
+                       ,@(when prop `((prop . ,prop)))))))
+    (jetpacs-card
+     (list
+      (jetpacs-column
+       (jetpacs-row
+        (jetpacs-box
+         (list (jetpacs-text (if (and todo (not (string-empty-p todo)))
+                               (format "%s %s" todo title)
+                             title)
+                          'title))
+         :weight 1
+         :on-tap (when (cl-find "ITEM" schema :key #'car :test #'equal)
+                   (jetpacs-action "crud.field.edit"
+                                :args (funcall args-for "ITEM"))))
+        (jetpacs-menu
+         (list (jetpacs-menu-item "Delete record"
+                               (jetpacs-action "crud.record.menu"
+                                            :args (funcall args-for nil))
+                               :icon "delete"))))
+       (apply #'jetpacs-column
+              (cl-loop for (prop . label) in schema
+                       unless (member prop '("ITEM" "TODO"))
+                       collect
+                       (let ((value (alist-get prop fields nil nil #'equal)))
+                         (jetpacs-box
+                          (list (jetpacs-row
+                                 (jetpacs-text (or label prop) 'caption nil nil nil 1)
+                                 (jetpacs-spacer :width 12)
+                                 (jetpacs-text (if (string-empty-p value) "—" value)
+                                            'body 1)))
+                          :on-tap (jetpacs-action "crud.field.edit"
+                                               :args (funcall args-for prop))
+                          :padding 2)))))))))
+
+(defun jetpacs-crud--records-body (spec view)
+  "The body node for records VIEW of SPEC."
+  (let ((records (jetpacs-crud--scan-records spec view)))
+    (apply #'jetpacs-lazy-column
+           (or (mapcar (lambda (r) (jetpacs-crud--record-card spec view r))
+                       records)
+               (list (jetpacs-empty-state
+                      :icon "list_alt"
+                      :title "No records"
+                      :caption (if (plist-get view :filter)
+                                   "Nothing matches the view's filter"
+                                 "Tap + to add the first record")))))))
+
 ;; ─── The view builder ────────────────────────────────────────────────────────
 
 (defun jetpacs-crud--fab (spec view)
@@ -329,8 +444,10 @@ STATE is the checkbox character; POS the item's line start."
   (let ((args `((app . ,(plist-get spec :id))
                 (view . ,(plist-get view :name)))))
     (jetpacs-fab "add"
-              :on-tap (jetpacs-action (if (eq (plist-get view :kind) 'checklist)
-                                          "crud.item.add" "crud.row.add")
+              :on-tap (jetpacs-action (pcase (plist-get view :kind)
+                                        ('checklist "crud.item.add")
+                                        ('records "crud.record.add")
+                                        (_ "crud.row.add"))
                                    :args args))))
 
 (defun jetpacs-crud--build-view (id name snackbar)
@@ -341,9 +458,10 @@ STATE is the checkbox character; POS the item's line start."
                    (error "CRUD app %s has no view %s" id name))))
     (jetpacs-shell-tab-view
      (format "%s.%s" id name)
-     (if (eq (plist-get view :kind) 'checklist)
-         (jetpacs-crud--checklist-body spec view)
-       (jetpacs-crud--table-body spec view))
+     (pcase (plist-get view :kind)
+       ('checklist (jetpacs-crud--checklist-body spec view))
+       ('records (jetpacs-crud--records-body spec view))
+       (_ (jetpacs-crud--table-body spec view)))
      :top-bar (jetpacs-shell-default-top-bar (plist-get view :title))
      :fab (jetpacs-crud--fab spec view)
      :snackbar snackbar)))
@@ -553,13 +671,198 @@ phone are refreshed before the user can tap again."
           (save-buffer))))
     (jetpacs-shell-push)))
 
+;; ─── Record actions ──────────────────────────────────────────────────────────
+
+(defun jetpacs-crud--record-mutate (file pos fn)
+  "Run FN with point at the record heading at POS in FILE; save, push."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer
+     (goto-char pos)
+     (unless (org-at-heading-p)
+       (user-error "No record at position %s" pos))
+     (funcall fn))
+    (let ((save-silently t))
+      (save-buffer)))
+  (jetpacs-shell-push))
+
+(defun jetpacs-crud--current-date (value)
+  "The YYYY-MM-DD inside a planning VALUE like \"<2027-01-01 Fri>\"."
+  (when (and value (string-match "[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" value))
+    (match-string 0 value)))
+
+(defun jetpacs-crud--allowed-values (pom prop)
+  "Org's allowed values for PROP at POM: (STRINGS . REQUIRE-MATCH), or nil.
+Wraps `org-property-get-allowed-values' (the PROP_ALL convention, and
+the real keyword sequence for TODO).  PRIORITY letters arrive as
+characters — normalized to strings.  An :ETC declaration marks the
+list open-ended (org's `org-unrestricted' text property), which
+relaxes the match requirement."
+  (let ((raw (org-property-get-allowed-values pom prop)))
+    (when raw
+      (let ((strings (delq nil (mapcar (lambda (x)
+                                         (cond ((consp x) (car x))
+                                               ((characterp x)
+                                                (char-to-string x))
+                                               ((stringp x) x)))
+                                       raw))))
+        (when strings
+          (cons strings
+                (not (get-text-property 0 'org-unrestricted
+                                        (car strings)))))))))
+
+(defun jetpacs-crud--field-remove (prop)
+  "Remove PROP from the record at point, through org's own commands.
+`org-entry-put' silently ignores nil for the special properties, so
+each gets its explicit removal form."
+  (pcase prop
+    ("TODO" (org-todo 'none))
+    ("DEADLINE" (org-deadline '(4)))
+    ("SCHEDULED" (org-schedule '(4)))
+    ("PRIORITY" (org-priority 'remove))
+    (_ (org-entry-delete (point) prop))))
+
+(defun jetpacs-crud-action-field-edit (args _payload)
+  "Edit one field of the record at the tapped position.
+Special properties run org's own machinery via `org-entry-put':
+TODO writes the file's real keyword sequence, DEADLINE/SCHEDULED write
+planning lines.  Enum choices come from org's allowed-values
+convention (PROP_ALL, and the keyword sequence for TODO) when the file
+declares them, else from the declared column type."
+  (pcase-let* ((`(,spec ,view ,file ,pos) (jetpacs-crud--resolve args t))
+               (prop (alist-get 'prop args)))
+    (unless (cl-find prop (jetpacs-crud--schema-props view)
+                     :key #'car :test #'equal)
+      (user-error "Field %S is not in the view's schema" prop))
+    (let* ((label (or (cdr (cl-find prop (jetpacs-crud--schema-props view)
+                                    :key #'car :test #'equal))
+                      prop))
+           current allowed)
+      (jetpacs-crud--with-source file
+        (goto-char pos)
+        (unless (org-at-heading-p)
+          (user-error "No record at position %s" pos))
+        (setq current (or (org-entry-get (point) prop) ""))
+        (setq allowed (jetpacs-crud--allowed-values (point) prop)))
+      (cond
+       ((equal prop "ITEM")
+        (let ((input (string-trim (read-string (format "%s: " label) current))))
+          (when (string-empty-p input) (user-error "A record needs a title"))
+          (jetpacs-crud--record-mutate file pos
+            (lambda ()
+              ;; Replace only the title group of the headline, so the
+              ;; TODO keyword, priority, and tags survive.
+              (org-back-to-heading t)
+              (when (looking-at org-complex-heading-regexp)
+                (if (match-beginning 4)
+                    (replace-match input t t nil 4)
+                  (goto-char (line-end-position))
+                  (insert " " input)))))))
+       (t
+        (let* ((dateish (or (member prop '("DEADLINE" "SCHEDULED"))
+                            (eq (jetpacs-crud--field-type view prop) 'date)))
+               (input
+                (cond
+                 (allowed
+                  (completing-read (format "%s: " label) (car allowed)
+                                   nil (cdr allowed) nil nil current))
+                 (dateish (jetpacs-crud--prompt-value
+                           label 'date (jetpacs-crud--current-date current)))
+                 (t (jetpacs-crud--prompt-value
+                     label (jetpacs-crud--field-type view prop) current)))))
+          (jetpacs-crud--record-mutate file pos
+            (lambda ()
+              (if (string-empty-p input)
+                  (jetpacs-crud--field-remove prop)
+                (org-entry-put (point) prop input))))))))))
+
+(defun jetpacs-crud-action-record-add (args _payload)
+  "Append a new record: one typed prompt per schema field.
+The heading lands at the end of the source subtree; fields are written
+through `org-entry-put', so the drawer and planning lines are org's."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args)))
+    (let* ((schema (jetpacs-crud--schema-props view))
+           (heading (cdr (jetpacs-crud--view-source spec view)))
+           ;; File-declared choices (keyword sequence, PROP_ALL) apply to
+           ;; new records too; file-wide declarations resolve from any
+           ;; position, so point-min serves before the record exists.
+           (allowed-alist
+            (when (file-readable-p file)
+              (jetpacs-crud--with-source file
+                (mapcar (lambda (f)
+                          (cons (car f)
+                                (jetpacs-crud--allowed-values (point-min)
+                                                              (car f))))
+                        schema))))
+           (title (string-trim (read-string "Title: ")))
+           (values
+            (cl-loop for (prop . label) in schema
+                     unless (member prop '("ITEM"))
+                     collect
+                     (cons prop
+                           (let ((allowed (cdr (assoc prop allowed-alist))))
+                             (cond
+                              (allowed
+                               (completing-read (format "%s: " (or label prop))
+                                                (car allowed)
+                                                nil (cdr allowed)))
+                              ((or (member prop '("DEADLINE" "SCHEDULED"))
+                                   (eq (jetpacs-crud--field-type view prop)
+                                       'date))
+                               (jetpacs-crud--prompt-value (or label prop)
+                                                           'date))
+                              (t (jetpacs-crud--prompt-value
+                                  (or label prop)
+                                  (jetpacs-crud--field-type view prop)))))))))
+      (when (string-empty-p title) (user-error "A record needs a title"))
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (let (level insert-at)
+           (if heading
+               (progn
+                 (unless (jetpacs-crud--goto-heading heading)
+                   (user-error "Heading %s not found in %s" heading file))
+                 (setq level (1+ (org-outline-level)))
+                 (setq insert-at (save-excursion (org-end-of-subtree t t)
+                                                 (point))))
+             (setq level 1 insert-at (point-max)))
+           (goto-char insert-at)
+           (unless (bolp) (insert "\n"))
+           (insert (make-string level ?*) " " title "\n")
+           (forward-line -1)
+           (dolist (kv values)
+             (unless (string-empty-p (cdr kv))
+               (org-entry-put (point) (car kv) (cdr kv))))))
+        (let ((save-silently t))
+          (save-buffer))))
+    (jetpacs-shell-push)))
+
+(defun jetpacs-crud-action-record-menu (args _payload)
+  "The record card's menu: delete, behind an explicit confirmation.
+Deletion removes the record's whole subtree — the documented cost of
+managing records (FORMAT.md)."
+  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t)))
+    (let (title)
+      (jetpacs-crud--with-source file
+        (goto-char pos)
+        (unless (org-at-heading-p)
+          (user-error "No record at position %s" pos))
+        (setq title (or (org-entry-get (point) "ITEM") "this record")))
+      (when (y-or-n-p (format "Delete \"%s\" and everything under it? " title))
+        (jetpacs-crud--record-mutate file pos
+          (lambda ()
+            (org-back-to-heading t)
+            (org-cut-subtree)))))))
+
 (with-jetpacs-owner "jetpacs-crud"
   (jetpacs-defaction "crud.cell.edit"       #'jetpacs-crud-action-cell-edit)
   (jetpacs-defaction "crud.cell.toggle"     #'jetpacs-crud-action-cell-toggle)
   (jetpacs-defaction "crud.row.add"         #'jetpacs-crud-action-row-add)
   (jetpacs-defaction "crud.row.menu"        #'jetpacs-crud-action-row-menu)
   (jetpacs-defaction "crud.checkbox.toggle" #'jetpacs-crud-action-checkbox-toggle)
-  (jetpacs-defaction "crud.item.add"        #'jetpacs-crud-action-item-add))
+  (jetpacs-defaction "crud.item.add"        #'jetpacs-crud-action-item-add)
+  (jetpacs-defaction "crud.field.edit"      #'jetpacs-crud-action-field-edit)
+  (jetpacs-defaction "crud.record.add"      #'jetpacs-crud-action-record-add)
+  (jetpacs-defaction "crud.record.menu"     #'jetpacs-crud-action-record-menu))
 
 (provide 'jetpacs-crud)
 ;;; jetpacs-crud.el ends here

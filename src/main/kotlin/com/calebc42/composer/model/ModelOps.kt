@@ -21,12 +21,16 @@ object ModelOps {
                 BodyElement.Table(header = listOf("Name"), rows = emptyList()))
             ViewKind.CHECKLIST -> listOf(
                 BodyElement.Checklist(emptyList()))
+            ViewKind.RECORDS -> emptyList()
         }
         val view = ViewSpec(
             title = uniqueTitle(spec, title),
             kind = kind,
             order = ((spec.views.mapNotNull { it.order }.maxOrNull() ?: 0) + 10),
-            colTypes = if (kind == ViewKind.TABLE) listOf(ColType.Text) else emptyList(),
+            colTypes = if (kind == ViewKind.RECORDS || kind == ViewKind.TABLE)
+                listOf(ColType.Text) else emptyList(),
+            schema = if (kind == ViewKind.RECORDS)
+                listOf(SchemaField("ITEM", "Name")) else emptyList(),
             body = body,
         )
         return spec.copy(views = spec.views + view)
@@ -184,6 +188,17 @@ object ModelOps {
             add(Problem("Two views slugify to \"$it\" — retitle one"))
         }
         spec.views.forEachIndexed { i, view ->
+            if (view.kind == ViewKind.RECORDS) {
+                if (view.schema.isEmpty())
+                    add(Problem("A records view needs at least one schema field", i))
+                if (view.schema.any { it.prop.isBlank() })
+                    add(Problem("A schema field has no property name", i))
+                val names = view.schema.map { it.prop.uppercase() }
+                if (names.size != names.distinct().size)
+                    add(Problem("Duplicate property in the schema", i))
+                if (view.colTypes.size > view.schema.size && view.schema.isNotEmpty())
+                    add(Problem("More field types than schema fields", i))
+            }
             if (view.kind == ViewKind.TABLE) {
                 val width = when {
                     view.source == null -> firstTable(view)?.header?.size ?: 0
