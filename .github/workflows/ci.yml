@@ -16,3 +16,23 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y emacs-nox
       - name: Run the runtime suite + bundle smoke
         run: sh elisp/test/run-tests.sh
+
+  kotlin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Emacs (for the exporter cross-check)
+        run: sudo apt-get update && sudo apt-get install -y emacs-nox
+      - name: Build the elisp reference bundle
+        run: |
+          mkdir -p /tmp/ref
+          emacs -Q --batch -l elisp/build-app-bundle.el -- \
+            elisp/test/fixtures/pantry.org /tmp/ref
+      - name: Build + test (byte-equivalence against the reference)
+        run: ./gradlew build -PelispBundle=/tmp/ref/jetpacs-app-pantry.el --console=plain
