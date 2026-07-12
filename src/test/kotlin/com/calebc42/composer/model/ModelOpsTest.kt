@@ -61,6 +61,71 @@ class ModelOpsTest {
     }
 
     @Test
+    fun moveInlineColumnPermutesHeaderRowsAndTypesTogether() {
+        val view = ViewSpec(
+            title = "Table",
+            colTypes = listOf(ColType.Text, ColType.Number, ColType.Date),
+            body = listOf(BodyElement.Table(
+                header = listOf("A", "B", "C"),
+                rows = listOf(
+                    listOf("a", "b", "c"),
+                    listOf("1", "2"),
+                    listOf("x", "y", "z", "extra"),
+                ),
+            )),
+        )
+
+        val moved = ModelOps.moveColumn(view, 0, 2)
+        val table = ModelOps.firstTable(moved)!!
+        assertEquals(listOf("B", "C", "A"), table.header)
+        assertEquals(listOf(
+            listOf("b", "c", "a"),
+            listOf("2", "", "1"),
+            listOf("y", "z", "x", "extra"),
+        ), table.rows)
+        assertEquals(
+            listOf(ColType.Number, ColType.Date, ColType.Text),
+            moved.colTypes,
+        )
+        assertEquals(moved, ModelOps.moveColumn(moved, 0, -1))
+    }
+
+    @Test
+    fun moveExternalColumnPermutesDeclarationsAndTypesTogether() {
+        val view = ViewSpec(
+            title = "External",
+            source = SourceRef.File("data.org"),
+            columns = listOf("Name", "Count", "Due"),
+            colTypes = listOf(ColType.Text, ColType.Number, ColType.Date),
+        )
+
+        val moved = ModelOps.moveColumn(view, 2, -1)
+        assertEquals(listOf("Name", "Due", "Count"), moved.columns)
+        assertEquals(
+            listOf(ColType.Text, ColType.Date, ColType.Number),
+            moved.colTypes,
+        )
+    }
+
+    @Test
+    fun moveSchemaFieldPermutesItsPositionalType() {
+        val view = ViewSpec(
+            title = "Records",
+            kind = ViewKind.RECORDS,
+            schema = listOf(
+                SchemaField("ITEM"), SchemaField("Count"), SchemaField("DEADLINE")),
+            colTypes = listOf(ColType.Text, ColType.Number, ColType.Date),
+        )
+
+        val moved = ModelOps.moveSchemaField(view, 2, -2)
+        assertEquals(listOf("DEADLINE", "ITEM", "Count"), moved.schema.map { it.prop })
+        assertEquals(
+            listOf(ColType.Date, ColType.Text, ColType.Number),
+            moved.colTypes,
+        )
+    }
+
+    @Test
     fun addRowDefaultsCheckboxColumns() {
         var spec = ModelOps.updateView(base, 0) { ModelOps.addColumn(it, "Done") }
         spec = ModelOps.updateView(spec, 0) {
@@ -131,7 +196,7 @@ class ModelOpsTest {
         val refProblems = ModelOps.validate(
             AppSpec(id = "refs", views = listOf(referrer, target)))
         assertTrue(refProblems.any {
-            "FORMAT-2" in it.message && it.severity == ModelOps.Severity.Error
+            "not implemented" in it.message && it.severity == ModelOps.Severity.Error
         })
         assertTrue(refProblems.none { "not a live view" in it.message })
 

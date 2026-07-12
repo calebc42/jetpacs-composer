@@ -1,4 +1,5 @@
 #+JETPACS_APP: inventory
+#+JETPACS_APP_FORMAT: 2
 #+TITLE: Inventory
 #+JETPACS_ICON: inventory_2
 

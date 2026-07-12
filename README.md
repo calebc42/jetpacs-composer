@@ -21,7 +21,7 @@ backend and Emacs as the brain. No code in the app document, ever.
 
 ## The pieces
 
-- **[docs/FORMAT.md](docs/FORMAT.md)** — the frozen v1 `app.org` format:
+- **[docs/FORMAT.md](docs/FORMAT.md)** — the current v2 `app.org` format:
   one org file describes the whole app. Hand-authorable; the composer is
   a convenience, not a gatekeeper.
 - **[elisp/jetpacs-crud.el](elisp/jetpacs-crud.el)** — the runtime: a

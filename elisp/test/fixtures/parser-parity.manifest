@@ -1,6 +1,6 @@
 # CASE EXPECTATION FIXTURE
 #
-# Each vocabulary row deliberately names one accepted FORMAT-1 surface even
+# Each vocabulary row deliberately names one accepted FORMAT-2 surface even
 # when several rows share the comprehensive fixture.  Both the JVM and ERT
 # suites consume every non-comment row below.
 keyword-jetpacs-app accept parser-parity-all.org
@@ -59,7 +59,7 @@ unknown-kind accept parser-parity-unknown-kind.org
 unknown-coltype accept malformed-coltype.org
 unknown-action accept parser-parity-unknown-action.org
 
-# FORMAT-1 structural rejection cases: structure stays strict even
+# FORMAT-2 structural rejection cases: structure stays strict even
 # though vocabulary is lenient.
 missing-app reject malformed-no-app.org
 unsupported-format reject parser-parity-unsupported-format.org

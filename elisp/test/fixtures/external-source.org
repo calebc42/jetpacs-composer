@@ -1,4 +1,5 @@
 #+JETPACS_APP: stockroom
+#+JETPACS_APP_FORMAT: 2
 #+TITLE: Stockroom
 
 * Stock

@@ -317,7 +317,7 @@ as an `unknown' marker (rendered as text) instead of erroring."
 
 ;; ─── The canonical kitchen sink ─────────────────────────────────────────────
 ;;
-;; hello-world.org is the one document that exercises every FORMAT-1
+;; hello-world.org is the one document that exercises every FORMAT-2
 ;; surface.  These two tests are its teeth: coverage fails when a new
 ;; kind is registered without growing the fixture, and the lint pass
 ;; builds every body against the real widget constructors — the bugs a

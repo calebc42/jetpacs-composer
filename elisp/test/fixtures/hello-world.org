@@ -1,5 +1,5 @@
 # The canonical kitchen sink: one document that exercises every surface
-# of the FORMAT-1 vocabulary (docs/FORMAT.md).  Three consumers keep it
+# of the FORMAT-2 vocabulary (docs/FORMAT.md).  Three consumers keep it
 # honest: the ERT suite parses it, registers it, and lints every view
 # body; the bundle smoke test compiles it and loads the result on a bare
 # jetpacs-core; and the JVM suite parses, validates, and round-trips it
@@ -22,7 +22,7 @@
 #+TITLE: Hello World
 #+JETPACS_ICON: waving_hand
 #+JETPACS_ORDER: 90
-#+JETPACS_APP_FORMAT: 1
+#+JETPACS_APP_FORMAT: 2
 #+TODO: TODO NEXT | DONE CANCELLED
 #+TAGS: home errand fun
 

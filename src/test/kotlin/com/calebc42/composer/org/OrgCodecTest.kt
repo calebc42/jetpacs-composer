@@ -299,7 +299,19 @@ class OrgCodecTest {
         val spec = OrgCodec.parse(fixture("pantry.org"))
         val text = OrgCodec.write(spec)
         assertTrue(text.startsWith("#+JETPACS_APP: pantry\n"))
+        assertTrue("#+JETPACS_APP_FORMAT: 2\n" in text)
         assertTrue(":COLTYPES: text number date enum(Low,Mid,High) checkbox" in text)
         assertTrue("| Rice | 2   | 2026-09-01 | Mid   | [ ]     |" in text)
+    }
+
+    @Test
+    fun formatTwoIsTheCleanCutoverVersion() {
+        val body = "\n* Table\n\n| Name |\n|------+\n| one  |\n"
+        assertEquals("current", OrgCodec.parse(
+            "#+JETPACS_APP: current$body").id)
+        assertFailsWith<OrgCodec.FormatException> {
+            OrgCodec.parse(
+                "#+JETPACS_APP: old\n#+JETPACS_APP_FORMAT: 1$body")
+        }
     }
 }

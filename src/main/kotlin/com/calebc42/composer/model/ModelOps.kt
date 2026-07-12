@@ -105,6 +105,15 @@ object ModelOps {
             else body + transform(BodyElement.Table(emptyList(), emptyList())))
     }
 
+    private fun <T> moveItem(items: List<T>, index: Int, target: Int): List<T> {
+        if (index !in items.indices || target !in items.indices || index == target)
+            return items
+        val moved = items.toMutableList()
+        val item = moved.removeAt(index)
+        moved.add(target, item)
+        return moved
+    }
+
     fun setColumnName(view: ViewSpec, col: Int, name: String): ViewSpec =
         mapFirstTable(view) { t ->
             t.copy(header = t.header.mapIndexed { c, h -> if (c == col) name else h })
@@ -141,6 +150,54 @@ object ModelOps {
         }
         return shrunk.copy(
             colTypes = shrunk.colTypes.filterIndexed { c, _ -> c != col })
+    }
+
+    /**
+     * Move one table column while keeping its positional type and every row's
+     * cell at the same logical column. Inline tables move their first table;
+     * external tables move the declared scaffold columns.
+     */
+    fun moveColumn(view: ViewSpec, col: Int, delta: Int): ViewSpec {
+        val width = if (view.source == null) {
+            firstTable(view)?.header?.size ?: return view
+        } else {
+            view.columns.size
+        }
+        val target = col + delta
+        if (col !in 0 until width || target !in 0 until width) return view
+
+        val types = if (view.colTypes.size >= width) view.colTypes else
+            view.colTypes + List(width - view.colTypes.size) { ColType.Text }
+        return if (view.source == null) {
+            mapFirstTable(view) { table ->
+                table.copy(
+                    header = moveItem(table.header, col, target),
+                    rows = table.rows.map { row ->
+                        val aligned = if (row.size >= width) row else
+                            row + List(width - row.size) { "" }
+                        moveItem(aligned, col, target)
+                    },
+                )
+            }.copy(colTypes = moveItem(types, col, target))
+        } else {
+            view.copy(
+                columns = moveItem(view.columns, col, target),
+                colTypes = moveItem(types, col, target),
+            )
+        }
+    }
+
+    /** Move a records schema field and its positional COLTYPE together. */
+    fun moveSchemaField(view: ViewSpec, field: Int, delta: Int): ViewSpec {
+        val target = field + delta
+        if (field !in view.schema.indices || target !in view.schema.indices) return view
+        val width = view.schema.size
+        val types = if (view.colTypes.size >= width) view.colTypes else
+            view.colTypes + List(width - view.colTypes.size) { ColType.Text }
+        return view.copy(
+            schema = moveItem(view.schema, field, target),
+            colTypes = moveItem(types, field, target),
+        )
     }
 
     fun setCell(view: ViewSpec, row: Int, col: Int, value: String): ViewSpec =
@@ -301,7 +358,7 @@ object ModelOps {
             }
             view.colTypes.filterIsInstance<ColType.Ref>().forEach { ref ->
                 add(Problem(
-                    "Reference columns require FORMAT-2 runtime support",
+                    "Reference columns are not implemented by the current runtime",
                     i,
                 ))
                 if (ref.targetView !in liveViews)

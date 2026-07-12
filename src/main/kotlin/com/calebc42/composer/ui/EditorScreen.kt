@@ -38,6 +38,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.ModelOps
@@ -62,7 +69,29 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
     val problems = ModelOps.validate(session.spec)
     val hasErrors = problems.any { it.severity == ModelOps.Severity.Error }
 
-    Column(Modifier.fillMaxSize()) {
+    fun moveHistory(move: () -> Boolean) {
+        val selectedName = (selection as? Selection.View)?.index
+            ?.let { session.spec.views.getOrNull(it)?.name }
+        if (!move()) return
+        selection = selectedName?.let { name ->
+            session.spec.views.indexOfFirst { it.name == name }
+                .takeIf { it >= 0 }?.let(Selection::View)
+        } ?: Selection.App
+    }
+    fun undo() = moveHistory(session::undo)
+    fun redo() = moveHistory(session::redo)
+
+    Column(
+        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) return@onPreviewKeyEvent false
+            when {
+                event.key == Key.Z && event.isShiftPressed -> { redo(); true }
+                event.key == Key.Z -> { undo(); true }
+                event.key == Key.Y -> { redo(); true }
+                else -> false
+            }
+        },
+    ) {
         // ── Toolbar ──────────────────────────────────────────────────────
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -73,6 +102,8 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
                 (session.file?.name ?: "unsaved") + if (session.dirty) " •" else "",
                 style = MaterialTheme.typography.titleMedium,
             )
+            OutlinedButton(onClick = ::undo, enabled = session.canUndo) { Text("Undo") }
+            OutlinedButton(onClick = ::redo, enabled = session.canRedo) { Text("Redo") }
             Spacer(Modifier.weight(1f))
             androidx.compose.material3.IconButton(onClick = onSettings) {
                 androidx.compose.material3.Icon(
@@ -346,4 +377,3 @@ private fun OutlineRow(
         }
     }
 }
-

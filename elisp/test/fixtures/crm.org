@@ -1,4 +1,5 @@
 #+JETPACS_APP: crm
+#+JETPACS_APP_FORMAT: 2
 #+TITLE: People CRM
 #+JETPACS_ICON: contacts
 

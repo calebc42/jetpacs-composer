@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * The composer-side model of one app document — a 1:1 mirror of the
- * frozen v1 format (docs/FORMAT.md). The org file on disk is the source
+ * current v2 format (docs/FORMAT.md). The org file on disk is the source
  * of truth; this model is what [com.calebc42.composer.org.OrgCodec]
  * reads it into and regenerates it from.
  */

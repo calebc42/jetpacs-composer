@@ -1,10 +1,12 @@
-# The Jetpacs CRUD app format, v1 — `app.org`
+# The Jetpacs CRUD app format, v2 — `app.org`
 
-**STATUS: frozen for v1.** This document is the contract between the
+**STATUS: current format.** This document is the contract between the
 composer (the desktop editor), `jetpacs-crud-orgapp.el` (the on-device
 parser), and `jetpacs-crud.el` (the runtime). Anything not listed here
 is not part of the format; adding a keyword, drawer property, column
-type, or action requires bumping `#+JETPACS_APP_FORMAT`.
+type, or action requires a deliberate format change. There was no installed
+v1 app base, so v2 is a clean cutover: explicit v1 documents are rejected and
+there is no migration ladder. A missing version means the current version.
 
 An app is **one org file**. Everything the runtime needs is in it; the
 data it manages lives in org tables — either inline in this file or in
@@ -20,7 +22,9 @@ Case-insensitive, like all org keywords.
 | `#+TITLE:` | no | Launcher label (default: capitalized id). |
 | `#+JETPACS_ICON:` | no | Material icon name for the launcher card (default `apps`). |
 | `#+JETPACS_ORDER:` | no | Integer sort key for the launcher home (default 100). |
-| `#+JETPACS_APP_FORMAT:` | no | Format version; default and only valid value: `1`. |
+| `#+JETPACS_APP_FORMAT:` | no | Format version; default and only valid value: `2`. The canonical writer always emits it. |
+| `#+TODO:` | no | Org TODO keyword sequence used by TODO fields and actions. |
+| `#+TAGS:` | no | File tag vocabulary offered by the composer. |
 
 ## Views
 
@@ -33,12 +37,16 @@ lives in the heading's property drawer:
 |---|---|
 | `:ICON:` | Tab icon (Material name; default `table_chart` for tables, `checklist` for checklists). |
 | `:ORDER:` | Tab order (integer; default: 10, 20, … in document order). |
-| `:KIND:` | `table` (default), `checklist`, `records`, or `notes`. |
+| `:KIND:` | `table` (default), `checklist`, `records`, `notes`, `board`, `calendar`, `gallery`, or `tree`. |
 | `:SOURCE:` | Where the data lives — see below. Default `inline`. |
 | `:COLTYPES:` | Table and records views: per-column/field types, space-separated, positional. |
 | `:COLUMNS:` | Table views with an external `:SOURCE:`: column names, `|`-separated, used to scaffold the backend table when its file doesn't exist yet. |
 | `:SCHEMA:` | Records and notes views (required): the fields, as org column-view-style tokens — `%PROP` or `%PROP(Label)`. |
 | `:FILTER:` | Records and notes views: a query selecting which records show — an org-ql sexp, filter tokens, or free text (see below). |
+| `:GROUP_BY:` | Board views: schema field used for lanes (default `TODO`). |
+| `:DATE_FIELD:` | Calendar views: schema field containing the org timestamp/date (default `DEADLINE`). |
+| `:IMAGE_FIELD:` | Gallery views: schema field containing the image URL/path (default `IMAGE`). |
+| `:ACTIONS:` | Records-like views: closed, space-separated org action tokens (see below). |
 | `:NAV:` | `tab` (default) or `drawer` — where the view lives in the chrome (see below). |
 | `:GROUP:` | A destination name; views sharing one collapse into a single tabbed bottom destination (see below). |
 
@@ -95,6 +103,10 @@ Positional, one token per table column:
 | `enum(A,B,C)` | one of the listed options | native single-choice dialog | as-is |
 | `checkbox` | `[X]` / `[ ]` | tap toggles directly | checkbox icon |
 
+Unknown future column-type tokens load as opaque text fields and are preserved
+verbatim. `ref(View)` is reserved but remains export-blocked until reference
+resolution is implemented by the runtime.
+
 ## Table views (`:KIND: table`)
 
 The first row of the table is the header (= the schema's column names);
@@ -108,7 +120,7 @@ interaction:
   (a typed prompt per column, in order).
 - A `#+TBLFM:` line after the table is respected: mutations trigger
   recalculation Emacs-side. (Editing formulas from the phone is out of
-  scope for v1 — a formula-computed cell is simply overwritten on next
+  scope for v2 — a formula-computed cell is simply overwritten on next
   recalc if hand-edited.)
 
 ## Checklist views (`:KIND: checklist`)
@@ -183,6 +195,32 @@ appended at the end of the source subtree).
 
 A missing external source is scaffolded (file + heading); records
 themselves come from the FAB or from your own editing.
+
+### Record actions — `:ACTIONS:`
+
+Actions are a closed, space-separated vocabulary attached to each record card:
+
+- `todo(KEYWORD)` · `schedule` · `deadline`
+- `tags` or `tags(a,b)` · `priority` or `priority(A)`
+- `refile` or `refile(TARGET)` · `archive` or `archive(STYLE)`
+
+They dispatch through the single closed `crud.action.apply` handler and map to
+org's own mutation commands. Unknown future tokens are preserved and ignored by
+an older runtime rather than preventing the whole app from loading.
+
+## Derived record views
+
+`board`, `calendar`, `gallery`, and `tree` use the same `:SCHEMA:`, `:SOURCE:`,
+`:FILTER:`, card actions, and mutation boundary as records:
+
+- **board** groups cards into ordered lanes using `:GROUP_BY:` and the field's
+  allowed values.
+- **calendar** marks dates from `:DATE_FIELD:` in the native month grid, with a
+  grouped-card fallback when that node is unavailable.
+- **gallery** reads an image URL/path from `:IMAGE_FIELD:` and otherwise renders
+  the normal record card.
+- **tree** walks the source outline at every depth and supports org-native
+  reorder/reparent operations.
 
 ## Notes views (`:KIND: notes`) — a vulpea vault as the datasource
 
@@ -289,23 +327,26 @@ declared sources before touching anything.
 
 `crud.cell.edit` · `crud.cell.toggle` · `crud.row.add` ·
 `crud.row.menu` · `crud.checkbox.toggle` · `crud.item.add` ·
-`crud.field.edit` · `crud.record.add` · `crud.record.menu` ·
-`crud.note.add` · `crud.note.field.edit` · `crud.note.menu`
+`crud.field.edit` · `crud.field.state-sink` · `crud.record.add` ·
+`crud.record.add.submit` · `crud.record.detail` · `crud.record.menu` ·
+`crud.record.duplicate` · `crud.note.add` · `crud.note.field.edit` ·
+`crud.note.menu` · `crud.view.search` · `crud.action.apply` ·
+`crud.node.move` · `crud.dialog.dismiss`
 
 Every mutation ends in: save file → repush all views (positions are
 recomputed from a fresh parse on every render, so they can never go
 stale).
 
-## Explicit v1 non-goals
+## Explicit v2 non-goals
 
 No conditionals, no formula editing, no arbitrary layout, no per-node
 styling, no cross-source references, no tag editing, no filters on
 table views. These are deliberate; see the plan's Deferred section
 before proposing one.
 
-> Format note: records views (`:KIND: records`, `:SCHEMA:`, `:FILTER:`)
-> were folded into v1 pre-release, before any installed base existed.
-> `#+JETPACS_APP_FORMAT:` stays `1`.
+> Format note: v2 is a clean pre-release cutover. There is no installed v1
+> base and therefore no v1 migration or fallback path. All canonical fixtures,
+> templates, generated documents, and runtime parsers move together.
 
 ## Examples (the canonical fixtures)
 

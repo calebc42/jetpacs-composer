@@ -10,6 +10,7 @@ import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.org.OrgCodec
 import com.calebc42.composer.project.RecentFiles
 import java.io.File
+import java.util.ArrayDeque
 
 /**
  * One open app document. The file on disk is the source of truth: every
@@ -21,6 +22,12 @@ class EditorSession private constructor(
     initialSpec: AppSpec,
     file: File?,
 ) {
+    private var savedSpec = initialSpec
+    private val past = ArrayDeque<AppSpec>()
+    private val future = ArrayDeque<AppSpec>()
+    private var activeCoalesceKey: String? = null
+    private var lastEditNanos = 0L
+
     var spec by mutableStateOf(initialSpec)
         private set
     var file by mutableStateOf(file)
@@ -28,11 +35,69 @@ class EditorSession private constructor(
     var dirty by mutableStateOf(false)
         private set
     var lastError by mutableStateOf<String?>(null)
+    var canUndo by mutableStateOf(false)
+        private set
+    var canRedo by mutableStateOf(false)
+        private set
 
-    fun update(transform: (AppSpec) -> AppSpec) {
+    /**
+     * Apply one edit. Consecutive edits with the same non-null [coalesceKey]
+     * within the typing window share one undo snapshot.
+     */
+    fun update(coalesceKey: String? = null, transform: (AppSpec) -> AppSpec) {
+        val before = spec
         runCatching { transform(spec) }
-            .onSuccess { spec = it; dirty = true; lastError = null }
+            .onSuccess { after ->
+                if (after != before) {
+                    val now = System.nanoTime()
+                    val coalesces = coalesceKey != null &&
+                        coalesceKey == activeCoalesceKey &&
+                        now - lastEditNanos <= COALESCE_WINDOW_NANOS
+                    if (!coalesces) pushBounded(past, before)
+                    future.clear()
+                    spec = after
+                    dirty = spec != savedSpec
+                    activeCoalesceKey = coalesceKey
+                    lastEditNanos = now
+                    refreshHistoryState()
+                }
+                lastError = null
+            }
             .onFailure { lastError = it.message }
+    }
+
+    fun undo(): Boolean {
+        if (past.isEmpty()) return false
+        pushBounded(future, spec)
+        spec = past.removeLast()
+        afterHistoryMove()
+        return true
+    }
+
+    fun redo(): Boolean {
+        if (future.isEmpty()) return false
+        pushBounded(past, spec)
+        spec = future.removeLast()
+        afterHistoryMove()
+        return true
+    }
+
+    private fun afterHistoryMove() {
+        activeCoalesceKey = null
+        lastEditNanos = 0L
+        dirty = spec != savedSpec
+        lastError = null
+        refreshHistoryState()
+    }
+
+    private fun pushBounded(stack: ArrayDeque<AppSpec>, value: AppSpec) {
+        stack.addLast(value)
+        if (stack.size > HISTORY_LIMIT) stack.removeFirst()
+    }
+
+    private fun refreshHistoryState() {
+        canUndo = past.isNotEmpty()
+        canRedo = future.isNotEmpty()
     }
 
     fun documentText(): String = OrgCodec.write(spec)
@@ -45,7 +110,10 @@ class EditorSession private constructor(
         return runCatching {
             out.writeText(documentText(), Charsets.UTF_8)
             file = out
+            savedSpec = spec
             dirty = false
+            activeCoalesceKey = null
+            lastEditNanos = 0L
             RecentFiles.remember(out.absolutePath)
             null
         }.getOrElse { it.message }.also { lastError = it }
@@ -92,6 +160,9 @@ class EditorSession private constructor(
     }
 
     companion object {
+        private const val HISTORY_LIMIT = 100
+        private const val COALESCE_WINDOW_NANOS = 1_500_000_000L
+
         fun open(file: File): Result<EditorSession> = runCatching {
             val spec = OrgCodec.parse(file.readText(Charsets.UTF_8))
             RecentFiles.remember(file.absolutePath)

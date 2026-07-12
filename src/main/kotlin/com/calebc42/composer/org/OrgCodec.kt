@@ -14,7 +14,7 @@ import com.calebc42.composer.model.ViewNav
 import com.calebc42.composer.model.ViewSpec
 
 /**
- * Reader/writer for the frozen v1 app.org format (docs/FORMAT.md).
+ * Reader/writer for the current v2 app.org format (docs/FORMAT.md).
  *
  * This is the composer's only org surface: a strict canonical subset —
  * file keywords, level-1 headings, property drawers, tables, checkbox
@@ -23,6 +23,8 @@ import com.calebc42.composer.model.ViewSpec
  * the shared fixture corpus (elisp/test/fixtures) keeps the two honest.
  */
 object OrgCodec {
+
+    const val FORMAT_VERSION = 2
 
     class FormatException(message: String) : Exception(message)
 
@@ -57,7 +59,7 @@ object OrgCodec {
         if (!AppSpec.ID_RE.matches(id))
             throw FormatException("app id must match [a-z][a-z0-9-]*, got \"$id\"")
         keywords["JETPACS_APP_FORMAT"]?.let {
-            if (it.trim() != "1")
+            if (it.trim() != FORMAT_VERSION.toString())
                 throw FormatException("unsupported JETPACS_APP_FORMAT \"$it\"")
         }
 
@@ -316,6 +318,7 @@ object OrgCodec {
 
     fun write(spec: AppSpec): String = buildString {
         appendLine("#+JETPACS_APP: ${spec.id}")
+        appendLine("#+JETPACS_APP_FORMAT: $FORMAT_VERSION")
         spec.label?.let { appendLine("#+TITLE: $it") }
         spec.icon?.let { appendLine("#+JETPACS_ICON: $it") }
         spec.order?.let { appendLine("#+JETPACS_ORDER: $it") }

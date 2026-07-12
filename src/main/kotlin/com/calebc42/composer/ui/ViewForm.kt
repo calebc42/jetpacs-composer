@@ -42,6 +42,9 @@ import com.calebc42.composer.model.ViewKind
 import com.calebc42.composer.model.ViewNav
 import com.calebc42.composer.model.ViewSpec
 
+private typealias ViewEdit = ((ViewSpec) -> ViewSpec) -> Unit
+private typealias ViewTextEdit = (String, (ViewSpec) -> ViewSpec) -> Unit
+
 // ─── App form ────────────────────────────────────────────────────────────────
 
 @Composable
@@ -51,14 +54,14 @@ fun AppForm(session: EditorSession) {
     Spacer(Modifier.height(12.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
-            spec.id, { v -> session.update { it.copy(id = v.lowercase()) } },
+            spec.id, { v -> session.update("app.id") { it.copy(id = v.lowercase()) } },
             label = { Text("id (slug)") }, singleLine = true,
             isError = !com.calebc42.composer.model.AppSpec.ID_RE.matches(spec.id),
             modifier = Modifier.width(200.dp),
         )
         OutlinedTextField(
             spec.label.orEmpty(),
-            { v -> session.update { it.copy(label = v.ifBlank { null }) } },
+            { v -> session.update("app.label") { it.copy(label = v.ifBlank { null }) } },
             label = { Text("launcher label") }, singleLine = true,
             modifier = Modifier.width(220.dp),
         )
@@ -68,7 +71,7 @@ fun AppForm(session: EditorSession) {
         var showAppIconPicker by remember { mutableStateOf(false) }
         OutlinedTextField(
             spec.icon.orEmpty(),
-            { v -> session.update { it.copy(icon = v.ifBlank { null }) } },
+            { v -> session.update("app.icon") { it.copy(icon = v.ifBlank { null }) } },
             label = { Text("icon (Material name)") }, singleLine = true,
             modifier = Modifier.width(200.dp),
             trailingIcon = {
@@ -91,7 +94,7 @@ fun AppForm(session: EditorSession) {
         }
         OutlinedTextField(
             spec.order?.toString().orEmpty(),
-            { v -> session.update { it.copy(order = v.toIntOrNull()) } },
+            { v -> session.update("app.order") { it.copy(order = v.toIntOrNull()) } },
             label = { Text("launcher order") }, singleLine = true,
             modifier = Modifier.width(140.dp),
         )
@@ -122,7 +125,7 @@ fun AppForm(session: EditorSession) {
             OutlinedTextField(
                 kw.keyword,
                 { v ->
-                    session.update {
+                    session.update("app.todo.active.$i") {
                         it.copy(todoSequence = it.todoSequence.map { tk ->
                             if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
                         })
@@ -146,7 +149,7 @@ fun AppForm(session: EditorSession) {
             OutlinedTextField(
                 kw.keyword,
                 { v ->
-                    session.update {
+                    session.update("app.todo.done.$i") {
                         it.copy(todoSequence = it.todoSequence.map { tk ->
                             if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
                         })
@@ -171,7 +174,7 @@ fun AppForm(session: EditorSession) {
     OutlinedTextField(
         spec.tags.joinToString(", "),
         { v ->
-            session.update {
+            session.update("app.tags") {
                 it.copy(tags = v.split(",").map(String::trim).filter(String::isNotEmpty))
             }
         },
@@ -187,20 +190,22 @@ fun ViewForm(session: EditorSession, index: Int) {
     val view = session.spec.views[index]
     fun edit(transform: (ViewSpec) -> ViewSpec) =
         session.update { ModelOps.updateView(it, index, transform) }
+    fun editText(key: String, transform: (ViewSpec) -> ViewSpec) =
+        session.update("view.$index.$key") { ModelOps.updateView(it, index, transform) }
 
     Text("View — ${view.title}", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(12.dp))
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
-            view.title, { v -> edit { it.copy(title = v) } },
+            view.title, { v -> editText("title") { it.copy(title = v) } },
             label = { Text("title (tab label)") }, singleLine = true,
             modifier = Modifier.width(220.dp),
         )
         var showViewIconPicker by remember { mutableStateOf(false) }
         OutlinedTextField(
             view.icon.orEmpty(),
-            { v -> edit { it.copy(icon = v.ifBlank { null }) } },
+            { v -> editText("icon") { it.copy(icon = v.ifBlank { null }) } },
             label = { Text("tab icon") }, singleLine = true,
             modifier = Modifier.width(200.dp),
             trailingIcon = {
@@ -223,7 +228,7 @@ fun ViewForm(session: EditorSession, index: Int) {
         }
         OutlinedTextField(
             view.order?.toString().orEmpty(),
-            { v -> edit { it.copy(order = v.toIntOrNull()) } },
+            { v -> editText("order") { it.copy(order = v.toIntOrNull()) } },
             label = { Text("tab order") }, singleLine = true,
             modifier = Modifier.width(120.dp),
         )
@@ -292,7 +297,7 @@ fun ViewForm(session: EditorSession, index: Int) {
         if (view.group != null) {
             OutlinedTextField(
                 view.group,
-                { v -> edit { it.copy(group = v.ifBlank { null }) } },
+                { v -> editText("group") { it.copy(group = v.ifBlank { null }) } },
                 label = { Text("group name (shared destination)") }, singleLine = true,
                 modifier = Modifier.width(240.dp),
             )
@@ -300,21 +305,24 @@ fun ViewForm(session: EditorSession, index: Int) {
     }
 
     Spacer(Modifier.height(8.dp))
-    SourceEditor(view, ::edit)
+    SourceEditor(view, ::edit, ::editText)
 
     Spacer(Modifier.height(16.dp))
     when {
-        view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit)
+        view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit, ::editText)
         view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE) -> {
-            RecordsSchemaEditor(session.spec, view, ::edit)
+            RecordsSchemaEditor(session.spec, view, ::edit, ::editText)
             Spacer(Modifier.height(16.dp))
             ActionEditor(
                 actions = view.actions,
-                onUpdate = { newActions -> edit { it.copy(actions = newActions) } },
+                onUpdate = { newActions, coalesceKey ->
+                    if (coalesceKey == null) edit { it.copy(actions = newActions) }
+                    else editText("actions.$coalesceKey") { it.copy(actions = newActions) }
+                },
             )
         }
-        view.source == null -> InlineTableEditor(view, ::edit)
-        else -> ExternalColumnsEditor(view, ::edit)
+        view.source == null -> InlineTableEditor(view, ::edit, ::editText)
+        else -> ExternalColumnsEditor(view, ::edit, ::editText)
     }
 }
 
@@ -324,7 +332,8 @@ fun ViewForm(session: EditorSession, index: Int) {
 private fun RecordsSchemaEditor(
     spec: AppSpec,
     view: ViewSpec,
-    edit: ((ViewSpec) -> ViewSpec) -> Unit,
+    edit: ViewEdit,
+    editText: ViewTextEdit,
 ) {
     Text("Schema — fields of each record",
          style = MaterialTheme.typography.titleMedium)
@@ -358,7 +367,7 @@ private fun RecordsSchemaEditor(
             OutlinedTextField(
                 field.prop,
                 { v ->
-                    edit {
+                    editText("schema.$i.property") {
                         it.copy(schema = it.schema.mapIndexed { j, f ->
                             if (j == i) SchemaField.of(v.trim(), f.label) else f
                         })
@@ -370,7 +379,7 @@ private fun RecordsSchemaEditor(
             OutlinedTextField(
                 field.label.orEmpty(),
                 { v ->
-                    edit {
+                    editText("schema.$i.label") {
                         it.copy(schema = it.schema.mapIndexed { j, f ->
                             if (j == i) f.copy(label = v.ifBlank { null }) else f
                         })
@@ -389,7 +398,23 @@ private fun RecordsSchemaEditor(
                         })
                     }
                 },
+                onTyping = { t ->
+                    editText("schema.$i.type") {
+                        val width = it.schema.size
+                        it.copy(colTypes = (0 until width).map { c ->
+                            if (c == i) t else it.colTypes.getOrElse(c) { ColType.Text }
+                        })
+                    }
+                },
             )
+            TextButton(
+                onClick = { edit { ModelOps.moveSchemaField(it, i, -1) } },
+                enabled = i > 0,
+            ) { Text("↑") }
+            TextButton(
+                onClick = { edit { ModelOps.moveSchemaField(it, i, 1) } },
+                enabled = i < view.schema.lastIndex,
+            ) { Text("↓") }
             TextButton(onClick = {
                 edit {
                     it.copy(schema = it.schema.filterIndexed { j, _ -> j != i },
@@ -439,7 +464,7 @@ private fun RecordsSchemaEditor(
     var showExpressionEditor by remember { mutableStateOf(false) }
     OutlinedTextField(
         view.filter.orEmpty(),
-        { v -> edit { it.copy(filter = v.trim().ifBlank { null }) } },
+        { v -> editText("filter") { it.copy(filter = v.trim().ifBlank { null }) } },
         label = { Text("filter (guided device terms or raw org-ql)") },
         singleLine = true, modifier = Modifier.width(420.dp),
         trailingIcon = {
@@ -532,7 +557,9 @@ private fun RecordsSchemaEditor(
         ViewKind.GALLERY -> {
             OutlinedTextField(
                 view.imageField.orEmpty(),
-                { v -> edit { it.copy(imageField = v.trim().ifBlank { null }) } },
+                { v -> editText("imageField") {
+                    it.copy(imageField = v.trim().ifBlank { null })
+                } },
                 label = { Text("Image field (schema property name)") },
                 singleLine = true,
                 modifier = Modifier.width(260.dp),
@@ -543,7 +570,7 @@ private fun RecordsSchemaEditor(
 }
 
 @Composable
-private fun SourceEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit) {
+private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
     Row(verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Data lives:", style = MaterialTheme.typography.bodyMedium)
@@ -563,20 +590,24 @@ private fun SourceEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit)
         is SourceRef.File -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 source.file,
-                { v -> edit { it.copy(source = source.copy(file = v)) } },
+                { v -> editText("source.file") {
+                    it.copy(source = source.copy(file = v))
+                } },
                 label = { Text("device path") }, singleLine = true,
                 modifier = Modifier.width(320.dp),
             )
             OutlinedTextField(
                 source.heading.orEmpty(),
-                { v -> edit { it.copy(source = source.copy(heading = v.ifBlank { null })) } },
+                { v -> editText("source.heading") {
+                    it.copy(source = source.copy(heading = v.ifBlank { null }))
+                } },
                 label = { Text("heading (optional)") }, singleLine = true,
                 modifier = Modifier.width(220.dp),
             )
         }
         is SourceRef.Dir -> OutlinedTextField(
             source.dir,
-            { v -> edit { it.copy(source = SourceRef.Dir(v)) } },
+            { v -> editText("source.dir") { it.copy(source = SourceRef.Dir(v)) } },
             label = { Text("note vault directory") }, singleLine = true,
             modifier = Modifier.width(320.dp),
         )
@@ -600,7 +631,7 @@ private fun SourceEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit)
 // ─── Inline table: schema + data in one grid ────────────────────────────────
 
 @Composable
-private fun InlineTableEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit) {
+private fun InlineTableEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
     val table = ModelOps.firstTable(view)
         ?: BodyElement.Table(emptyList(), emptyList())
 
@@ -615,14 +646,27 @@ private fun InlineTableEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> 
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(vertical = 2.dp)) {
             OutlinedTextField(
-                name, { v -> edit { ModelOps.setColumnName(it, col, v) } },
+                name, { v -> editText("column.$col.name") {
+                    ModelOps.setColumnName(it, col, v)
+                } },
                 label = { Text("column ${col + 1}") }, singleLine = true,
                 modifier = Modifier.width(200.dp),
             )
             ColTypePicker(
                 view.colTypes.getOrElse(col) { ColType.Text },
                 onPick = { t -> edit { ModelOps.setColumnType(it, col, t) } },
+                onTyping = { t -> editText("column.$col.type") {
+                    ModelOps.setColumnType(it, col, t)
+                } },
             )
+            TextButton(
+                onClick = { edit { ModelOps.moveColumn(it, col, -1) } },
+                enabled = col > 0,
+            ) { Text("↑") }
+            TextButton(
+                onClick = { edit { ModelOps.moveColumn(it, col, 1) } },
+                enabled = col < table.header.lastIndex,
+            ) { Text("↓") }
             TextButton(onClick = { edit { ModelOps.removeColumn(it, col) } }) {
                 Text("Remove")
             }
@@ -648,7 +692,9 @@ private fun InlineTableEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> 
                     )
                 } else {
                     OutlinedTextField(
-                        cell, { v -> edit { ModelOps.setCell(it, r, c, v) } },
+                        cell, { v -> editText("cell.$r.$c") {
+                            ModelOps.setCell(it, r, c, v)
+                        } },
                         singleLine = true, modifier = Modifier.width(160.dp),
                     )
                 }
@@ -662,7 +708,7 @@ private fun InlineTableEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> 
 // ─── External table: names + types only (data lives on the device) ──────────
 
 @Composable
-private fun ExternalColumnsEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit) {
+private fun ExternalColumnsEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
     Text("Columns (scaffolded on the device when the file is missing)",
          style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
@@ -673,7 +719,7 @@ private fun ExternalColumnsEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec)
             OutlinedTextField(
                 name,
                 { v ->
-                    edit {
+                    editText("column.$col.name") {
                         it.copy(columns = it.columns.mapIndexed { c, old ->
                             if (c == col) v else old
                         })
@@ -692,7 +738,23 @@ private fun ExternalColumnsEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec)
                         })
                     }
                 },
+                onTyping = { t ->
+                    editText("column.$col.type") {
+                        val width = it.columns.size
+                        it.copy(colTypes = (0 until width).map { c ->
+                            if (c == col) t else it.colTypes.getOrElse(c) { ColType.Text }
+                        })
+                    }
+                },
             )
+            TextButton(
+                onClick = { edit { ModelOps.moveColumn(it, col, -1) } },
+                enabled = col > 0,
+            ) { Text("↑") }
+            TextButton(
+                onClick = { edit { ModelOps.moveColumn(it, col, 1) } },
+                enabled = col < view.columns.lastIndex,
+            ) { Text("↓") }
             TextButton(onClick = {
                 edit {
                     it.copy(
@@ -712,7 +774,7 @@ private fun ExternalColumnsEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec)
 // ─── Checklist editor ────────────────────────────────────────────────────────
 
 @Composable
-private fun ChecklistEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit) {
+private fun ChecklistEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
     val list = ModelOps.firstChecklist(view) ?: BodyElement.Checklist(emptyList())
     Text("Items", style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
@@ -727,7 +789,9 @@ private fun ChecklistEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Un
             )
             OutlinedTextField(
                 item.text,
-                { v -> edit { ModelOps.setItem(it, i, item.copy(text = v)) } },
+                { v -> editText("item.$i.text") {
+                    ModelOps.setItem(it, i, item.copy(text = v))
+                } },
                 singleLine = true, modifier = Modifier.width(320.dp),
             )
             TextButton(onClick = { edit { ModelOps.removeItem(it, i) } }) { Text("×") }
@@ -741,7 +805,11 @@ private fun ChecklistEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Un
 // ─── Column-type picker ──────────────────────────────────────────────────────
 
 @Composable
-internal fun ColTypePicker(current: ColType, onPick: (ColType) -> Unit) {
+internal fun ColTypePicker(
+    current: ColType,
+    onPick: (ColType) -> Unit,
+    onTyping: (ColType) -> Unit = onPick,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(onClick = { open = true }) { Text(current.toToken()) }
@@ -765,7 +833,7 @@ internal fun ColTypePicker(current: ColType, onPick: (ColType) -> Unit) {
         OutlinedTextField(
             current.options.joinToString(","),
             { v ->
-                onPick(ColType.Enum(v.split(",").map(String::trim)
+                onTyping(ColType.Enum(v.split(",").map(String::trim)
                                         .filter(String::isNotEmpty)
                                         .ifEmpty { listOf("A") }))
             },
@@ -776,7 +844,7 @@ internal fun ColTypePicker(current: ColType, onPick: (ColType) -> Unit) {
         Spacer(Modifier.width(4.dp))
         OutlinedTextField(
             current.targetView,
-            { v -> onPick(ColType.Ref(v.trim().ifEmpty { "target" })) },
+            { v -> onTyping(ColType.Ref(v.trim().ifEmpty { "target" })) },
             label = { Text("target view") }, singleLine = true,
             modifier = Modifier.width(140.dp),
         )

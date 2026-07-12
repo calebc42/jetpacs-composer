@@ -15,6 +15,9 @@
 (require 'org)
 (require 'jetpacs-crud)
 
+(defconst jetpacs-crud-orgapp-format-version "2"
+  "The only app.org format version accepted by this runtime.")
+
 ;; ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 (defconst jetpacs-crud-orgapp--keyword-re
@@ -40,8 +43,8 @@ so group destinations and view names slugify identically.")
 
 (defun jetpacs-crud-orgapp--parse-coltypes (value file)
   "Parse a `:COLTYPES:' VALUE into the runtime's type list.
-Tokens: text, number, date, checkbox, enum(A,B,C).  Unknown tokens are
-an error naming FILE — the format is closed."
+Tokens: text, number, date, checkbox, enum(A,B,C), and reserved ref(VIEW).
+Unknown future tokens warn and degrade to text without rejecting the app."
   (let ((start 0) (types nil))
     (while (string-match "\\([a-z]+\\)\\((\\([^)]*\\))\\)?" value start)
       (let ((token (match-string 1 value))
@@ -103,8 +106,8 @@ case-insensitively anyway)."
     (nreverse fields)))
 
 (defun jetpacs-crud-orgapp--parse-actions (value file)
-  "Validate closed `:ACTIONS:' VALUE and return its trimmed wire form.
-The accepted tokens mirror the composer's `ActionDef' vocabulary."
+  "Validate recognized `:ACTIONS:' tokens and return trimmed VALUE.
+Known tokens mirror `ActionDef'; unknown future tokens warn and are preserved."
   (let ((pos 0)
         (len (length value))
         (case-fold-search nil))
@@ -269,7 +272,9 @@ Signals `user-error' with FILE and a reason on any format violation."
         (user-error "%s: missing #+JETPACS_APP: keyword" file))
       (unless (string-match-p "\\`[a-z][a-z0-9-]*\\'" id)
         (user-error "%s: app id must match [a-z][a-z0-9-]*, got %S" file id))
-      (when (and format-v (not (equal (string-trim format-v) "1")))
+      (when (and format-v
+                 (not (equal (string-trim format-v)
+                             jetpacs-crud-orgapp-format-version)))
         (user-error "%s: unsupported JETPACS_APP_FORMAT %S" file format-v))
       (save-excursion
         (goto-char (point-min))

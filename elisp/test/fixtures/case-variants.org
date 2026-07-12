@@ -1,4 +1,5 @@
 #+jetpacs_app: shelf
+#+jetpacs_app_format: 2
 #+title: Shelf
 #+jetpacs_icon: inventory_2
 #+jetpacs_order: 42

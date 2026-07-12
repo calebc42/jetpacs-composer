@@ -1,4 +1,5 @@
 #+JETPACS_APP: contacts
+#+JETPACS_APP_FORMAT: 2
 #+TITLE: Contacts
 
 * People

@@ -1,7 +1,7 @@
 #+JETPACS_APP: parity
 #+TITLE: Parity Test App
 #+JETPACS_ICON: verified
-#+JETPACS_APP_FORMAT: 1
+#+JETPACS_APP_FORMAT: 2
 #+TODO: TODO DOING | DONE
 
 * Board View

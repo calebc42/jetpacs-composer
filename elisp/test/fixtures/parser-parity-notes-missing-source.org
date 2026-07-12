@@ -1,4 +1,5 @@
 #+JETPACS_APP: parser-parity-notes
+#+JETPACS_APP_FORMAT: 2
 
 * Notes
 :PROPERTIES:

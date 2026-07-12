@@ -34,12 +34,11 @@ import com.calebc42.composer.model.ActionDef
 @Composable
 fun ActionEditor(
     actions: List<ActionDef>,
-    onUpdate: (List<ActionDef>) -> Unit,
+    onUpdate: (List<ActionDef>, coalesceKey: String?) -> Unit,
 ) {
     Text("Actions", style = MaterialTheme.typography.titleMedium)
     Text(
-        "Stored for future FORMAT-2 support; the FORMAT-1 device runtime " +
-            "does not execute these actions yet.",
+        "Per-view org actions shown on record cards and applied by the device runtime.",
         style = MaterialTheme.typography.bodySmall,
     )
     Spacer(Modifier.height(8.dp))
@@ -50,11 +49,14 @@ fun ActionEditor(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(vertical = 2.dp),
         ) {
-            ActionFields(action) { updated ->
-                onUpdate(actions.mapIndexed { j, a -> if (j == i) updated else a })
+            ActionFields(action) { updated, key ->
+                onUpdate(
+                    actions.mapIndexed { j, a -> if (j == i) updated else a },
+                    key?.let { "$i.$it" },
+                )
             }
             TextButton(onClick = {
-                onUpdate(actions.filterIndexed { j, _ -> j != i })
+                onUpdate(actions.filterIndexed { j, _ -> j != i }, null)
             }) { Text("Remove") }
         }
     }
@@ -68,7 +70,7 @@ fun ActionEditor(
                 DropdownMenuItem(
                     text = { Text(label) },
                     onClick = {
-                        onUpdate(actions + factory())
+                        onUpdate(actions + factory(), null)
                         expanded = false
                     },
                 )
@@ -90,13 +92,16 @@ private val actionDefaults: List<Pair<String, () -> ActionDef>> = listOf(
 
 /** Renders the inline parameter fields for a single [ActionDef]. */
 @Composable
-private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
+private fun ActionFields(
+    action: ActionDef,
+    onChange: (ActionDef, coalesceKey: String?) -> Unit,
+) {
     when (action) {
         is ActionDef.SetTodo -> {
             Text("SetTodo", style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(
                 action.keyword,
-                { v -> onChange(action.copy(keyword = v.trim().uppercase())) },
+                { v -> onChange(action.copy(keyword = v.trim().uppercase()), "todo") },
                 label = { Text("keyword") }, singleLine = true,
                 modifier = Modifier.width(140.dp),
             )
@@ -106,7 +111,7 @@ private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
                     checked = action.prompt,
-                    onCheckedChange = { onChange(action.copy(prompt = it)) },
+                    onCheckedChange = { onChange(action.copy(prompt = it), null) },
                 )
                 Text("prompt for date")
             }
@@ -116,7 +121,7 @@ private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
                     checked = action.prompt,
-                    onCheckedChange = { onChange(action.copy(prompt = it)) },
+                    onCheckedChange = { onChange(action.copy(prompt = it), null) },
                 )
                 Text("prompt for date")
             }
@@ -126,9 +131,12 @@ private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
             OutlinedTextField(
                 action.tags.joinToString(","),
                 { v ->
-                    onChange(action.copy(tags = v.split(",")
-                        .map(String::trim)
-                        .filter(String::isNotEmpty)))
+                    onChange(
+                        action.copy(tags = v.split(",")
+                            .map(String::trim)
+                            .filter(String::isNotEmpty)),
+                        "tags",
+                    )
                 },
                 label = { Text("tags (comma-separated)") }, singleLine = true,
                 modifier = Modifier.width(220.dp),
@@ -138,7 +146,10 @@ private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
             Text("SetPriority", style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(
                 action.priority.orEmpty(),
-                { v -> onChange(action.copy(priority = v.trim().uppercase().ifBlank { null })) },
+                { v -> onChange(
+                    action.copy(priority = v.trim().uppercase().ifBlank { null }),
+                    "priority",
+                ) },
                 label = { Text("priority (A/B/C)") }, singleLine = true,
                 modifier = Modifier.width(140.dp),
             )
@@ -147,7 +158,10 @@ private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
             Text("Refile", style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(
                 action.target.orEmpty(),
-                { v -> onChange(action.copy(target = v.trim().ifBlank { null })) },
+                { v -> onChange(
+                    action.copy(target = v.trim().ifBlank { null }),
+                    "refile",
+                ) },
                 label = { Text("target (optional)") }, singleLine = true,
                 modifier = Modifier.width(200.dp),
             )
@@ -156,7 +170,10 @@ private fun ActionFields(action: ActionDef, onChange: (ActionDef) -> Unit) {
             Text("Archive", style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(
                 action.style,
-                { v -> onChange(action.copy(style = v.trim().ifBlank { "default" })) },
+                { v -> onChange(
+                    action.copy(style = v.trim().ifBlank { "default" }),
+                    "archive",
+                ) },
                 label = { Text("style") }, singleLine = true,
                 modifier = Modifier.width(140.dp),
             )

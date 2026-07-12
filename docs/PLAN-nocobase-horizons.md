@@ -1,13 +1,15 @@
 # Plan: horizons from NocoBase — the roadmap past v1
 
-**STATUS (2026-07-12): advisory, unapproved.** A wide-horizon ranking of
-where jetpacs-composer goes after the frozen v1 format
+**STATUS (2026-07-12): active implementation.** Tier 0 and the Tier A
+non-drag milestones have landed; the repository is now making a clean FORMAT 2
+cutover before continuing the Tier B core. This remains a wide-horizon ranking of
+where jetpacs-composer goes after the original v1 format
 ([FORMAT.md](FORMAT.md)), mined from [NocoBase](https://github.com/nocobase/nocobase)
 — a mature open-source no-code platform — for design concepts that
 survive translation to an org-native, single-user, phone target. Every
-item was argued against the eight locked v1 constraints and reshaped to
-fit or cut; nothing here is committed. Each item graduates to its own
-plan doc / PR when picked up. This is the composer-side companion to
+item was argued against the eight original constraints and reshaped to
+fit or cut. Each larger item may still graduate to its own plan doc / PR.
+This is the composer-side companion to
 jetpacs' [PLAN-next-primitives.md](../../jetpacs/docs/PLAN-next-primitives.md);
 the framework asks it implies are collected under **The jetpacs
 frontier** below.
@@ -94,11 +96,13 @@ genuinely diverge enough to **ship apps that never appear on the phone**.
 ## The FORMAT-2 gate (a shared, one-time bump)
 
 Most of Tier B needs new keywords / kinds / verbs, i.e. one
-`#+JETPACS_APP_FORMAT` `1 → 2` bump — so **batch them** rather than
-bumping piecemeal. Two mechanical prerequisites, both cross-parser:
+`#+JETPACS_APP_FORMAT` `1 → 2` bump. There is no installed v1 app base,
+so the accepted policy is a **clean cutover**, not compatibility machinery:
 
-- The gate today is a hard `user-error` on any format `≠ "1"`
-  (`orgapp.el:206`, `OrgCodec.kt:58`). Change it to `format ≤ max`.
+- Both parsers accept the current version (`2`) and reject an explicit `1`;
+  missing means current for hand-authored convenience. The canonical writer,
+  fixtures, templates, and Hello World always emit `2`. There is no migration
+  ladder and no `format ≤ max` fallback.
 - **Forward-degrade** (the one genuinely novel idea worth adopting
   early): relax the runtime's hard error on an unknown `:KIND:` / coltype
   (`orgapp.el:134`) into a **placeholder view**, mirroring the vulpea
@@ -107,10 +111,10 @@ bumping piecemeal. Two mechanical prerequisites, both cross-parser:
   makes a versioned format safe to grow.
 
 Reconcile `FORMAT.md` to describe what `2` actually contains as part of
-the bump. Defer a migration ladder (`Map<Int,(AppSpec)->AppSpec>`) until
-a real breaking change lands — there is no installed base.
+the bump. A future breaking change can introduce migration policy if an
+installed base exists then.
 
-## Tier A — near-term, FORMAT-1, ship in cost order
+## Tier A — near-term features (landed before the FORMAT-2 cutover)
 
 Everything here is elisp-runtime and/or composer-desktop only: no new
 format surface, no bundle-compat risk.
@@ -134,7 +138,7 @@ widget* (the frontier), not composer scope.
 
 ### A2. Board → a real kanban — [high / M]
 
-From `plugin-kanban`, staying FORMAT-1 by reusing what exists:
+From `plugin-kanban`, reusing the existing FORMAT-2 vocabulary:
 1. Constrain the composer `groupBy` picker to enum / `TODO` fields
    (`ViewForm.kt:435`) — stops free-text group-by producing a junk
    one-lane-per-value board.
@@ -476,13 +480,11 @@ its Tier B).
 
 ## Sequencing
 
-Tier 0 first — it is correctness, not features, and the parity test
-guards everything after. Then Tier A lands in parallel (all FORMAT-1,
-independent); **A1 and A3 are afternoons**, A2/A4/A5/A6 are the
-day-to-day UX jumps. Batch Tier B behind one coordinated
-`#+JETPACS_APP_FORMAT 1 → 2` bump with the gate + forward-degrade
-mechanics; within it, B1–B3 (tree, ref, actions) are the model-completing
-core, B5–B6 (reminders, capture) the mobile-native wins. Tier C accretes
+Tier 0 and the non-drag Tier A work landed first, guarded by the parser
+parity corpus. Tree and closed record actions also landed while there was
+still no installed base. The repository now moves atomically to FORMAT 2;
+the remaining Tier B model core begins with B2 references, followed by the
+mobile-native reminders/capture work. Tier C accretes
 as demand shows. On the frontier, **F1 goes first** (it is an afternoon
 and unblocks A-tier undo + F4); F5/F6/F7 ride with the B batch they
 enable; F2/F3/F4/F8 graduate to their own jetpacs plan docs when their

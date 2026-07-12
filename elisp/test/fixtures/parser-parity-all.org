@@ -2,7 +2,7 @@
 #+TITLE: Parser parity
 #+JETPACS_ICON: rule
 #+JETPACS_ORDER: 7
-#+JETPACS_APP_FORMAT: 1
+#+JETPACS_APP_FORMAT: 2
 #+TODO: TODO NEXT | DONE
 #+TAGS: work home
 

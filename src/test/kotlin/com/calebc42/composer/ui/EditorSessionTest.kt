@@ -13,6 +13,7 @@ import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -21,6 +22,79 @@ import kotlin.test.assertTrue
  * calls: build a Pantry-like app from nothing, save, reopen, export.
  */
 class EditorSessionTest {
+
+    @Test
+    fun undoRedoTracksDiscreteEditsAndClearsRedoOnBranch() {
+        val session = EditorSession.fromSpec(AppSpec(id = "history"))
+        session.update { it.copy(label = "First") }
+        session.update { it.copy(icon = "apps") }
+
+        assertTrue(session.canUndo)
+        assertFalse(session.canRedo)
+        assertTrue(session.undo())
+        assertEquals(null, session.spec.icon)
+        assertEquals("First", session.spec.label)
+        assertTrue(session.canRedo)
+
+        session.update { it.copy(label = "Branched") }
+        assertFalse(session.canRedo)
+        assertFalse(session.redo())
+    }
+
+    @Test
+    fun typingWithOneCoalesceKeyUndoesAsOneEdit() {
+        val session = EditorSession.fromSpec(AppSpec(id = "typing"))
+        session.update("app.label") { it.copy(label = "A") }
+        session.update("app.label") { it.copy(label = "AB") }
+        session.update("app.label") { it.copy(label = "ABC") }
+
+        assertEquals("ABC", session.spec.label)
+        assertTrue(session.undo())
+        assertNull(session.spec.label)
+        assertFalse(session.canUndo)
+        assertTrue(session.redo())
+        assertEquals("ABC", session.spec.label)
+    }
+
+    @Test
+    fun undoRecomputesDirtyAgainstTheLastSavedSpec() {
+        val dir = createTempDirectory("composer-history-dirty").toFile()
+        val session = EditorSession.fromSpec(AppSpec(id = "dirty"))
+        assertNull(session.save(File(dir, "dirty.org")))
+        assertFalse(session.dirty)
+
+        session.update("app.label") { it.copy(label = "Changed") }
+        assertTrue(session.dirty)
+        assertTrue(session.undo())
+        assertFalse(session.dirty)
+        assertTrue(session.redo())
+        assertTrue(session.dirty)
+    }
+
+    @Test
+    fun savingEndsTheActiveTypingGroup() {
+        val dir = createTempDirectory("composer-history-save-boundary").toFile()
+        val session = EditorSession.fromSpec(AppSpec(id = "save-boundary"))
+        session.update("app.label") { it.copy(label = "A") }
+        assertNull(session.save(File(dir, "save-boundary.org")))
+
+        session.update("app.label") { it.copy(label = "AB") }
+        assertTrue(session.undo())
+        assertEquals("A", session.spec.label)
+        assertFalse(session.dirty)
+    }
+
+    @Test
+    fun historyIsBounded() {
+        val session = EditorSession.fromSpec(AppSpec(id = "bounded"))
+        repeat(105) { value ->
+            session.update { it.copy(label = "Edit $value") }
+        }
+        var undoCount = 0
+        while (session.undo()) undoCount++
+        assertEquals(100, undoCount)
+        assertEquals("Edit 4", session.spec.label)
+    }
 
     @Test
     fun buildSaveReopenExport() {
