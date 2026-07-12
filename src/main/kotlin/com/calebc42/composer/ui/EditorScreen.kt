@@ -45,6 +45,7 @@ sealed interface Selection {
 fun EditorScreen(session: EditorSession, onClose: () -> Unit) {
     var selection by remember { mutableStateOf<Selection>(Selection.App) }
     var preview by remember { mutableStateOf<String?>(null) }
+    var deploying by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         // ── Toolbar ──────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ fun EditorScreen(session: EditorSession, onClose: () -> Unit) {
                         ?.let { session.save(it) }
                 session.export()
             }, enabled = session.file != null || true) { Text("Export bundle") }
+            Button(onClick = { deploying = true }) { Text("Deploy…") }
             TextButton(onClick = onClose) { Text("Close") }
         }
         HorizontalDivider()
@@ -125,6 +127,8 @@ fun EditorScreen(session: EditorSession, onClose: () -> Unit) {
             }
         }
     }
+
+    if (deploying) DeployDialog(session, onDismiss = { deploying = false })
 
     preview?.let { text ->
         AlertDialog(
