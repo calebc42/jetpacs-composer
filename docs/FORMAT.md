@@ -23,6 +23,7 @@ Case-insensitive, like all org keywords.
 | `#+JETPACS_ICON:` | no | Material icon name for the launcher card (default `apps`). |
 | `#+JETPACS_ORDER:` | no | Integer sort key for the launcher home (default 100). |
 | `#+JETPACS_APP_FORMAT:` | no | Format version; default and only valid value: `2`. The canonical writer always emits it. |
+| `#+JETPACS_INBOX:` | no | App-scoped quick-capture destination; relative paths resolve beside the app document. |
 | `#+TODO:` | no | Org TODO keyword sequence used by TODO fields and actions. |
 | `#+TAGS:` | no | File tag vocabulary offered by the composer. |
 
@@ -137,6 +138,16 @@ offset. Records therefore need an `ID` schema field; notes use their native ID.
 Transient search text does not suppress alarms. Reminder publication requires
 Jetpacs' owner-merged reminder seam: Composer will warn and arm nothing on an
 older framework rather than overwrite another app's device-global reminder set.
+
+### Quick capture
+
+`#+JETPACS_INBOX: inbox.org` enables an app-scoped quick-capture action. The
+runtime resolves this path from the registered document (relative paths are
+relative to that document), prompts only for a title, and appends one top-level
+heading with native `ID` and `CREATED` properties. The wire carries only the app
+ID: it cannot choose a path, edit an existing entry, or delete one. Composer
+exposes capture in the app top bar and registers the per-app default FAB for
+app-owned views that do not already use a FAB.
 
 ## Table views (`:KIND: table`)
 

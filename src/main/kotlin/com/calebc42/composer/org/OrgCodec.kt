@@ -32,7 +32,7 @@ object OrgCodec {
     // ─── Parsing ─────────────────────────────────────────────────────────
 
     private val KEYWORD_RE =
-        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
+        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|JETPACS_INBOX|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
               RegexOption.IGNORE_CASE)
     private val HEADING_RE = Regex("""^\* +(.*?)\s*$""")
     private val DRAWER_START_RE = Regex("""^\s*:PROPERTIES:\s*$""", RegexOption.IGNORE_CASE)
@@ -96,6 +96,7 @@ object OrgCodec {
             order = keywords["JETPACS_ORDER"]?.trim()?.toIntOrNull(),
             todoSequence = todoSequence,
             tags = tags,
+            inbox = keywords["JETPACS_INBOX"]?.trim()?.ifEmpty { null },
             views = views,
         )
     }
@@ -346,6 +347,7 @@ object OrgCodec {
         spec.label?.let { appendLine("#+TITLE: $it") }
         spec.icon?.let { appendLine("#+JETPACS_ICON: $it") }
         spec.order?.let { appendLine("#+JETPACS_ORDER: $it") }
+        spec.inbox?.let { appendLine("#+JETPACS_INBOX: $it") }
         if (spec.todoSequence.isNotEmpty()) {
             val active = spec.todoSequence.filter { !it.isDone }.joinToString(" ") { it.keyword }
             val done = spec.todoSequence.filter { it.isDone }.joinToString(" ") { it.keyword }

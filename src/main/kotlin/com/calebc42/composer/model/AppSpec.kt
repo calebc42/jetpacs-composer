@@ -19,6 +19,8 @@ data class AppSpec(
     val todoSequence: List<TodoKeyword> = emptyList(),
     /** Tag vocabulary for the file (emitted as #+TAGS:). */
     val tags: List<String> = emptyList(),
+    /** Append-only quick-capture destination (`#+JETPACS_INBOX:`). */
+    val inbox: String? = null,
     val views: List<ViewSpec> = emptyList(),
 ) {
     init {

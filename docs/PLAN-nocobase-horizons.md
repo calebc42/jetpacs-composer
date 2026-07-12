@@ -359,6 +359,11 @@ owner-merge layer for the device-global reminder set.
 
 ### B6. Quick-capture to a declared inbox — [high / M]
 
+**In-app capture landed; tile framework-gated:** `#+JETPACS_INBOX`, composer
+editing, the spec-scoped append-only action, top-bar affordance, and per-app
+default FAB registration are implemented. The off-app `tile:customN` surface
+remains blocked on F5 teardown/slot ownership so redeploy cannot strand a tile.
+
 From `plugin-public-forms` (token-scoped append-only writes). A
 file-level `#+JETPACS_INBOX: <path>` keyword + a new `crud.capture.add`
 verb whose **only** capability is `org-insert-heading` appending one
@@ -467,6 +472,9 @@ its Tier B).
 - **F8. Timeline + calendar week/day widgets** — the native primitives
   B9 (gantt) and A1's deferred week/day mode need; `month_grid` is
   month-only today.
+- Jetpacs framework still lacks jetpacs-reminders-owner-set. Composer
+  therefore warns and arms nothing instead of issuing a global reminders.set
+  that could erase alarms belonging to other apps.
 
 ## Rejects (and what serves instead)
 

@@ -106,6 +106,13 @@ fun AppForm(session: EditorSession) {
             "table_chart, checklist. Unknown names render a placeholder.",
         style = MaterialTheme.typography.bodySmall,
     )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        spec.inbox.orEmpty(),
+        { v -> session.update("app.inbox") { it.copy(inbox = v.ifBlank { null }) } },
+        label = { Text("quick-capture inbox (optional org path)") },
+        singleLine = true, modifier = Modifier.width(420.dp),
+    )
 
     // ─── TODO Keywords ───────────────────────────────────────────────────
     Spacer(Modifier.height(16.dp))

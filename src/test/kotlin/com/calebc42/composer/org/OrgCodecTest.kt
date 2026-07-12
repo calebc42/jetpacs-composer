@@ -115,6 +115,24 @@ class OrgCodecTest {
     }
 
     @Test
+    fun quickCaptureInboxRoundTrips() {
+        val text = """
+            #+JETPACS_APP: capture
+            #+JETPACS_APP_FORMAT: 2
+            #+JETPACS_INBOX: inbox.org
+
+            * Notes
+            :PROPERTIES:
+            :KIND: records
+            :SCHEMA: %ITEM
+            :END:
+        """.trimIndent()
+        val spec = OrgCodec.parse(text)
+        assertEquals("inbox.org", spec.inbox)
+        assertEquals(spec, OrgCodec.parse(OrgCodec.write(spec)))
+    }
+
+    @Test
     fun parserParityFixtureExercisesTheWholeAcceptedSurface() {
         val spec = OrgCodec.parse(fixture("parser-parity-all.org"))
 

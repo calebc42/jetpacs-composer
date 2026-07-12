@@ -1396,6 +1396,15 @@ action string the add-FAB fires.")
                            "crud.row.add")
                        :args args))))
 
+(defun jetpacs-crud--capture-actions (spec)
+  "Top-bar capture action when SPEC declares an inbox."
+  (when (plist-get spec :inbox)
+    (list (jetpacs-icon-button
+           "add_task"
+           (jetpacs-action "crud.capture.add"
+                        :args `((app . ,(plist-get spec :id))))
+           :content-description "Quick capture"))))
+
 (defun jetpacs-crud--build-view (id name snackbar)
   "Build the full scaffold view for app ID's view NAME."
   (let* ((spec (or (jetpacs-crud--app id)
@@ -1407,7 +1416,8 @@ action string the add-FAB fires.")
      (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view)
      :top-bar (jetpacs-shell-default-top-bar
                (plist-get view :title)
-               :extra-actions (jetpacs-crud--export-actions spec view))
+               :extra-actions (append (jetpacs-crud--capture-actions spec)
+                                      (jetpacs-crud--export-actions spec view)))
      :fab (jetpacs-crud--fab spec view)
      :snackbar snackbar)))
 
@@ -1431,7 +1441,8 @@ the first member's (all four of hello-world's Tasks members add records)."
     (jetpacs-shell-tab-view
      view-name
      (jetpacs-tabs items pages :scrollable t :id view-name)
-     :top-bar (jetpacs-shell-default-top-bar gname)
+     :top-bar (jetpacs-shell-default-top-bar
+               gname :extra-actions (jetpacs-crud--capture-actions spec))
      :fab (jetpacs-crud--fab spec (car members))
      :snackbar snackbar)))
 
@@ -1585,6 +1596,12 @@ The default is one bottom tab per view.  Returns the app id."
           :icon (plist-get spec :icon)
           :views (nreverse registered)
           :order (plist-get spec :order))))
+    (when (plist-get spec :inbox)
+      (jetpacs-apps-set-default-fab
+       id (lambda (_view-name)
+            (jetpacs-fab "add_task" :label "Capture" :extended t
+                         :on-tap (jetpacs-action
+                                  "crud.capture.add" :args `((app . ,id)))))))
     (jetpacs-crud--sync-reminders)
     id))
 
@@ -1597,6 +1614,31 @@ The default is one bottom tab per view.  Returns the app id."
   id)
 
 ;; ─── Action handlers (the closed crud.* vocabulary) ──────────────────────────
+
+(defun jetpacs-crud-action-capture-add (args _payload)
+  "Append one ID'd heading to the app's declared inbox.
+The wire supplies only the app id and never a path or mutation position."
+  (let* ((appid (alist-get 'app args))
+         (spec (or (jetpacs-crud--app appid)
+                   (user-error "Unknown CRUD app: %S" appid)))
+         (inbox (or (plist-get spec :inbox)
+                    (user-error "App %s has no JETPACS_INBOX" appid)))
+         (title (string-trim (read-string "Quick capture: "))))
+    (when (string-empty-p title) (user-error "Capture needs a title"))
+    (make-directory (file-name-directory inbox) t)
+    (with-current-buffer (find-file-noselect inbox)
+      (org-with-wide-buffer
+       (goto-char (point-max))
+       (if (= (point-min) (point-max))
+           (insert "* " title "\n")
+         (unless (bolp) (insert "\n"))
+         (org-insert-heading nil nil t)
+         (insert title))
+       (org-back-to-heading t)
+       (org-id-get-create)
+       (org-entry-put (point) "CREATED" (format-time-string "[%Y-%m-%d %a %H:%M]")))
+      (let ((save-silently t)) (save-buffer)))
+    (jetpacs-shell-push)))
 
 (defun jetpacs-crud--resolve (args &optional need-pos)
   "Resolve wire ARGS to (SPEC VIEW FILE POS); validate everything.
@@ -2425,6 +2467,7 @@ Re-renders the add-record dialog to reflect the picked value."
   (jetpacs-defaction "crud.view.share"      #'jetpacs-crud-action-view-share)
   (jetpacs-defaction "crud.view.import-csv" #'jetpacs-crud-action-view-import-csv)
   (jetpacs-defaction "crud.node.move"       #'jetpacs-crud-action-node-move)
+  (jetpacs-defaction "crud.capture.add"     #'jetpacs-crud-action-capture-add)
   (jetpacs-defaction "crud.dialog.dismiss"  #'jetpacs-crud-action-dialog-dismiss))
 
 (provide 'jetpacs-crud)

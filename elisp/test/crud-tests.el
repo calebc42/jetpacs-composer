@@ -297,6 +297,28 @@ as an `unknown' marker (rendered as text) instead of erroring."
         (should (= (alist-get 'at_ms reminder)
                    (jetpacs-crud--reminder-time-ms "<2099-01-10>" -3)))))))
 
+(ert-deftest jetpacs-crud-quick-capture-is-append-only-and-spec-scoped ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((dir (make-temp-file "crud-capture" t))
+           (app (expand-file-name "app.org" dir))
+           (inbox (expand-file-name "inbox.org" dir))
+           (decoy (expand-file-name "decoy.org" dir)))
+      (unwind-protect
+          (progn
+            (with-temp-file app
+              (insert "#+JETPACS_APP: capture\n#+JETPACS_APP_FORMAT: 2\n#+JETPACS_INBOX: inbox.org\n* Notes\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM\n:END:\n"))
+            (jetpacs-crud-register-file app)
+            (cl-letf (((symbol-function 'read-string)
+                       (lambda (&rest _) "Remember milk")))
+              (jetpacs-crud-action-capture-add
+               `((app . "capture") (file . ,decoy)) nil))
+            (let ((content (jetpacs-crud-tests--slurp inbox)))
+              (should (string-match-p "^\\* Remember milk" content))
+              (should (string-match-p ":ID:" content))
+              (should (string-match-p ":CREATED:" content)))
+            (should-not (file-exists-p decoy)))
+        (delete-directory dir t)))))
+
 (ert-deftest jetpacs-crud-export-csv-neutralizes-formulas-and-quotes ()
   (should
    (equal (jetpacs-crud--matrix-csv

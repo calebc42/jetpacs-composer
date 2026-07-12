@@ -21,7 +21,7 @@
 ;; ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 (defconst jetpacs-crud-orgapp--keyword-re
-  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
+  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|JETPACS_INBOX\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
   "File-level keywords of the format (docs/FORMAT.md), case-insensitive.")
 
 (defun jetpacs-crud-orgapp--keywords ()
@@ -326,6 +326,12 @@ Signals `user-error' with FILE and a reason on any format violation."
             :order (if-let ((o (cdr (assoc "JETPACS_ORDER" keywords))))
                        (string-to-number o)
                      100)
+            :inbox (when-let ((raw (cdr (assoc "JETPACS_INBOX" keywords))))
+                     (let ((path (string-trim raw)))
+                       (unless (string-empty-p path)
+                         (when (string-suffix-p "/" path)
+                           (user-error "%s: JETPACS_INBOX must name an org file" file))
+                         (expand-file-name path (file-name-directory file)))))
             :file file
             :views views))))
 

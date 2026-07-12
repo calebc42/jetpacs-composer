@@ -270,6 +270,10 @@ object ModelOps {
     fun validate(spec: AppSpec): List<Problem> = buildList {
         if (spec.views.isEmpty())
             add(Problem("An app needs at least one view"))
+        if (spec.inbox != null && spec.inbox.isBlank())
+            add(Problem("Quick-capture inbox cannot be blank"))
+        if (spec.inbox?.replace('\\', '/')?.endsWith('/') == true)
+            add(Problem("Quick-capture inbox must be an org file, not a directory"))
         val slugs = spec.views.map { it.name }
         val liveViews = slugs.toSet()
         slugs.groupBy { it }.filter { it.value.size > 1 }.keys.forEach {
