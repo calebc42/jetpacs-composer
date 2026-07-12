@@ -1,3 +1,5 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
 plugins {
     kotlin("jvm") version "2.2.20"
     kotlin("plugin.serialization") version "2.2.20"
@@ -6,7 +8,7 @@ plugins {
 }
 
 group = "com.calebc42.composer"
-version = "0.1.0"
+version = "1.0.0"
 
 kotlin {
     jvmToolchain(17)
@@ -23,6 +25,22 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.calebc42.composer.MainKt"
+        nativeDistributions {
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "jetpacs-composer"
+            packageVersion = "1.0.0"
+
+            val iconsRoot = project.file("src/main/resources/icons")
+            windows {
+                iconFile.set(iconsRoot.resolve("jetpacs-composer-logo.ico"))
+            }
+            macOS {
+                iconFile.set(iconsRoot.resolve("jetpacs-composer-logo.icns"))
+            }
+            linux {
+                iconFile.set(iconsRoot.resolve("jetpacs-composer-icon-forground.svg"))
+            }
+        }
     }
 }
 
@@ -33,6 +51,12 @@ tasks.processResources {
     from(rootDir.resolve("elisp")) {
         into("runtime")
         include("jetpacs-crud.el", "jetpacs-crud-orgapp.el")
+    }
+    // The canonical kitchen-sink fixture doubles as the gallery's demo
+    // template — one document, shared with the ERT suite verbatim.
+    from(rootDir.resolve("elisp/test/fixtures")) {
+        into("templates")
+        include("hello-world.org")
     }
 }
 

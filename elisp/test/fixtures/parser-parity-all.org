@@ -1,0 +1,71 @@
+#+JETPACS_APP: parser-parity
+#+TITLE: Parser parity
+#+JETPACS_ICON: rule
+#+JETPACS_ORDER: 7
+#+JETPACS_APP_FORMAT: 1
+#+TODO: TODO NEXT | DONE
+#+TAGS: work home
+
+* Table
+:PROPERTIES:
+:ICON: table_chart
+:ORDER: 10
+:KIND: table
+:COLTYPES: text number date checkbox enum(A,B)
+:COLUMNS: Text | Number | Date | Done | Choice
+:END:
+
+| Text | Number | Date       | Done | Choice |
+|------+--------+------------+------+--------|
+| row  |      1 | 2026-07-12 | [ ]  | A      |
+
+* Checklist
+:PROPERTIES:
+:KIND: checklist
+:END:
+
+- [ ] One
+
+* Records
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %item(Title) %todo(Status) %deadline %scheduled %priority %tags %effort %category
+:COLTYPES: text enum(TODO,NEXT,DONE) date date enum(A,B,C) text text text
+:FILTER: (todo "TODO")
+:ACTIONS: todo(DONE) schedule deadline tags(work,home) priority(A) refile(* Archive) archive(subtree)
+:END:
+
+* Notes
+:PROPERTIES:
+:KIND: notes
+:SOURCE: vault/
+:SCHEMA: %ITEM(Title)
+:COLTYPES: text
+:END:
+
+* Board
+:PROPERTIES:
+:KIND: board
+:SOURCE: records.org
+:SCHEMA: %ITEM(Title) %TODO(Status)
+:COLTYPES: text enum(TODO,NEXT,DONE)
+:GROUP_BY: TODO
+:END:
+
+* Calendar
+:PROPERTIES:
+:KIND: calendar
+:SOURCE: records.org
+:SCHEMA: %ITEM(Title) %DEADLINE(Date)
+:COLTYPES: text date
+:DATE_FIELD: DEADLINE
+:END:
+
+* Gallery
+:PROPERTIES:
+:KIND: gallery
+:SOURCE: records.org
+:SCHEMA: %ITEM(Title) %Photo(Image)
+:COLTYPES: text text
+:IMAGE_FIELD: Photo
+:END:

@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
@@ -42,6 +43,7 @@ fun main() {
                 }
             },
             title = "jetpacs-composer",
+            icon = painterResource("icons/jetpacs-composer-icon-forground.svg"),
             state = WindowState(width = 1100.dp, height = 760.dp),
         ) {
             val isDark = when (appConfig.theme) {

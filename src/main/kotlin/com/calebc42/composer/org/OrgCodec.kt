@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.calebc42.composer.org
 
+import com.calebc42.composer.model.ActionDef
 import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
+import com.calebc42.composer.model.TodoKeyword
 import com.calebc42.composer.model.ViewKind
+import com.calebc42.composer.model.ViewNav
 import com.calebc42.composer.model.ViewSpec
 
 /**
@@ -26,7 +29,7 @@ object OrgCodec {
     // ─── Parsing ─────────────────────────────────────────────────────────
 
     private val KEYWORD_RE =
-        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|TITLE):\s*(.*?)\s*$""",
+        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
               RegexOption.IGNORE_CASE)
     private val HEADING_RE = Regex("""^\* +(.*?)\s*$""")
     private val DRAWER_START_RE = Regex("""^\s*:PROPERTIES:\s*$""", RegexOption.IGNORE_CASE)
@@ -37,6 +40,7 @@ object OrgCodec {
     private val CHECKBOX_RE = Regex("""^\s*[-+*] +\[([ xX-])\] +(.*)$""")
     private val COLTYPE_RE = Regex("""([a-z]+)(\(([^)]*)\))?""")
     private val SCHEMA_RE = Regex("""%([A-Za-z_][A-Za-z_0-9-]*)(\(([^)]*)\))?""")
+    private val ACTION_TOKEN_RE = Regex("""([a-z]+)(?:\(([^)]*)\))?""")
 
     fun parse(text: String): AppSpec {
         val lines = text.lines()
@@ -56,6 +60,11 @@ object OrgCodec {
             if (it.trim() != "1")
                 throw FormatException("unsupported JETPACS_APP_FORMAT \"$it\"")
         }
+
+        val todoSequence = keywords["TODO"]?.let { parseTodoSequence(it) } ?: emptyList()
+        val tags = keywords["TAGS"]?.let { raw ->
+            raw.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        } ?: emptyList()
 
         val views = mutableListOf<ViewSpec>()
         var i = 0
@@ -82,6 +91,8 @@ object OrgCodec {
             label = keywords["TITLE"],
             icon = keywords["JETPACS_ICON"],
             order = keywords["JETPACS_ORDER"]?.trim()?.toIntOrNull(),
+            todoSequence = todoSequence,
+            tags = tags,
             views = views,
         )
     }
@@ -108,10 +119,19 @@ object OrgCodec {
             null, "", "table" -> ViewKind.TABLE
             "checklist" -> ViewKind.CHECKLIST
             "records" -> ViewKind.RECORDS
-            else -> throw FormatException("unknown KIND \"${props["KIND"]}\" under \"$title\"")
+            "notes" -> ViewKind.NOTES
+            "board" -> ViewKind.BOARD
+            "calendar" -> ViewKind.CALENDAR
+            "gallery" -> ViewKind.GALLERY
+            "tree" -> ViewKind.TREE
+            else -> ViewKind.UNKNOWN
         }
-        if (kind == ViewKind.RECORDS && props["SCHEMA"].isNullOrBlank())
-            throw FormatException("a records view needs a :SCHEMA: under \"$title\"")
+        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE)
+        if (isRecordsType && props["SCHEMA"].isNullOrBlank())
+            throw FormatException("a ${kind.name.lowercase()} view needs a :SCHEMA: under \"$title\"")
+        if (kind == ViewKind.NOTES && props["SOURCE"].isNullOrBlank())
+            throw FormatException(
+                "a notes view needs a :SOURCE: (a vault dir or file::*Heading) under \"$title\"")
         return ViewSpec(
             title = title,
             icon = props["ICON"],
@@ -123,6 +143,15 @@ object OrgCodec {
                 ?.filter { it.isNotEmpty() } ?: emptyList(),
             schema = props["SCHEMA"]?.let { parseSchema(it) } ?: emptyList(),
             filter = props["FILTER"]?.trim()?.ifEmpty { null },
+            groupBy = props["GROUP_BY"]?.trim()?.ifEmpty { null },
+            dateField = props["DATE_FIELD"]?.trim()?.ifEmpty { null },
+            imageField = props["IMAGE_FIELD"]?.trim()?.ifEmpty { null },
+            actions = props["ACTIONS"]?.let { parseActions(it) } ?: emptyList(),
+            nav = when (props["NAV"]?.trim()?.lowercase()) {
+                "drawer" -> ViewNav.DRAWER
+                else -> ViewNav.TAB          // lenient: null/blank/unknown → a tab
+            },
+            group = props["GROUP"]?.trim()?.ifEmpty { null },
             body = parseBody(bodyLines),
         )
     }
@@ -140,16 +169,70 @@ object OrgCodec {
         return fields
     }
 
+    private fun parseTodoSequence(value: String): List<TodoKeyword> {
+        val parts = value.split("|")
+        val active = parts[0].trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val done = if (parts.size > 1) parts[1].trim().split(Regex("\\s+")).filter { it.isNotEmpty() } else emptyList()
+        return active.map { TodoKeyword(it, isDone = false) } +
+               done.map { TodoKeyword(it, isDone = true) }
+    }
+
+    private fun parseActions(value: String): List<ActionDef> {
+        val actions = mutableListOf<ActionDef>()
+        var offset = 0
+        while (offset < value.length) {
+            while (offset < value.length &&
+                   (value[offset] == ' ' || value[offset] == '\t')) offset++
+            if (offset == value.length) break
+
+            val match = ACTION_TOKEN_RE.matchAt(value, offset)
+                ?: throw FormatException("malformed action near \"${value.substring(offset)}\" in ACTIONS")
+            val end = match.range.last + 1
+            if (end < value.length && value[end] != ' ' && value[end] != '\t')
+                throw FormatException("malformed action near \"${value.substring(offset)}\" in ACTIONS")
+
+            val token = match.groupValues[1]
+            val options = match.groups[2]?.value
+            actions += when (token) {
+                "todo" -> ActionDef.SetTodo(
+                    options?.trim()?.ifEmpty { null }
+                        ?: throw FormatException("todo() needs a keyword"))
+                "schedule" -> {
+                    if (options != null)
+                        throw FormatException("schedule takes no options in ACTIONS")
+                    ActionDef.Schedule()
+                }
+                "deadline" -> {
+                    if (options != null)
+                        throw FormatException("deadline takes no options in ACTIONS")
+                    ActionDef.SetDeadline()
+                }
+                "tags" -> ActionDef.SetTags(
+                    options?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+                        ?: emptyList())
+                "priority" -> ActionDef.SetPriority(options?.trim()?.ifEmpty { null })
+                "refile" -> ActionDef.Refile(options?.trim()?.ifEmpty { null })
+                "archive" -> ActionDef.Archive(
+                    options?.trim()?.ifEmpty { null } ?: "default")
+                else -> ActionDef.Unknown(token)
+            }
+            offset = end
+        }
+        return actions
+    }
+
     private fun parseSource(value: String): SourceRef? {
         val v = value.trim()
         if (v.equals("inline", ignoreCase = true)) return null
+        // A trailing slash marks a note vault directory, not a file::*heading.
+        if (v.endsWith("/")) return SourceRef.Dir(v.removeSuffix("/"))
         val parts = v.split("::", limit = 2)
         val heading = parts.getOrNull(1)?.trim()?.let {
             if (!it.startsWith("*"))
                 throw FormatException("SOURCE target must be *Heading, got \"$it\"")
             it.removePrefix("*").trim()
         }
-        return SourceRef(parts[0].trim(), heading)
+        return SourceRef.File(parts[0].trim(), heading)
     }
 
     private fun parseColTypes(value: String): List<ColType> =
@@ -168,9 +251,14 @@ object OrgCodec {
                         throw FormatException("enum needs options, e.g. enum(A,B)")
                     ColType.Enum(opts)
                 }
-                else -> throw FormatException("unknown column type \"$token\" in COLTYPES")
+                "ref" -> {
+                    if (options.isNullOrBlank())
+                        throw FormatException("ref needs a target view, e.g. ref(companies)")
+                    ColType.Ref(options.trim())
+                }
+                else -> ColType.Unknown(token)
             }.also {
-                if (token != "enum" && options != null)
+                if (token != "enum" && token != "ref" && options != null)
                     throw FormatException("$token takes no options in COLTYPES")
             }
         }.toList()
@@ -231,6 +319,14 @@ object OrgCodec {
         spec.label?.let { appendLine("#+TITLE: $it") }
         spec.icon?.let { appendLine("#+JETPACS_ICON: $it") }
         spec.order?.let { appendLine("#+JETPACS_ORDER: $it") }
+        if (spec.todoSequence.isNotEmpty()) {
+            val active = spec.todoSequence.filter { !it.isDone }.joinToString(" ") { it.keyword }
+            val done = spec.todoSequence.filter { it.isDone }.joinToString(" ") { it.keyword }
+            appendLine("#+TODO: $active | $done")
+        }
+        if (spec.tags.isNotEmpty()) {
+            appendLine("#+TAGS: ${spec.tags.joinToString(" ")}")
+        }
         for (view in spec.views) {
             appendLine()
             appendLine("* ${view.title}")
@@ -254,10 +350,19 @@ object OrgCodec {
             when (view.kind) {
                 ViewKind.CHECKLIST -> add("KIND" to "checklist")
                 ViewKind.RECORDS -> add("KIND" to "records")
+                ViewKind.NOTES -> add("KIND" to "notes")
+                ViewKind.BOARD -> add("KIND" to "board")
+                ViewKind.CALENDAR -> add("KIND" to "calendar")
+                ViewKind.GALLERY -> add("KIND" to "gallery")
+                ViewKind.TREE -> add("KIND" to "tree")
+                ViewKind.UNKNOWN -> add("KIND" to "unknown")
                 ViewKind.TABLE -> {}
             }
             view.source?.let {
-                add("SOURCE" to (it.file + (it.heading?.let { h -> "::*$h" } ?: "")))
+                add("SOURCE" to when (it) {
+                    is SourceRef.File -> it.file + (it.heading?.let { h -> "::*$h" } ?: "")
+                    is SourceRef.Dir -> it.dir + "/"
+                })
             }
             if (view.schema.isNotEmpty())
                 add("SCHEMA" to view.schema.joinToString(" ") { f ->
@@ -268,6 +373,13 @@ object OrgCodec {
             if (view.columns.isNotEmpty())
                 add("COLUMNS" to view.columns.joinToString(" | "))
             view.filter?.let { add("FILTER" to it) }
+            view.groupBy?.let { add("GROUP_BY" to it) }
+            view.dateField?.let { add("DATE_FIELD" to it) }
+            view.imageField?.let { add("IMAGE_FIELD" to it) }
+            if (view.actions.isNotEmpty())
+                add("ACTIONS" to view.actions.joinToString(" ") { it.toToken() })
+            if (view.nav == ViewNav.DRAWER) add("NAV" to "drawer")
+            view.group?.let { add("GROUP" to it) }
         }
         if (props.isEmpty()) return
         appendLine(":PROPERTIES:")

@@ -12,6 +12,8 @@ data class CmdResult(val exit: Int, val stdout: String, val stderr: String) {
     val ok: Boolean get() = exit == 0
 }
 
+data class FileNode(val name: String, val isDirectory: Boolean)
+
 /** Thin wrapper over the adb CLI; every call is synchronous and bounded. */
 object Adb {
 
@@ -62,6 +64,20 @@ object Adb {
                 )
             }
             .toList()
+
+    fun ls(serial: String, path: String): List<FileNode> {
+        val out = run("-s", serial, "shell", "ls", "-A1p", path, timeoutSeconds = 15)
+        if (!out.ok) return emptyList()
+        return out.stdout.lineSequence()
+            .filter { it.isNotBlank() }
+            .map { line ->
+                val isDir = line.endsWith("/")
+                FileNode(
+                    name = if (isDir) line.dropLast(1) else line,
+                    isDirectory = isDir
+                )
+            }.toList()
+    }
 
     fun companionInstalled(serial: String): Boolean =
         run("-s", serial, "shell", "pm", "path", COMPANION_PACKAGE,

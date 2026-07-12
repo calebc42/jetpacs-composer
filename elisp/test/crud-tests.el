@@ -98,6 +98,21 @@
 (defun jetpacs-crud-tests--slurp (file)
   (with-temp-buffer (insert-file-contents file) (buffer-string)))
 
+(defun jetpacs-crud-tests--parser-parity-cases ()
+  "Read the shared parser accept/reject manifest."
+  (with-temp-buffer
+    (insert-file-contents
+     (expand-file-name "parser-parity.manifest" jetpacs-crud-tests--fixtures))
+    (let (cases)
+      (dolist (line (split-string (buffer-string) "\n" t))
+        (setq line (string-trim line))
+        (unless (or (string-empty-p line) (string-prefix-p "#" line))
+          (let ((fields (split-string line "[ \t]+" t)))
+            (unless (= (length fields) 3)
+              (error "Bad parser parity manifest line: %s" line))
+            (push fields cases))))
+      (nreverse cases))))
+
 (defun jetpacs-crud-tests--cell-pos (id view-name data-row col)
   "Buffer position of DATA-ROW (1-based, header excluded) / COL's cell."
   (let* ((spec (jetpacs-crud--app id))
@@ -129,6 +144,66 @@ contains non-ASCII — decode so the goldens are comparable text."
      'utf-8)))
 
 ;; ─── Parsing ─────────────────────────────────────────────────────────────────
+
+(ert-deftest jetpacs-crud-parser-parity-manifest ()
+  "The device parser obeys the shared JVM/ERT accept/reject contract."
+  (dolist (case (jetpacs-crud-tests--parser-parity-cases))
+    (let ((name (nth 0 case))
+          (expectation (nth 1 case))
+          (file (expand-file-name (nth 2 case)
+                                  jetpacs-crud-tests--fixtures)))
+      (pcase expectation
+        ("accept"
+         (condition-case err
+             (should (jetpacs-crud-parse-app file))
+           (error (ert-fail (format "%s should accept %s, got %S"
+                                    name file err)))))
+        ("reject"
+         (should-error (jetpacs-crud-parse-app file) :type 'user-error))
+        (_ (ert-fail (format "Unknown parser parity expectation %S"
+                             expectation)))))))
+
+(ert-deftest jetpacs-crud-parser-parity-fixture-covers-accepted-surface ()
+  "Pin the semantics represented by the shared all-surface fixture."
+  (let* ((file (expand-file-name "parser-parity-all.org"
+                                 jetpacs-crud-tests--fixtures))
+         (spec (jetpacs-crud-parse-app file))
+         (views (plist-get spec :views))
+         (table (car views))
+         (records (cl-find 'records views
+                           :key (lambda (view) (plist-get view :kind))))
+         (notes (cl-find 'notes views
+                         :key (lambda (view) (plist-get view :kind))))
+         (board (cl-find 'board views
+                         :key (lambda (view) (plist-get view :kind))))
+         (calendar (cl-find 'calendar views
+                            :key (lambda (view) (plist-get view :kind))))
+         (gallery (cl-find 'gallery views
+                           :key (lambda (view) (plist-get view :kind)))))
+    (should (equal (mapcar (lambda (view) (plist-get view :kind)) views)
+                   '(table checklist records notes board calendar gallery)))
+    (should (equal (plist-get table :icon) "table_chart"))
+    (should (= (plist-get table :order) 10))
+    (should (equal (plist-get table :columns)
+                   '("Text" "Number" "Date" "Done" "Choice")))
+    (should (equal (plist-get table :coltypes)
+                   '(text number date checkbox (enum "A" "B"))))
+    (should (equal (mapcar #'car (plist-get records :schema))
+                   '("ITEM" "TODO" "DEADLINE" "SCHEDULED" "PRIORITY"
+                     "TAGS" "EFFORT" "CATEGORY")))
+    (should (equal (plist-get records :actions)
+                   "todo(DONE) schedule deadline tags(work,home) priority(A) refile(* Archive) archive(subtree)"))
+    (should (equal (plist-get records :filter) "(todo \"TODO\")"))
+    (should (plist-get (plist-get notes :source) :dir))
+    (should (equal (plist-get board :group-by) "TODO"))
+    (should (equal (plist-get calendar :date-field) "DEADLINE"))
+    (should (equal (plist-get gallery :image-field) "Photo"))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (let ((keywords (jetpacs-crud-orgapp--keywords)))
+        (dolist (name '("JETPACS_APP" "TITLE" "JETPACS_ICON" "JETPACS_ORDER"
+                        "JETPACS_APP_FORMAT" "TODO" "TAGS"))
+          (should (assoc name keywords)))))))
 
 (ert-deftest jetpacs-crud-parse-pantry ()
   (let ((spec (jetpacs-crud-parse-app
@@ -174,11 +249,19 @@ contains non-ASCII — decode so the goldens are comparable text."
     (should (equal (plist-get view :columns) '("Part" "Count")))))
 
 (ert-deftest jetpacs-crud-parse-malformed ()
-  (dolist (fixture '("malformed-no-app.org" "malformed-coltype.org"
-                     "malformed-dup.org"))
+  (dolist (fixture '("malformed-no-app.org" "malformed-dup.org"))
     (should-error (jetpacs-crud-parse-app
                    (expand-file-name fixture jetpacs-crud-tests--fixtures))
                   :type 'user-error)))
+
+(ert-deftest jetpacs-crud-parse-unknown-coltype-degrades ()
+  "Vocabulary is forward-compatible: an unknown COLTYPES token parses
+as an `unknown' marker (rendered as text) instead of erroring."
+  (let* ((spec (jetpacs-crud-parse-app
+                (expand-file-name "malformed-coltype.org"
+                                  jetpacs-crud-tests--fixtures)))
+         (view (car (plist-get spec :views))))
+    (should (equal (plist-get view :coltypes) '(text (unknown "florb"))))))
 
 (ert-deftest jetpacs-crud-parse-unicode ()
   (let ((spec (jetpacs-crud-parse-app
@@ -231,6 +314,42 @@ contains non-ASCII — decode so the goldens are comparable text."
       (let ((view (funcall (plist-get (cdr entry) :builder) nil)))
         (should (null (jetpacs-lint-spec view)))
         (should (jetpacs-render-to-json view))))))
+
+;; ─── The canonical kitchen sink ─────────────────────────────────────────────
+;;
+;; hello-world.org is the one document that exercises every FORMAT-1
+;; surface.  These two tests are its teeth: coverage fails when a new
+;; kind is registered without growing the fixture, and the lint pass
+;; builds every body against the real widget constructors — the bugs a
+;; parse-only test can never see.
+
+(ert-deftest jetpacs-crud-hello-world-covers-every-kind ()
+  "Every registered datasource kind appears in the kitchen sink."
+  (let* ((spec (jetpacs-crud-parse-app
+                (expand-file-name "hello-world.org"
+                                  jetpacs-crud-tests--fixtures)))
+         (kinds (mapcar (lambda (v) (plist-get v :kind))
+                        (plist-get spec :views))))
+    (dolist (kind (mapcar #'car jetpacs-crud--kinds))
+      (should (memq kind kinds)))))
+
+(ert-deftest jetpacs-crud-hello-world-registers-scaffolds-and-lints ()
+  "Register the kitchen sink and build every view body for real."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "hello-world.org")))
+      (should (equal (jetpacs-crud-register-file file) "hello-world"))
+      ;; The Shopping view scaffolded its relative external source.
+      (should (file-exists-p (expand-file-name
+                              "shopping-list.org"
+                              (file-name-directory file))))
+      ;; Nine views, but six shell views: the four :GROUP: Tasks members
+      ;; collapse into one tabulated destination; the rest (two of them
+      ;; :NAV: drawer) each register their own.
+      (should (= (length jetpacs-shell-views) 6))
+      (dolist (entry jetpacs-shell-views)
+        (let ((body (funcall (plist-get (cdr entry) :builder) nil)))
+          (should (null (jetpacs-lint-spec body)))
+          (should (jetpacs-render-to-json body)))))))
 
 (ert-deftest jetpacs-crud-goldens ()
   "The pantry bodies' wire JSON, byte-for-byte."
@@ -535,16 +654,17 @@ Only for intentional wire changes; review the diff."
     (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
            (data (expand-file-name "people.org" (file-name-directory file))))
       (jetpacs-crud-register-file file)
-      ;; TODO and Tier have file-declared choices, so they prompt via
-      ;; completing-read; title/Phone/DEADLINE via read-string.
-      (let ((typed (list "Katherine Johnson" "555-0202" ""))
-            (chosen (list "ACTIVE" "Gold")))
-        (cl-letf (((symbol-function 'read-string)
-                   (lambda (&rest _) (pop typed)))
-                  ((symbol-function 'completing-read)
-                   (lambda (&rest _) (pop chosen))))
-          (jetpacs-crud-action-record-add
-           '((app . "crm") (view . "people")) nil)))
+      ;; Adding is a two-step flow: crud.record.add composes a form
+      ;; sheet whose inputs write jetpacs-ui-state under add_<PROP>,
+      ;; and crud.record.add.submit consumes that state.
+      (jetpacs-crud-action-record-add
+       '((app . "crm") (view . "people")) nil)
+      (jetpacs-ui-state-put "add_ITEM" "Katherine Johnson")
+      (jetpacs-ui-state-put "add_TODO" "ACTIVE")
+      (jetpacs-ui-state-put "add_Phone" "555-0202")
+      (jetpacs-ui-state-put "add_Tier" "Gold")
+      (jetpacs-crud-action-record-add-submit
+       '((app . "crm") (view . "people")) nil)
       (let ((content (jetpacs-crud-tests--slurp data)))
         ;; New record exists, with its drawer, BEFORE * Unrelated.
         (should (string-match-p "^\\*\\* ACTIVE Katherine Johnson" content))
@@ -814,6 +934,28 @@ harness) so the run never touches the developer's real note database."
                   (should (null (jetpacs-crud--scan-notes spec view)))))))
         (when (and (boundp 'vulpea-db--connection) vulpea-db--connection)
           (vulpea-db-close))))))
+
+(ert-deftest jetpacs-crud-test-app-parity ()
+  "Parse the shared app-parity.org fixture to ensure parser parity."
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((app-file (jetpacs-crud-tests--stage "app-parity.org"))
+           (spec (jetpacs-crud-parse-app app-file)))
+      (should (equal (plist-get spec :id) "parity"))
+      (should (= (length (plist-get spec :views)) 5))
+      (let ((board (nth 0 (plist-get spec :views)))
+            (calendar (nth 1 (plist-get spec :views)))
+            (gallery (nth 2 (plist-get spec :views)))
+            (table (nth 3 (plist-get spec :views)))
+            (records (nth 4 (plist-get spec :views))))
+        (should (eq (plist-get board :kind) 'board))
+        (should (equal (plist-get board :group-by) "TODO"))
+        (should (eq (plist-get calendar :kind) 'calendar))
+        (should (equal (plist-get calendar :date-field) "SCHEDULED"))
+        (should (eq (plist-get gallery :kind) 'gallery))
+        (should (equal (plist-get gallery :image-field) "IMAGE"))
+        (should (eq (plist-get table :kind) 'table))
+        (should (eq (plist-get records :kind) 'records))))))
+
 
 (provide 'crud-tests)
 ;;; crud-tests.el ends here

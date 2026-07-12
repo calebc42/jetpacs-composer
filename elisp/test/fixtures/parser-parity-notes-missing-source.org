@@ -1,0 +1,7 @@
+#+JETPACS_APP: parser-parity-notes
+
+* Notes
+:PROPERTIES:
+:KIND: notes
+:SCHEMA: %ITEM
+:END:

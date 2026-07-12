@@ -8,5 +8,7 @@
 :COLTYPES: text text text date
 :END:
 
-| Name | Phone | Email | Birthday |
-|------+-------+-------+----------|
+| Name          | Phone    | Email             | Birthday   |
+|---------------+----------+-------------------+------------|
+| Ada Lovelace  | 555-0100 | ada@example.com   | 1815-12-10 |
+| Grace Hopper  | 555-0199 | grace@example.com | 1906-12-09 |

@@ -2,7 +2,11 @@
 package com.calebc42.composer.ui
 
 import com.calebc42.composer.model.ColType
+import com.calebc42.composer.model.ActionDef
+import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.ModelOps
+import com.calebc42.composer.model.SchemaField
+import com.calebc42.composer.model.ViewSpec
 import com.calebc42.composer.model.ViewKind
 import com.calebc42.composer.org.OrgCodec
 import java.io.File
@@ -59,5 +63,80 @@ class EditorSessionTest {
 
         // And the document inside the bundle is the document on disk.
         assertTrue(OrgCodec.write(reopened.spec) in text)
+    }
+
+    @Test
+    fun exportBlocksErrorsWithoutTouchingAnExistingBundle() {
+        val dir = createTempDirectory("composer-export-gate").toFile()
+        var spec = ModelOps.addView(AppSpec(id = "blocked"), "Rows", ViewKind.TABLE)
+        spec = ModelOps.updateView(spec, 0) {
+            ModelOps.setColumnType(it, 0, ColType.Ref("missing"))
+        }
+        val session = EditorSession.fromSpec(spec)
+        val document = File(dir, "blocked.org")
+        assertNull(session.save(document), "ordinary app.org saves remain available")
+
+        val bundle = File(dir, "jetpacs-app-blocked.el")
+        bundle.writeText("existing bundle", Charsets.UTF_8)
+        val result = session.export()
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().startsWith("Bundle export blocked"))
+        assertEquals("existing bundle", bundle.readText(Charsets.UTF_8))
+    }
+
+    @Test
+    fun warningsDoNotBlockExport() {
+        val dir = createTempDirectory("composer-export-warning").toFile()
+        val spec = AppSpec(
+            id = "warnings",
+            views = listOf(
+                ViewSpec(
+                    title = "Records",
+                    kind = ViewKind.RECORDS,
+                    schema = listOf(SchemaField("ITEM")),
+                    // More field types than schema fields — a Warning,
+                    // not an Error.
+                    colTypes = listOf(ColType.Text, ColType.Text),
+                    actions = listOf(ActionDef.Schedule()),
+                ),
+            ),
+        )
+        assertTrue(ModelOps.validate(spec).any {
+            it.severity == ModelOps.Severity.Warning
+        })
+
+        val session = EditorSession.fromSpec(spec)
+        assertNull(session.save(File(dir, "warnings.org")))
+        assertTrue(session.export().isSuccess)
+    }
+
+    @Test
+    fun exportAlsoChecksThatTheGeneratedDocumentParses() {
+        val dir = createTempDirectory("composer-export-parse-gate").toFile()
+        val spec = AppSpec(
+            id = "parse-gate",
+            views = listOf(
+                ViewSpec(
+                    title = "Records",
+                    kind = ViewKind.RECORDS,
+                    schema = listOf(SchemaField("ITEM")),
+                    colTypes = listOf(ColType.Text),
+                    actions = listOf(ActionDef.SetTags(listOf("bad)"))),
+                ),
+            ),
+        )
+        assertTrue(ModelOps.validate(spec).none {
+            it.severity == ModelOps.Severity.Error
+        })
+
+        val session = EditorSession.fromSpec(spec)
+        assertNull(session.save(File(dir, "parse-gate.org")))
+        val result = session.export()
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty()
+            .contains("generated app.org is invalid"))
+        assertTrue(!File(dir, "jetpacs-app-parse-gate.el").exists())
     }
 }

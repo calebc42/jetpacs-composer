@@ -1,0 +1,6 @@
+#+JETPACS_APP: parser-parity-enum
+
+* Table
+:PROPERTIES:
+:COLTYPES: enum()
+:END:

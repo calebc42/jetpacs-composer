@@ -1,0 +1,41 @@
+#+JETPACS_APP: parity
+#+TITLE: Parity Test App
+#+JETPACS_ICON: verified
+#+JETPACS_APP_FORMAT: 1
+#+TODO: TODO DOING | DONE
+
+* Board View
+:PROPERTIES:
+:KIND: board
+:GROUP_BY: TODO
+:SCHEMA: %ITEM %TODO
+:END:
+
+* Calendar View
+:PROPERTIES:
+:KIND: calendar
+:DATE_FIELD: SCHEDULED
+:SCHEMA: %ITEM %SCHEDULED
+:END:
+
+* Gallery View
+:PROPERTIES:
+:KIND: gallery
+:IMAGE_FIELD: IMAGE
+:SCHEMA: %ITEM %IMAGE(Picture)
+:END:
+
+* Table View
+:PROPERTIES:
+:KIND: table
+:COLTYPES: text enum(A,B,C) text text
+:END:
+| Name | Status | Category | Effort |
+|------+--------+----------+--------|
+| Task | A      | Work     | 1:00   |
+
+* Records View
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM %EFFORT %CATEGORY
+:END:

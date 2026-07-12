@@ -1,0 +1,9 @@
+#+JETPACS_APP: parser-parity-ref
+#+JETPACS_APP_FORMAT: 1
+
+* Records
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM %Customer
+:COLTYPES: text ref(Customers)
+:END:

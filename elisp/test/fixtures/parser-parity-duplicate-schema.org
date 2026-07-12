@@ -1,0 +1,7 @@
+#+JETPACS_APP: parser-parity-schema
+
+* Records
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM %item
+:END:

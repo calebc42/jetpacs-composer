@@ -18,7 +18,7 @@
 ;; ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 (defconst jetpacs-crud-orgapp--keyword-re
-  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|TITLE\\):[ \t]*\\(.*?\\)[ \t]*$"
+  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
   "File-level keywords of the format (docs/FORMAT.md), case-insensitive.")
 
 (defun jetpacs-crud-orgapp--keywords ()
@@ -34,12 +34,9 @@ Returns an alist of upcased NAME -> VALUE; the first occurrence wins."
             (push (cons name (match-string-no-properties 2)) found)))))
     (nreverse found)))
 
-(defun jetpacs-crud-orgapp--slug (title)
-  "A view slug from TITLE: lowercase, runs of non-alphanumerics to dashes."
-  (let ((slug (replace-regexp-in-string
-               "\\`-+\\|-+\\'" ""
-               (replace-regexp-in-string "[^a-z0-9]+" "-" (downcase title)))))
-    (if (string-empty-p slug) "view" slug)))
+(defalias 'jetpacs-crud-orgapp--slug 'jetpacs-crud--slug
+  "A view slug from a title; the canonical implementation lives in the runtime
+so group destinations and view names slugify identically.")
 
 (defun jetpacs-crud-orgapp--parse-coltypes (value file)
   "Parse a `:COLTYPES:' VALUE into the runtime's type list.
@@ -55,6 +52,11 @@ an error naming FILE — the format is closed."
                  (when options
                    (user-error "%s: %s takes no options in COLTYPES" file token))
                  (intern token))
+                ("ref"
+                 (let ((opt (and options (string-trim options))))
+                   (unless (and opt (not (string-empty-p opt)))
+                     (user-error "%s: ref needs a target view, e.g. ref(companies)" file))
+                   (list 'ref opt)))
                 ("enum"
                  (let ((opts (and options
                                   (cl-remove-if #'string-empty-p
@@ -63,13 +65,17 @@ an error naming FILE — the format is closed."
                    (unless opts
                      (user-error "%s: enum needs options, e.g. enum(A,B)" file))
                    (cons 'enum opts)))
-                (_ (user-error "%s: unknown column type %S in COLTYPES"
-                               file token)))
+                (_ (display-warning 'jetpacs-crud
+                                    (format "%s: unknown column type %S in COLTYPES (treating as text)"
+                                            file token)
+                                    :warning)
+                   (list 'unknown token)))
               types)))
     (nreverse types)))
 
 (defconst jetpacs-crud-orgapp--special-props
-  '("ITEM" "TODO" "DEADLINE" "SCHEDULED" "PRIORITY" "TAGS")
+  '("ITEM" "TODO" "DEADLINE" "SCHEDULED" "PRIORITY" "TAGS"
+    "EFFORT" "CATEGORY")
   "Org special properties recognized in a `:SCHEMA:' (upcased on parse).")
 
 (defun jetpacs-crud-orgapp--parse-schema (value file)
@@ -95,6 +101,45 @@ case-insensitively anyway)."
                 (length (delete-dups (mapcar #'upcase (copy-sequence props)))))
         (user-error "%s: duplicate property in SCHEMA" file)))
     (nreverse fields)))
+
+(defun jetpacs-crud-orgapp--parse-actions (value file)
+  "Validate closed `:ACTIONS:' VALUE and return its trimmed wire form.
+The accepted tokens mirror the composer's `ActionDef' vocabulary."
+  (let ((pos 0)
+        (len (length value))
+        (case-fold-search nil))
+    (while (< pos len)
+      (if (string-match-p "\\`[ \t]*\\'" (substring value pos))
+          (setq pos len)
+        (unless (and (string-match
+                      "[ \t]*\\([a-z]+\\)\\((\\([^)]*\\))\\)?" value pos)
+                     (= (match-beginning 0) pos))
+          (user-error "%s: malformed action near %S in ACTIONS"
+                      file (substring value pos)))
+        (let* ((token (match-string 1 value))
+               (options-form (match-string 2 value))
+               (options (match-string 3 value))
+               (end (match-end 0)))
+          (when (and (< end len)
+                     (not (memq (aref value end) '(?\s ?\t))))
+            (user-error "%s: malformed action near %S in ACTIONS"
+                        file (substring value pos)))
+          (pcase token
+            ("todo"
+             (when (or (null options)
+                       (string-empty-p (string-trim options)))
+               (user-error "%s: todo() needs a keyword" file)))
+            ((or "schedule" "deadline")
+             (when options-form
+               (user-error "%s: %s takes no options in ACTIONS" file token)))
+            ((or "tags" "priority" "refile" "archive") nil)
+            (_ (display-warning 'jetpacs-crud
+                                (format "%s: unknown action %S in ACTIONS (ignoring)"
+                                        file token)
+                                :warning)
+               (list 'unknown token)))
+          (setq pos end))))
+    (string-trim value)))
 
 (defun jetpacs-crud-orgapp--parse-source (value app-file)
   "Parse a `:SOURCE:' VALUE.
@@ -128,15 +173,28 @@ Point must be on the heading line."
                  ("checklist" 'checklist)
                  ("records" 'records)
                  ("notes" 'notes)
-                 (other (user-error "%s: unknown KIND %S under %S"
-                                    app-file other title))))
+                 ("board" 'board)
+                 ("calendar" 'calendar)
+                 ("gallery" 'gallery)
+                 ("tree" 'tree)
+                 (other (display-warning 'jetpacs-crud
+                                         (format "%s: unknown KIND %S under %S (falling back to unknown)"
+                                                 app-file other title)
+                                         :warning)
+                        'unknown)))
          (source-raw (funcall prop "SOURCE"))
          (coltypes-raw (funcall prop "COLTYPES"))
          (columns-raw (funcall prop "COLUMNS"))
          (schema-raw (funcall prop "SCHEMA"))
          (filter-raw (funcall prop "FILTER"))
-         (order-raw (funcall prop "ORDER")))
-    (when (and (memq kind '(records notes)) (not schema-raw))
+         (group-by-raw (funcall prop "GROUP_BY"))
+         (date-field-raw (funcall prop "DATE_FIELD"))
+         (image-field-raw (funcall prop "IMAGE_FIELD"))
+         (actions-raw (funcall prop "ACTIONS"))
+         (order-raw (funcall prop "ORDER"))
+         (nav-raw (funcall prop "NAV"))
+         (group-raw (funcall prop "GROUP")))
+    (when (and (memq kind '(records notes board calendar gallery tree)) (not schema-raw))
       (user-error "%s: a %s view needs a :SCHEMA: under %S"
                   app-file (symbol-name kind) title))
     (when (and (eq kind 'notes) (not source-raw))
@@ -149,6 +207,10 @@ file::*Heading) under %S" app-file title))
                       ('checklist "checklist")
                       ('records "list_alt")
                       ('notes "sticky_note_2")
+                      ('board "view_kanban")
+                      ('calendar "calendar_month")
+                      ('gallery "grid_view")
+                      ('tree "account_tree")
                       (_ "table_chart")))
           :order (if order-raw (string-to-number order-raw)
                    (* 10 (1+ index)))
@@ -159,14 +221,33 @@ file::*Heading) under %S" app-file title))
                          (jetpacs-crud-orgapp--parse-coltypes coltypes-raw
                                                               app-file))
           :columns (and columns-raw
-                        (cl-remove-if #'string-empty-p
-                                      (mapcar #'string-trim
-                                              (split-string columns-raw "|"))))
+                        (delq nil
+                              (mapcar (lambda (s)
+                                        (let ((trimmed (string-trim s)))
+                                          (unless (string-empty-p trimmed)
+                                            trimmed)))
+                                      (split-string columns-raw "|"))))
           :schema (and schema-raw
                        (jetpacs-crud-orgapp--parse-schema schema-raw app-file))
-          :filter (and filter-raw
-                       (let ((f (string-trim filter-raw)))
-                         (and (not (string-empty-p f)) f))))))
+          :filter (and filter-raw (string-trim filter-raw))
+          :group-by (and group-by-raw (string-trim group-by-raw))
+          :date-field (and date-field-raw (string-trim date-field-raw))
+          :image-field (and image-field-raw (string-trim image-field-raw))
+          :actions (and actions-raw
+                        (jetpacs-crud-orgapp--parse-actions actions-raw
+                                                            app-file))
+          :nav (pcase (and nav-raw (downcase (string-trim nav-raw)))
+                 ((or `nil "tab") 'tab)
+                 ("drawer" 'drawer)
+                 (other (display-warning
+                         'jetpacs-crud
+                         (format "%s: unknown NAV %S under %S (treating as tab)"
+                                 app-file other title)
+                         :warning)
+                        'tab))
+          :group (and group-raw
+                      (let ((g (string-trim group-raw)))
+                        (unless (string-empty-p g) g))))))
 
 ;; ─── The parser ──────────────────────────────────────────────────────────────
 

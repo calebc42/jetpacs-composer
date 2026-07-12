@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.calebc42.composer.export.BundleExporter
 import com.calebc42.composer.model.AppSpec
+import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.org.OrgCodec
 import com.calebc42.composer.project.RecentFiles
 import java.io.File
@@ -52,11 +53,36 @@ class EditorSession private constructor(
 
     /** Write the shippable bundle next to the document. Saves first. */
     fun export(): Result<File> {
+        val errors = ModelOps.validate(spec)
+            .filter { it.severity == ModelOps.Severity.Error }
+        if (errors.isNotEmpty()) {
+            val message = buildString {
+                append("Bundle export blocked by ${errors.size} error")
+                if (errors.size != 1) append('s')
+                append(": ")
+                append(errors.joinToString("; ") { problem ->
+                    val view = problem.viewIndex
+                        ?.let { spec.views.getOrNull(it)?.title }
+                    if (view == null) problem.message
+                    else "$view: ${problem.message}"
+                })
+            }
+            lastError = message
+            return Result.failure(IllegalStateException(message))
+        }
+        val document = runCatching {
+            documentText().also { OrgCodec.parse(it) }
+        }.getOrElse { cause ->
+            val message = "Bundle export blocked because the generated app.org " +
+                "is invalid: ${cause.message ?: cause::class.simpleName}"
+            lastError = message
+            return Result.failure(IllegalStateException(message, cause))
+        }
         save()?.let { return Result.failure(Exception(it)) }
         val doc = file!!
         return runCatching {
             val out = File(doc.parentFile, BundleExporter.bundleFileName(spec))
-            out.writeText(bundleText(), Charsets.UTF_8)
+            out.writeText(BundleExporter.assemble(spec, document), Charsets.UTF_8)
             out
         }.onFailure { lastError = it.message }
     }

@@ -47,6 +47,15 @@ SPEC is the plist described in docs/FORMAT.md: :id :label :icon :order
   (cl-find name (plist-get spec :views)
            :key (lambda (v) (plist-get v :name)) :test #'equal))
 
+(defun jetpacs-crud--slug (title)
+  "A slug from TITLE: lowercased, non-alphanumeric runs collapsed to dashes.
+The shared basis for both view names and tabulated-group destination
+names; \"view\" when TITLE holds no alphanumerics."
+  (let ((slug (replace-regexp-in-string
+               "\\`-+\\|-+\\'" ""
+               (replace-regexp-in-string "[^a-z0-9]+" "-" (downcase title)))))
+    (if (string-empty-p slug) "view" slug)))
+
 (defun jetpacs-crud--view-source (spec view)
   "Resolve VIEW's datasource in app SPEC to a cons (FILE . HEADING).
 An inline source is the app file itself with the view's own heading."
@@ -353,11 +362,39 @@ heading alone.  Inline sources and existing files are left untouched."
 
 ;; ─── Rendering: table views ──────────────────────────────────────────────────
 
-(defun jetpacs-crud--cell-display (view col text)
+(defun jetpacs-crud--ref-resolve (spec target-view val)
+  "Resolve reference VAL (an :ID:) against TARGET-VIEW in SPEC.
+Returns the target record's title, or VAL if not found/resolved."
+  (if (or (null val) (string-empty-p val))
+      val
+    (let* ((views (plist-get spec :views))
+           (tview (cl-find target-view views :key (lambda (v) (plist-get v :name)) :test #'equal)))
+      (if tview
+          (let ((records (if (eq (plist-get tview :kind) 'notes)
+                             (jetpacs-crud--scan-notes spec tview)
+                           (jetpacs-crud--scan-records spec tview))))
+            (let ((found (cl-find-if (lambda (r)
+                                       (if (eq (plist-get tview :kind) 'notes)
+                                           (equal (plist-get r :id) val)
+                                         (equal (alist-get "ID" (plist-get r :fields) nil nil #'equal) val)))
+                                     records)))
+              (if found
+                  (or (if (eq (plist-get tview :kind) 'notes)
+                          (alist-get "TITLE" (plist-get found :fields) nil nil #'equal)
+                        (alist-get "ITEM" (plist-get found :fields) nil nil #'equal))
+                      val)
+                val)))
+        val))))
+
+(defun jetpacs-crud--cell-display (spec view col text)
   "The display string for TEXT in data column COL of VIEW."
-  (if (jetpacs-crud--checkbox-col-p view col)
-      (if (string-match-p "\\`\\[[xX]\\]\\'" text) "☑" "☐")
-    text))
+  (let ((ctype (jetpacs-crud--coltype view col)))
+    (cond
+     ((eq ctype 'checkbox)
+      (if (string-match-p "\\`\\[[xX]\\]\\'" text) "☑" "☐"))
+     ((and (consp ctype) (eq (car ctype) 'ref))
+      (jetpacs-crud--ref-resolve spec (cadr ctype) text))
+     (t text))))
 
 (defun jetpacs-crud--cell-node (spec view col cell &optional header)
   "Build the table-cell node for CELL (TEXT . POS) at data column COL.
@@ -370,7 +407,7 @@ columns) and long-press for the row menu."
                  (pos . ,pos))))
     (jetpacs-table-cell
      (list (jetpacs-span (if header text
-                           (jetpacs-crud--cell-display view col text))))
+                           (jetpacs-crud--cell-display spec view col text))))
      :on-tap (unless header
                (jetpacs-action (if (jetpacs-crud--checkbox-col-p view col)
                                    "crud.cell.toggle" "crud.cell.edit")
@@ -509,7 +546,13 @@ org itself."
          (file (car source))
          (heading (cdr source))
          (props (mapcar #'car (jetpacs-crud--schema-props view)))
-         (tree (jetpacs-crud--parse-query (plist-get view :filter))))
+         (search-id (format "search_%s" (plist-get view :name)))
+         (search (jetpacs-ui-state search-id))
+         (static-tree (jetpacs-crud--parse-query (plist-get view :filter)))
+         (tree (if (and search (not (string-empty-p search)))
+                   (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
+                     (if static-tree (list 'and static-tree q) q))
+                 static-tree)))
     (when (file-readable-p file)
       (jetpacs-crud--with-source file
         (save-restriction
@@ -539,14 +582,52 @@ org itself."
                nil)
               (nreverse records))))))))
 
-(defun jetpacs-crud--record-card (spec view record)
-  "The card node for RECORD of VIEW in SPEC."
+(defun jetpacs-crud--action-tokens (raw)
+  "Parse RAW actions string into a list of (token . options)."
+  (let ((tokens nil) (pos 0))
+    (when raw
+      (while (string-match "[ \t]*\\([a-z]+\\)\\((\\([^)]*\\))\\)?" raw pos)
+        (push (cons (match-string 1 raw) (match-string 3 raw)) tokens)
+        (setq pos (match-end 0))))
+    (nreverse tokens)))
+
+(defun jetpacs-crud--action-spec (token-cons args-for)
+  "Return (label icon color action-node) for a parsed action TOKEN-CONS."
+  (let* ((token (car token-cons))
+         (options (cdr token-cons))
+         (args (funcall args-for nil))
+         (action-node (jetpacs-action "crud.action.apply"
+                                      :args (append args `((token . ,token)
+                                                           (options . ,options))))))
+    (pcase token
+      ("todo" (list (or options "Todo") "check_circle" "primary" action-node))
+      ("schedule" (list "Schedule" "schedule" "primary" action-node))
+      ("deadline" (list "Deadline" "event" "error" action-node))
+      ("tags" (list "Tags" "sell" "secondary" action-node))
+      ("priority" (list "Priority" "priority_high" "error" action-node))
+      ("refile" (list "Refile" "drive_file_move" "secondary" action-node))
+      ("archive" (list "Archive" "archive" "surfaceVariant" action-node)))))
+
+(defun jetpacs-crud--action-swipe (token-cons args-for)
+  (when token-cons
+    (pcase-let ((`(,label ,icon ,color ,action) (jetpacs-crud--action-spec token-cons args-for)))
+      (jetpacs-swipe-action icon label action :color color))))
+
+(defun jetpacs-crud--action-menu (token-cons args-for)
+  (when token-cons
+    (pcase-let ((`(,label ,icon ,_color ,action) (jetpacs-crud--action-spec token-cons args-for)))
+      (jetpacs-menu-item label action :icon icon))))
+
+(defun jetpacs-crud--record-card (spec view record &optional footer)
+  "The card node for RECORD of VIEW in SPEC.
+If FOOTER is provided, it is appended as the last child of the card's column."
   (let* ((fields (plist-get record :fields))
          (pos (plist-get record :pos))
          (schema (jetpacs-crud--schema-props view))
          (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
                   (if (and item (not (string-empty-p item))) item "Untitled")))
          (todo (alist-get "TODO" fields nil nil #'equal))
+         (actions (jetpacs-crud--action-tokens (plist-get view :actions)))
          (args-for (lambda (prop)
                      `((app . ,(plist-get spec :id))
                        (view . ,(plist-get view :name))
@@ -555,6 +636,7 @@ org itself."
     (jetpacs-card
      (list
       (jetpacs-column
+
        (jetpacs-row
         (jetpacs-box
          (list (jetpacs-text (if (and todo (not (string-empty-p todo)))
@@ -562,41 +644,221 @@ org itself."
                              title)
                           'title))
          :weight 1
-         :on-tap (when (cl-find "ITEM" schema :key #'car :test #'equal)
-                   (jetpacs-action "crud.field.edit"
-                                :args (funcall args-for "ITEM"))))
+         :on-tap (jetpacs-action "crud.record.detail"
+                              :args (funcall args-for nil)))
         (jetpacs-menu
-         (list (jetpacs-menu-item "Delete record"
-                               (jetpacs-action "crud.record.menu"
-                                            :args (funcall args-for nil))
-                               :icon "delete"))))
+         (append
+          (delq nil (mapcar (lambda (a) (jetpacs-crud--action-menu a args-for)) actions))
+          (list (jetpacs-menu-item "Duplicate record"
+                                (jetpacs-action "crud.record.duplicate"
+                                             :args (funcall args-for nil))
+                                :icon "content_copy")
+                (jetpacs-menu-item "Delete record"
+                                (jetpacs-action "crud.record.menu"
+                                             :args (funcall args-for nil))
+                                :icon "delete")))))
        (apply #'jetpacs-column
-              (cl-loop for (prop . label) in schema
-                       unless (member prop '("ITEM" "TODO"))
-                       collect
-                       (let ((value (alist-get prop fields nil nil #'equal)))
-                         (jetpacs-box
-                          (list (jetpacs-row
-                                 (jetpacs-text (or label prop) 'caption nil nil nil 1)
-                                 (jetpacs-spacer :width 12)
-                                 (jetpacs-text (if (string-empty-p value) "—" value)
-                                            'body 1)))
-                          :on-tap (jetpacs-action "crud.field.edit"
-                                               :args (funcall args-for prop))
-                          :padding 2)))))))))
+              (append
+               (cl-loop for (prop . label) in schema
+                        unless (member prop '("ITEM" "TODO"))
+                        collect
+                        (let ((value (alist-get prop fields nil nil #'equal))
+                              (ctype (jetpacs-crud--field-type view prop)))
+                          (jetpacs-box
+                           (list (jetpacs-row
+                                  (jetpacs-text (or label prop) 'caption nil nil nil 1)
+                                  (jetpacs-spacer :width 12)
+                                  (jetpacs-text (if (string-empty-p value) "—" value)
+                                             'body 1)))
+                           :on-tap (jetpacs-action "crud.field.edit"
+                                                :args (funcall args-for prop))
+                           :padding 2)))
+               (when footer (list footer))))))
+     :swipe-start (jetpacs-crud--action-swipe (nth 0 actions) args-for)
+     :swipe-end (jetpacs-crud--action-swipe (nth 1 actions) args-for))))
 
 (defun jetpacs-crud--records-body (spec view)
   "The body node for records VIEW of SPEC."
-  (let ((records (jetpacs-crud--scan-records spec view)))
+  (let* ((records (jetpacs-crud--scan-records spec view))
+         (search-id (format "search_%s" (plist-get view :name)))
+         (search-input (jetpacs-text-input search-id
+                                           :hint "Search..."
+                                           :value (jetpacs-ui-state search-id)
+                                           :on-submit (jetpacs-action "crud.view.search")
+                                           :padding 8)))
     (apply #'jetpacs-lazy-column
-           (or (mapcar (lambda (r) (jetpacs-crud--record-card spec view r))
-                       records)
-               (list (jetpacs-empty-state
-                      :icon "list_alt"
-                      :title "No records"
-                      :caption (if (plist-get view :filter)
-                                   "Nothing matches the view's filter"
-                                 "Tap + to add the first record")))))))
+           (cons search-input
+                 (or (mapcar (lambda (r) (jetpacs-crud--record-card spec view r))
+                             records)
+                     (list (jetpacs-empty-state
+                            :icon "list_alt"
+                            :title "No records"
+                            :caption "Tap + to add a record")))))))
+
+(defun jetpacs-crud--scan-tree (spec view)
+  "Walk the SOURCE subtree at all depths, returning `jetpacs-reorderable-list' items."
+  (let* ((source (jetpacs-crud--view-source spec view))
+         (file (car source))
+         (heading (cdr source)))
+    (when (file-readable-p file)
+      (jetpacs-crud--with-source file
+        (save-restriction
+          (let ((base 0))
+            (when heading
+              (unless (jetpacs-crud--goto-heading heading)
+                (user-error "Heading %s not found in %s" heading file))
+              (setq base (org-outline-level))
+              (org-narrow-to-subtree))
+            (let ((items nil)
+                  (app-id (plist-get spec :id))
+                  (view-name (plist-get view :name)))
+              (org-map-entries
+               (lambda ()
+                 (let ((lvl (- (org-outline-level) base)))
+                   (when (> lvl 0)
+                     (push `((label . ,(org-get-heading t t t t))
+                             (level . ,(1- lvl))
+                             (pos . ,(point))
+                             (file . ,file)
+                             (on_tap . ,(jetpacs-action "crud.record.detail"
+                                                        :args `((app . ,app-id)
+                                                                (view . ,view-name)
+                                                                (pos . ,(point))))))
+                           items))))
+               nil)
+              (nreverse items))))))))
+
+(defun jetpacs-crud--tree-body (spec view)
+  "The body node for tree VIEW of SPEC."
+  (let ((items (jetpacs-crud--scan-tree spec view)))
+    (jetpacs-reorderable-list items
+                              :on-reorder (jetpacs-action "crud.node.move"
+                                                       :args `((app . ,(plist-get spec :id))
+                                                               (view . ,(plist-get view :name)))))))
+
+(defun jetpacs-crud--group-values (spec view prop)
+  "The org-declared value set for PROP in VIEW's source, as strings.
+TODO lanes come from the source file's real keyword sequence, other
+properties from the PROP_ALL convention (`jetpacs-crud--allowed-values',
+which needs the source buffer current).  nil when org declares nothing."
+  (let ((file (car (jetpacs-crud--view-source spec view))))
+    (when (and file (file-readable-p file))
+      (jetpacs-crud--with-source file
+        (car (jetpacs-crud--allowed-values (point-min) prop))))))
+
+(defun jetpacs-crud--board-body (spec view)
+  "The body node for board VIEW of SPEC. Groups records by :group-by field."
+  (let* ((records (jetpacs-crud--scan-records spec view))
+         (group-by (or (plist-get view :group-by) "TODO"))
+         (allowed-values (jetpacs-crud--group-values spec view group-by))
+         (groups (make-hash-table :test 'equal))
+         (group-keys (copy-sequence allowed-values))
+         (search-id (format "search_%s" (plist-get view :name)))
+         (search-input (jetpacs-text-input search-id
+                                           :hint "Search..."
+                                           :value (jetpacs-ui-state search-id)
+                                           :on-submit (jetpacs-action "crud.view.search")
+                                           :padding 8)))
+    (dolist (record records)
+      (let* ((fields (plist-get record :fields))
+             (val (or (alist-get group-by fields nil nil #'equal) "")))
+        (unless (member val group-keys)
+          (setq group-keys (append group-keys (list val))))
+        (push record (gethash val groups))))
+    (jetpacs-column
+     search-input
+     (if (null group-keys)
+         (jetpacs-empty-state :icon "view_kanban" :title "Empty Board" :caption "No records found.")
+       (apply #'jetpacs-row
+              (append
+               (mapcar (lambda (group-val)
+                        (let ((group-records (nreverse (gethash group-val groups))))
+                          (jetpacs-box
+                           (list
+                            (apply #'jetpacs-column
+                             (jetpacs-text (if (string-empty-p group-val) "Uncategorized" group-val) 'title)
+                                   (mapcar (lambda (r)
+                                             (let ((footer
+                                                    (when allowed-values
+                                                      (apply #'jetpacs-scroll-row
+                                                             (mapcar (lambda (opt)
+                                                                       (jetpacs-button opt
+                                                                                    (jetpacs-action "crud.field.edit"
+                                                                                                 :args `((app . ,(plist-get spec :id))
+                                                                                                         (view . ,(plist-get view :name))
+                                                                                                         (pos . ,(plist-get r :pos))
+                                                                                                         (prop . ,group-by)
+                                                                                                         (value . ,opt)))
+                                                                                    :variant (if (equal opt group-val) "tonal" "text")))
+                                                                     allowed-values)))))
+                                               (jetpacs-crud--record-card spec view r footer)))
+                                           group-records)))
+                           :width 300)))
+                       group-keys)
+               '(:scroll t)))))))
+
+(defun jetpacs-crud--gallery-body (spec view)
+  "The body node for gallery VIEW of SPEC."
+  (let* ((records (jetpacs-crud--scan-records spec view))
+         (image-field (or (plist-get view :image-field) "IMAGE"))
+         (search-id (format "search_%s" (plist-get view :name)))
+         (search-input (jetpacs-text-input search-id
+                                           :hint "Search..."
+                                           :value (jetpacs-ui-state search-id)
+                                           :on-submit (jetpacs-action "crud.view.search")
+                                           :padding 8)))
+    (jetpacs-column
+     search-input
+     (if (null records)
+         (jetpacs-empty-state :icon "grid_view" :title "Empty Gallery" :caption "No records found.")
+       (apply #'jetpacs-flow-row
+              (mapcar (lambda (r)
+                        (let* ((fields (plist-get r :fields))
+                               (url (alist-get image-field fields nil nil #'equal))
+                               (card (jetpacs-crud--record-card spec view r)))
+                          (if (and url (not (string-empty-p url)))
+                              (jetpacs-column (jetpacs-image url :height 150 :content-scale "crop") card)
+                            card)))
+                      records)))
+     :scroll t)))
+
+(defun jetpacs-crud--calendar-body (spec view)
+  "The body node for calendar VIEW of SPEC."
+  (let* ((records (jetpacs-crud--scan-records spec view))
+         (date-field (or (plist-get view :date-field) "DEADLINE")))
+    (if (null records)
+        (jetpacs-empty-state :icon "calendar_month" :title "Empty Calendar" :caption "No records found.")
+      ;; We don't have a native jetpacs-month-grid primitive exported in jetpacs-widgets yet.
+      ;; For now, render a simple list of cards grouped by date.
+      (let* ((groups (make-hash-table :test 'equal))
+             (group-keys nil))
+        (dolist (record records)
+          (let* ((fields (plist-get record :fields))
+                 (val (or (alist-get date-field fields nil nil #'equal) "")))
+            (when (string-match "\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\)" val)
+              (setq val (match-string 1 val)))
+            (unless (gethash val groups)
+              (push val group-keys))
+            (push record (gethash val groups))))
+        (setq group-keys (sort group-keys #'string<))
+        (let* ((list-fallback
+                (apply #'jetpacs-lazy-column
+                       (apply #'append
+                              (mapcar (lambda (group-val)
+                                        (let ((group-records (nreverse (gethash group-val groups))))
+                                          (cons (jetpacs-section-header (if (string-empty-p group-val) "Unscheduled" group-val))
+                                                (mapcar (lambda (r) (jetpacs-crud--record-card spec view r)) group-records))))
+                                      group-keys))))
+               (marks (delq nil
+                            (mapcar (lambda (k)
+                                      (when (and (not (string-empty-p k))
+                                                 (string-match-p "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" k))
+                                        (cons k (min 3 (length (gethash k groups))))))
+                                    group-keys)))
+               (month (if marks (substring (caar marks) 0 7) (format-time-string "%Y-%m"))))
+          (if (jetpacs-node-supported-p 'month_grid)
+              (jetpacs-column (jetpacs-month-grid month :marks marks) list-fallback)
+            list-fallback))))))
 
 ;; ─── Notes: vulpea-backed records (optional datasource) ─────────────────────
 ;;
@@ -718,7 +980,13 @@ narrow the SOURCE or install org-ql" tree))))
   "VIEW's note records: plists (:id ID :fields ALIST), FILTER-matched."
   (ignore spec)
   (let* ((props (mapcar #'car (jetpacs-crud--schema-props view)))
-         (tree (jetpacs-crud--parse-query (plist-get view :filter))))
+         (search-id (format "search_%s" (plist-get view :name)))
+         (search (jetpacs-ui-state search-id))
+         (static-tree (jetpacs-crud--parse-query (plist-get view :filter)))
+         (tree (if (and search (not (string-empty-p search)))
+                   (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
+                     (if static-tree (list 'and static-tree q) q))
+                 static-tree)))
     (delq nil
           (mapcar
            (lambda (n)
@@ -825,6 +1093,14 @@ action string the add-FAB fires.")
   :body #'jetpacs-crud--records-body :fab "crud.record.add")
 (jetpacs-crud--define-kind 'notes
   :body #'jetpacs-crud--notes-body :fab "crud.note.add")
+(jetpacs-crud--define-kind 'board
+  :body #'jetpacs-crud--board-body :fab "crud.record.add")
+(jetpacs-crud--define-kind 'calendar
+  :body #'jetpacs-crud--calendar-body :fab "crud.record.add")
+(jetpacs-crud--define-kind 'gallery
+  :body #'jetpacs-crud--gallery-body :fab "crud.record.add")
+(jetpacs-crud--define-kind 'tree
+  :body #'jetpacs-crud--tree-body :fab "crud.record.add")
 
 ;; ─── The view builder ────────────────────────────────────────────────────────
 
@@ -851,13 +1127,54 @@ action string the add-FAB fires.")
      :fab (jetpacs-crud--fab spec view)
      :snackbar snackbar)))
 
+(defun jetpacs-crud--build-group-view (id gslug gname members snackbar)
+  "Build the tabulated destination GNAME (slug GSLUG) of app ID from MEMBERS.
+Each member view becomes one swipeable page under a top tab row
+\(`jetpacs-tabs'); switching pages is companion-local, never a round-trip.
+The scaffold carries one FAB, so a group shares a single add affordance —
+the first member's (all four of hello-world's Tasks members add records)."
+  (let* ((spec (or (jetpacs-crud--app id)
+                   (error "CRUD app %s is not registered" id)))
+         (items (mapcar (lambda (m)
+                          (jetpacs-tab-item (plist-get m :title)
+                                            :icon (plist-get m :icon)))
+                        members))
+         (pages (mapcar (lambda (m)
+                          (funcall (plist-get (jetpacs-crud--kind-plist m) :body)
+                                   spec m))
+                        members))
+         (view-name (format "%s.%s" id gslug)))
+    (jetpacs-shell-tab-view
+     view-name
+     (jetpacs-tabs items pages :scrollable t :id view-name)
+     :top-bar (jetpacs-shell-default-top-bar gname)
+     :fab (jetpacs-crud--fab spec (car members))
+     :snackbar snackbar)))
+
 ;; ─── Registration ────────────────────────────────────────────────────────────
+
+(defun jetpacs-crud--view-groups (views)
+  "Ordered list of (GROUP-NAME . MEMBERS) for the VIEWS carrying a :group.
+Groups appear in first-member order; members keep their VIEWS order.
+Ungrouped views are absent — the caller places those on their own."
+  (let ((order nil) (table nil))
+    (dolist (view views)
+      (when-let ((g (plist-get view :group)))
+        (unless (member g order) (push g order))
+        (push view (alist-get g table nil nil #'equal))))
+    (mapcar (lambda (g) (cons g (nreverse (alist-get g table nil nil #'equal))))
+            (nreverse order))))
 
 (defun jetpacs-crud-register (spec)
   "Register SPEC (docs/FORMAT.md) as a live Jetpacs app.
 Re-registering an id replaces it wholesale (the live-reload path).
 Missing external sources are scaffolded when the view allows it.
-Returns the app id."
+
+A view's placement follows two optional properties: `:group' folds it,
+with its group-mates, into one tabulated bottom destination (a top
+`jetpacs-tabs' row over the members); `:nav' of `drawer' routes an
+ungrouped view into the navigation drawer instead of the bottom bar.
+The default is one bottom tab per view.  Returns the app id."
   (let ((id (plist-get spec :id)))
     (unless (and (stringp id) (string-match-p "\\`[a-z][a-z0-9-]*\\'" id))
       (user-error "Invalid app id: %S" id))
@@ -867,21 +1184,54 @@ Returns the app id."
       (jetpacs-crud--scaffold-source spec view))
     (setf (alist-get id jetpacs-crud--apps nil nil #'equal) spec)
     (with-jetpacs-owner id
-      (dolist (view (plist-get spec :views))
-        (let ((name (plist-get view :name)))
-          (jetpacs-shell-define-view (format "%s.%s" id name)
-            :builder (lambda (snackbar)
-                       (jetpacs-crud--build-view id name snackbar))
-            :tab (list :icon (plist-get view :icon)
-                       :label (plist-get view :title))
-            :order (plist-get view :order))))
-      (jetpacs-defapp id
-        :label (plist-get spec :label)
-        :icon (plist-get spec :icon)
-        :views (mapcar (lambda (v)
-                         (format "%s.%s" id (plist-get v :name)))
-                       (plist-get spec :views))
-        :order (plist-get spec :order)))
+      (let ((registered nil))
+        ;; Ungrouped views: a bottom tab, or — with :nav drawer — a
+        ;; hamburger entry that switches to the (still-shipped) view.
+        (dolist (view (plist-get spec :views))
+          (unless (plist-get view :group)
+            (let* ((name (plist-get view :name))
+                   (full (format "%s.%s" id name))
+                   (drawer (eq (plist-get view :nav) 'drawer)))
+              (let ((id id) (name name))
+                (jetpacs-shell-define-view full
+                  :builder (lambda (snackbar)
+                             (jetpacs-crud--build-view id name snackbar))
+                  :tab (unless drawer
+                         (list :icon (plist-get view :icon)
+                               :label (plist-get view :title)))
+                  :order (plist-get view :order)))
+              (push full registered)
+              (when drawer
+                (let ((full full)
+                      (icon (plist-get view :icon))
+                      (label (plist-get view :title)))
+                  (jetpacs-shell-add-drawer-item
+                   (plist-get view :order)
+                   (lambda ()
+                     (jetpacs-drawer-item
+                      icon label (jetpacs-shell-switch-view full)))))))))
+        ;; Grouped views: one tabulated destination per group.
+        (dolist (group (jetpacs-crud--view-groups (plist-get spec :views)))
+          (let* ((gname (car group))
+                 (members (cdr group))
+                 (gslug (jetpacs-crud--slug gname))
+                 (full (format "%s.%s" id gslug))
+                 (order (apply #'min (mapcar (lambda (m) (plist-get m :order))
+                                             members)))
+                 (icon (or (plist-get (car members) :icon) "table_chart")))
+            (let ((id id) (gslug gslug) (gname gname) (members members))
+              (jetpacs-shell-define-view full
+                :builder (lambda (snackbar)
+                           (jetpacs-crud--build-group-view
+                            id gslug gname members snackbar))
+                :tab (list :icon icon :label gname)
+                :order order))
+            (push full registered)))
+        (jetpacs-defapp id
+          :label (plist-get spec :label)
+          :icon (plist-get spec :icon)
+          :views (nreverse registered)
+          :order (plist-get spec :order))))
     id))
 
 (defun jetpacs-crud-unregister (id)
@@ -1033,6 +1383,70 @@ phone are refreshed before the user can tap again."
         (save-buffer)))
     (jetpacs-shell-push)))
 
+(defun jetpacs-crud-action-apply (args _payload)
+  "Apply the action TOKEN to the record."
+  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t))
+               (token (alist-get 'token args))
+               (options (alist-get 'options args)))
+    (with-current-buffer (find-file-noselect file)
+      (org-with-wide-buffer
+       (goto-char pos)
+       (pcase token
+         ("todo"
+          (let ((state (and options (string-trim options))))
+            (when (and state (not (string-empty-p state)))
+              (org-todo state))))
+         ("schedule" (call-interactively #'org-schedule))
+         ("deadline" (call-interactively #'org-deadline))
+         ("tags" (call-interactively #'org-set-tags-command))
+         ("priority" (call-interactively #'org-priority))
+         ("refile" (call-interactively #'org-refile))
+         ("archive" (org-archive-subtree-default)))))
+    (with-current-buffer (find-file-noselect file)
+      (let ((save-silently t)) (save-buffer)))
+    (jetpacs-shell-push)))
+
+(defun jetpacs-crud-action-node-move (args payload)
+  "Reorder or reparent a tree node.
+PAYLOAD contains `from_pos', `after_pos', and `new_level'."
+  (let* ((app (alist-get 'app args))
+         (view-name (alist-get 'view args))
+         (spec (jetpacs-crud--app app))
+         (view (jetpacs-crud--view spec view-name))
+         (source (jetpacs-crud--view-source spec view))
+         (file (car source))
+         (from-pos (round (alist-get 'from_pos payload)))
+         (after-pos (let ((a (alist-get 'after_pos payload))) (and a (round a))))
+         (new-level (let ((l (alist-get 'new_level payload))) (and l (round l)))))
+    (when (file-readable-p file)
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (let ((from-m (set-marker (make-marker) from-pos))
+               (after-m (when after-pos (set-marker (make-marker) after-pos))))
+           ;; Cut the subtree
+           (goto-char from-m)
+           (org-cut-subtree)
+           ;; Go to new position
+           (if after-m
+               (progn
+                 (goto-char after-m)
+                 (org-end-of-subtree t t))
+             (let ((heading (cdr source)))
+               (if heading
+                   (progn
+                     (jetpacs-crud--goto-heading heading)
+                     (forward-line 1))
+                 (goto-char (point-min)))))
+           (unless (bolp) (insert "\n"))
+           ;; Paste the subtree, adjusting its level
+           (let ((org-yank-adjusted-subtrees t))
+             (org-paste-subtree (when new-level (+ new-level (if (cdr source) (org-outline-level) 0) 1))))
+           (set-marker from-m nil)
+           (when after-m (set-marker after-m nil)))))
+      (with-current-buffer (find-file-noselect file)
+        (let ((save-silently t)) (save-buffer))))
+    (jetpacs-shell-push)))
+
 (defun jetpacs-crud-action-item-add (args _payload)
   "Append a new unchecked item to the checklist."
   (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args)))
@@ -1160,16 +1574,47 @@ declares them, else from the declared column type."
                   (jetpacs-crud--field-remove prop)
                 (org-entry-put (point) prop input))))))))))
 
+(defun jetpacs-crud-action-record-detail (args _payload)
+  "Show the detail view for a record.
+Opens the full record card inside a bottom sheet dialog."
+  (let* ((app (alist-get 'app args))
+         (view-name (alist-get 'view args))
+         (pos (alist-get 'pos args))
+         (id (alist-get 'id args))
+         (spec (jetpacs-crud--app app))
+         (view (jetpacs-crud--view spec view-name)))
+    (unless (and spec view)
+      (user-error "Unknown app or view: %s.%s" app view-name))
+    (let ((record nil))
+      (if pos
+          (let* ((source (jetpacs-crud--view-source spec view))
+                 (file (car source))
+                 (props (mapcar #'car (jetpacs-crud--schema-props view))))
+            (when (file-readable-p file)
+              (jetpacs-crud--with-source file
+                (goto-char pos)
+                (setq record (list :pos pos
+                                   :fields (mapcar (lambda (p)
+                                                     (cons p (or (org-entry-get (point) p) "")))
+                                                   props))))))
+        (let ((records (if (eq (plist-get view :kind) 'notes)
+                           (jetpacs-crud--scan-notes spec view)
+                         (jetpacs-crud--scan-records spec view))))
+          (setq record (cl-find-if (lambda (r)
+                                     (if (eq (plist-get view :kind) 'notes)
+                                         (equal (plist-get r :id) id)
+                                       (equal (alist-get "ID" (plist-get r :fields) nil nil #'equal) id)))
+                                   records))))
+      (unless record
+        (user-error "Record not found"))
+      (jetpacs-send-dialog
+       (jetpacs-crud--record-card spec view record)
+       "sheet_full"))))
+
 (defun jetpacs-crud-action-record-add (args _payload)
-  "Append a new record: one typed prompt per schema field.
-The heading lands at the end of the source subtree; fields are written
-through `org-entry-put', so the drawer and planning lines are org's."
+  "Open the record-add composed form sheet dialog."
   (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args)))
     (let* ((schema (jetpacs-crud--schema-props view))
-           (heading (cdr (jetpacs-crud--view-source spec view)))
-           ;; File-declared choices (keyword sequence, PROP_ALL) apply to
-           ;; new records too; file-wide declarations resolve from any
-           ;; position, so point-min serves before the record exists.
            (allowed-alist
             (when (file-readable-p file)
               (jetpacs-crud--with-source file
@@ -1178,26 +1623,49 @@ through `org-entry-put', so the drawer and planning lines are org's."
                                 (jetpacs-crud--allowed-values (point-min)
                                                               (car f))))
                         schema))))
-           (title (string-trim (read-string "Title: ")))
-           (values
+           (fields
             (cl-loop for (prop . label) in schema
-                     unless (member prop '("ITEM"))
                      collect
-                     (cons prop
-                           (let ((allowed (cdr (assoc prop allowed-alist))))
-                             (cond
-                              (allowed
-                               (completing-read (format "%s: " (or label prop))
-                                                (car allowed)
-                                                nil (cdr allowed)))
-                              ((or (member prop '("DEADLINE" "SCHEDULED"))
-                                   (eq (jetpacs-crud--field-type view prop)
-                                       'date))
-                               (jetpacs-crud--prompt-value (or label prop)
-                                                           'date))
-                              (t (jetpacs-crud--prompt-value
-                                  (or label prop)
-                                  (jetpacs-crud--field-type view prop)))))))))
+                     (let* ((id (format "add_%s" prop))
+                            (lbl (or label prop))
+                            (val (or (jetpacs-ui-state id) ""))
+                            (allowed (cdr (assoc prop allowed-alist)))
+                            (dateish (or (member prop '("DEADLINE" "SCHEDULED"))
+                                         (eq (jetpacs-crud--field-type view prop) 'date))))
+                       (cond
+                        ((equal prop "ITEM")
+                         (jetpacs-text-input id :label lbl :value val :single-line t :padding 16))
+                        (allowed
+                         (jetpacs-enum-list id (car allowed) :value val :padding 16))
+                        (dateish
+                         (jetpacs-date-button (if (string-empty-p val) lbl (format "%s: %s" lbl val))
+                                              (jetpacs-action "crud.field.state-sink"
+                                                              :args `((id . ,id) (add_args . ,args)))
+                                              :value val))
+                        (t
+                         (jetpacs-text-input id :label lbl :value val :padding 16)))))))
+      (jetpacs-send-dialog
+       (apply #'jetpacs-column
+              (append
+               (list (jetpacs-section-header "New Record" :padding 16))
+               fields
+               (list (jetpacs-row
+                      (jetpacs-button "Cancel" (jetpacs-action "crud.dialog.dismiss") :variant "text")
+                      (jetpacs-spacer :weight 1)
+                      (jetpacs-button "Add" (jetpacs-action "crud.record.add.submit" :args args) :variant "filled"))
+                     :scroll t)))
+       "sheet_full"))))
+
+(defun jetpacs-crud-action-record-add-submit (args _payload)
+  "Consume the composed form state and append the new record."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args)))
+    (let* ((schema (jetpacs-crud--schema-props view))
+           (heading (cdr (jetpacs-crud--view-source spec view)))
+           (title (string-trim (or (jetpacs-ui-state "add_ITEM") "")))
+           (values
+            (cl-loop for (prop . _label) in schema
+                     unless (member prop '("ITEM"))
+                     collect (cons prop (or (jetpacs-ui-state (format "add_%s" prop)) "")))))
       (when (string-empty-p title) (user-error "A record needs a title"))
       (with-current-buffer (find-file-noselect file)
         (org-with-wide-buffer
@@ -1218,8 +1686,10 @@ through `org-entry-put', so the drawer and planning lines are org's."
              (unless (string-empty-p (cdr kv))
                (org-entry-put (point) (car kv) (cdr kv))))))
         (let ((save-silently t))
-          (save-buffer))))
-    (jetpacs-shell-push)))
+          (save-buffer)))
+      (jetpacs-ui-state-clear "add_")
+      (jetpacs-dismiss-dialog)
+      (jetpacs-shell-push))))
 
 (defun jetpacs-crud-action-record-menu (args _payload)
   "The record card's menu: delete, behind an explicit confirmation.
@@ -1237,6 +1707,21 @@ managing records (FORMAT.md)."
           (lambda ()
             (org-back-to-heading t)
             (org-cut-subtree)))))))
+
+(defun jetpacs-crud-action-record-duplicate (args _payload)
+  "Duplicate the record subtree adjacent to the original.
+Regenerates the :ID: and strips volatile timestamps."
+  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t)))
+    (jetpacs-crud--record-mutate file pos
+      (lambda ()
+        (org-back-to-heading t)
+        (org-copy-subtree 1 nil nil t)
+        (org-paste-subtree (org-outline-level))
+        (require 'org-id)
+        (org-entry-delete (point) "ID")
+        (org-id-get-create)
+        (org-entry-delete (point) "SCHEDULED")
+        (org-entry-delete (point) "DEADLINE")))))
 
 ;; ─── Note actions (vulpea-backed records) ────────────────────────────────────
 ;;
@@ -1465,6 +1950,24 @@ File-per-record notes delete the file; heading notes cut the subtree."
         (jetpacs-crud--note-mutate file nid
           (lambda () (org-back-to-heading t) (org-cut-subtree)))))))
 
+(defun jetpacs-crud-action-dialog-dismiss (_args _payload)
+  "Dismiss the dialog and clear draft add state."
+  (jetpacs-ui-state-clear "add_")
+  (jetpacs-dismiss-dialog))
+
+(defun jetpacs-crud-action-field-state-sink (args payload)
+  "A state sink for widgets like date_button that inject their value via action.
+Re-renders the add-record dialog to reflect the picked value."
+  (let ((id (alist-get 'id args))
+        (val (alist-get 'value payload))
+        (add-args (alist-get 'add_args args)))
+    (jetpacs-ui-state-put id val)
+    (jetpacs-crud-action-record-add add-args nil)))
+
+(defun jetpacs-crud-action-view-search (_args _payload)
+  "Action triggered when the search box is submitted. Forces a re-render."
+  (jetpacs-shell-push))
+
 (with-jetpacs-owner "jetpacs-crud"
   (jetpacs-defaction "crud.cell.edit"       #'jetpacs-crud-action-cell-edit)
   (jetpacs-defaction "crud.cell.toggle"     #'jetpacs-crud-action-cell-toggle)
@@ -1474,10 +1977,18 @@ File-per-record notes delete the file; heading notes cut the subtree."
   (jetpacs-defaction "crud.item.add"        #'jetpacs-crud-action-item-add)
   (jetpacs-defaction "crud.field.edit"      #'jetpacs-crud-action-field-edit)
   (jetpacs-defaction "crud.record.add"      #'jetpacs-crud-action-record-add)
+  (jetpacs-defaction "crud.record.add.submit" #'jetpacs-crud-action-record-add-submit)
+  (jetpacs-defaction "crud.record.detail"   #'jetpacs-crud-action-record-detail)
   (jetpacs-defaction "crud.record.menu"     #'jetpacs-crud-action-record-menu)
+  (jetpacs-defaction "crud.record.duplicate" #'jetpacs-crud-action-record-duplicate)
   (jetpacs-defaction "crud.note.add"        #'jetpacs-crud-action-note-add)
   (jetpacs-defaction "crud.note.field.edit" #'jetpacs-crud-action-note-field-edit)
-  (jetpacs-defaction "crud.note.menu"       #'jetpacs-crud-action-note-menu))
+  (jetpacs-defaction "crud.note.menu"       #'jetpacs-crud-action-note-menu)
+  (jetpacs-defaction "crud.view.search"     #'jetpacs-crud-action-view-search)
+  (jetpacs-defaction "crud.field.state-sink" #'jetpacs-crud-action-field-state-sink)
+  (jetpacs-defaction "crud.action.apply"    #'jetpacs-crud-action-apply)
+  (jetpacs-defaction "crud.node.move"       #'jetpacs-crud-action-node-move)
+  (jetpacs-defaction "crud.dialog.dismiss"  #'jetpacs-crud-action-dialog-dismiss))
 
 (provide 'jetpacs-crud)
 ;;; jetpacs-crud.el ends here

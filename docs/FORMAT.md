@@ -24,9 +24,10 @@ Case-insensitive, like all org keywords.
 
 ## Views
 
-**Every top-level (level-1) heading is a view** — one bottom-bar tab
-each. The heading title is the tab label. Configuration lives in the
-heading's property drawer:
+**Every top-level (level-1) heading is a view.** By default each is its
+own bottom-bar tab, with the heading title as the label; `:NAV:` and
+`:GROUP:` (see *Navigation placement*) move it elsewhere. Configuration
+lives in the heading's property drawer:
 
 | Property | Meaning |
 |---|---|
@@ -38,6 +39,31 @@ heading's property drawer:
 | `:COLUMNS:` | Table views with an external `:SOURCE:`: column names, `|`-separated, used to scaffold the backend table when its file doesn't exist yet. |
 | `:SCHEMA:` | Records and notes views (required): the fields, as org column-view-style tokens — `%PROP` or `%PROP(Label)`. |
 | `:FILTER:` | Records and notes views: a query selecting which records show — an org-ql sexp, filter tokens, or free text (see below). |
+| `:NAV:` | `tab` (default) or `drawer` — where the view lives in the chrome (see below). |
+| `:GROUP:` | A destination name; views sharing one collapse into a single tabbed bottom destination (see below). |
+
+### Navigation placement — `:NAV:` and `:GROUP:`
+
+A Material bottom bar holds only about five destinations comfortably, so
+a many-view app spreads across the chrome:
+
+- **`:NAV: drawer`** routes a view into the navigation drawer (the ☰
+  hamburger) instead of the bottom bar. The view is still shipped and
+  switching to it is instant (no round-trip) — it just isn't a tab. Use
+  it for secondary or reference views. `:NAV: tab` (the default) keeps
+  the view on the bottom bar.
+- **`:GROUP: Name`** folds a view, together with every other view that
+  names the same group, into **one** bottom destination whose body is a
+  top tab row (swipe or tap between the members). The destination's
+  label is the group `Name`; its icon and bar position come from the
+  first member (lowest `:ORDER:`). This is the "one dataset seen several
+  ways" pattern — e.g. a task list, board, and calendar under `Tasks`.
+
+`:GROUP:` wins over `:NAV:` (a grouped view is part of its destination,
+not a standalone drawer entry). The group shares a single add button —
+the first member's — so tapping **+** from any of its tabs adds through
+that member's view. `:GROUP:` is a placement name and is unrelated to
+records' `:GROUP_BY:`, which lanes a single board's records.
 
 ### `:SOURCE:`
 
@@ -249,8 +275,20 @@ before proposing one.
 > were folded into v1 pre-release, before any installed base existed.
 > `#+JETPACS_APP_FORMAT:` stays `1`.
 
-## Example (the canonical fixture)
+## Examples (the canonical fixtures)
 
-See [`elisp/test/fixtures/pantry.org`](../elisp/test/fixtures/pantry.org) —
-an Inventory table view (inline source, five typed columns) plus a
-Shopping checklist view, in ~25 lines.
+Two documents pin the format, smallest first:
+
+- [`elisp/test/fixtures/pantry.org`](../elisp/test/fixtures/pantry.org) —
+  the minimal app: an Inventory table view (inline source, five typed
+  columns) plus a Shopping checklist view, in ~25 lines.
+- [`elisp/test/fixtures/hello-world.org`](../elisp/test/fixtures/hello-world.org) —
+  the kitchen sink: every view kind, every column type, all eight
+  schema specials, a filter, the full action vocabulary, a scaffolded
+  external source, and a notes vault.  Three consumers keep it honest
+  (ERT parse+register+lint, the bare-core bundle smoke, and OrgCodec
+  parse/validate/round-trip as the gallery's demo template), and
+  kind-coverage tests on both sides fail whenever a new view kind
+  lands without growing it.  The prebuilt bundle ships at the repo
+  root as `jetpacs-app-hello-world.el` — push it to a device and load
+  it to exercise everything at once.

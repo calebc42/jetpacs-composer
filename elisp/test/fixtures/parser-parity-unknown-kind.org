@@ -1,0 +1,6 @@
+#+JETPACS_APP: parser-parity-kind
+
+* Unknown
+:PROPERTIES:
+:KIND: dashboard
+:END:

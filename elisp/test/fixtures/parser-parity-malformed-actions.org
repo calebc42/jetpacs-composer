@@ -1,0 +1,8 @@
+#+JETPACS_APP: parser-parity-action
+
+* Records
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM
+:ACTIONS: todo(DONE),archive
+:END:

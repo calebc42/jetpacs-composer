@@ -54,6 +54,10 @@ fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> 
     var selection by remember { mutableStateOf<Selection>(Selection.App) }
     var preview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deploying by remember { mutableStateOf(false) }
+    var browsingFiles by remember { mutableStateOf(false) }
+
+    val problems = ModelOps.validate(session.spec)
+    val hasErrors = problems.any { it.severity == ModelOps.Severity.Error }
 
     Column(Modifier.fillMaxSize()) {
         // ── Toolbar ──────────────────────────────────────────────────────
@@ -90,8 +94,9 @@ fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> 
                     pickSaveFile("Save app document", "${session.spec.id}.org")
                         ?.let { session.save(it) }
                 session.export()
-            }, enabled = session.file != null || true) { Text("Export bundle") }
-            Button(onClick = { deploying = true }) { Text("Deploy…") }
+            }, enabled = !hasErrors) { Text("Export bundle") }
+            Button(onClick = { browsingFiles = true }) { Text("Device Files…") }
+            Button(onClick = { deploying = true }, enabled = !hasErrors) { Text("Deploy…") }
             TextButton(onClick = onClose) { Text("Close") }
         }
         HorizontalDivider()
@@ -115,24 +120,29 @@ fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> 
         }
 
         // ── Problems strip ───────────────────────────────────────────────
-        val problems = ModelOps.validate(session.spec)
         val error = session.lastError
         if (problems.isNotEmpty() || error != null) {
             HorizontalDivider()
             Column(
                 Modifier.fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text("ERROR: $it", color = MaterialTheme.colorScheme.error)
                 }
                 problems.forEach { p ->
+                    val color = when (p.severity) {
+                        ModelOps.Severity.Error -> MaterialTheme.colorScheme.error
+                        ModelOps.Severity.Warning -> MaterialTheme.colorScheme.tertiary
+                        ModelOps.Severity.Info -> MaterialTheme.colorScheme.primary
+                    }
                     Text(
-                        (p.viewIndex?.let { i ->
+                        "${p.severity.name.uppercase()}: " +
+                            (p.viewIndex?.let { i ->
                             "${session.spec.views.getOrNull(i)?.title}: "
                         } ?: "") + p.message,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        color = color,
                         modifier = Modifier.clickable {
                             p.viewIndex?.let { selection = Selection.View(it) }
                         },
@@ -142,6 +152,7 @@ fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> 
         }
     }
 
+    if (browsingFiles) DeviceFilesDialog(onDismiss = { browsingFiles = false })
     if (deploying) DeployDialog(session, onDismiss = { deploying = false })
 
     preview?.let { (text, type) ->
@@ -230,6 +241,12 @@ private fun OutlinePane(
                     ViewKind.CHECKLIST -> "☑ ${view.title}"
                     ViewKind.RECORDS -> "☰ ${view.title}"
                     ViewKind.TABLE -> "▦ ${view.title}"
+                    ViewKind.NOTES -> "📝 ${view.title}"
+                    ViewKind.BOARD -> "📋 ${view.title}"
+                    ViewKind.CALENDAR -> "📅 ${view.title}"
+                    ViewKind.GALLERY -> "🖼 ${view.title}"
+                    ViewKind.TREE -> "🌳 ${view.title}"
+                    ViewKind.UNKNOWN -> "❓ ${view.title}"
                 },
                 selected = selection == Selection.View(i),
                 onClick = { onSelect(Selection.View(i)) },
@@ -248,21 +265,36 @@ private fun OutlinePane(
             )
         }
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            OutlinedButton(onClick = {
-                session.update { ModelOps.addView(it, "New table", ViewKind.TABLE) }
-                onSelect(Selection.View(session.spec.views.size))
-            }) { Text("+ Table") }
-            OutlinedButton(onClick = {
-                session.update { ModelOps.addView(it, "New checklist", ViewKind.CHECKLIST) }
-                onSelect(Selection.View(session.spec.views.size))
-            }) { Text("+ Checklist") }
+        var addViewExpanded by remember { mutableStateOf(false) }
+        androidx.compose.foundation.layout.Box {
+            OutlinedButton(onClick = { addViewExpanded = true }) { Text("+ View") }
+            androidx.compose.material3.DropdownMenu(
+                expanded = addViewExpanded,
+                onDismissRequest = { addViewExpanded = false },
+            ) {
+                ViewKind.entries.forEach { kind ->
+                    val icon = when (kind) {
+                        ViewKind.TABLE -> "▦"
+                        ViewKind.CHECKLIST -> "☑"
+                        ViewKind.RECORDS -> "☰"
+                        ViewKind.NOTES -> "📝"
+                        ViewKind.BOARD -> "📋"
+                        ViewKind.CALENDAR -> "📅"
+                        ViewKind.GALLERY -> "🖼"
+                        ViewKind.TREE -> "🌳"
+                        ViewKind.UNKNOWN -> "❓"
+                    }
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("$icon ${kind.name}") },
+                        onClick = {
+                            session.update { ModelOps.addView(it, "New ${kind.name.lowercase()}", kind) }
+                            onSelect(Selection.View(session.spec.views.size))
+                            addViewExpanded = false
+                        },
+                    )
+                }
+            }
         }
-        Spacer(Modifier.height(4.dp))
-        OutlinedButton(onClick = {
-            session.update { ModelOps.addView(it, "New records", ViewKind.RECORDS) }
-            onSelect(Selection.View(session.spec.views.size))
-        }) { Text("+ Records") }
     }
 }
 
@@ -309,5 +341,4 @@ private fun OutlineRow(
         }
     }
 }
-
 

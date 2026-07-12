@@ -8,3 +8,5 @@
 :END:
 
 - [ ] First thing
+- [ ] Second thing
+- [X] Something already done

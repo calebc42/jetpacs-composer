@@ -21,16 +21,38 @@ object ModelOps {
                 BodyElement.Table(header = listOf("Name"), rows = emptyList()))
             ViewKind.CHECKLIST -> listOf(
                 BodyElement.Checklist(emptyList()))
-            ViewKind.RECORDS -> emptyList()
+            ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.UNKNOWN -> emptyList()
+        }
+        val isRecords = isRecordsType(kind)
+        val schema = when (kind) {
+            ViewKind.BOARD -> listOf(
+                SchemaField("ITEM", "Name"),
+                SchemaField("TODO", "Status"),
+            )
+            ViewKind.CALENDAR -> listOf(
+                SchemaField("ITEM", "Name"),
+                SchemaField("SCHEDULED", "Date"),
+            )
+            ViewKind.GALLERY -> listOf(
+                SchemaField("ITEM", "Name"),
+                SchemaField("IMAGE", "Image"),
+            )
+            else -> if (isRecords) listOf(SchemaField("ITEM", "Name")) else emptyList()
         }
         val view = ViewSpec(
             title = uniqueTitle(spec, title),
             kind = kind,
             order = ((spec.views.mapNotNull { it.order }.maxOrNull() ?: 0) + 10),
-            colTypes = if (kind == ViewKind.RECORDS || kind == ViewKind.TABLE)
-                listOf(ColType.Text) else emptyList(),
-            schema = if (kind == ViewKind.RECORDS)
-                listOf(SchemaField("ITEM", "Name")) else emptyList(),
+            colTypes = if (kind == ViewKind.TABLE) {
+                listOf(ColType.Text)
+            } else {
+                schema.map { field ->
+                    SchemaField.ORG_BUILTINS[field.prop]?.defaultType ?: ColType.Text
+                }
+            },
+            schema = schema,
+            groupBy = if (kind == ViewKind.BOARD) "TODO" else null,
+            dateField = if (kind == ViewKind.CALENDAR) "SCHEDULED" else null,
             body = body,
         )
         return spec.copy(views = spec.views + view)
@@ -179,25 +201,64 @@ object ModelOps {
 
     // ─── Validation ──────────────────────────────────────────────────────
 
-    data class Problem(val message: String, val viewIndex: Int? = null)
+    enum class Severity { Error, Warning, Info }
+
+    data class Problem(
+        val message: String,
+        val viewIndex: Int? = null,
+        val severity: Severity = Severity.Error,
+    )
 
     /** Everything the closed format can still get wrong after the UI. */
     fun validate(spec: AppSpec): List<Problem> = buildList {
+        if (spec.views.isEmpty())
+            add(Problem("An app needs at least one view"))
         val slugs = spec.views.map { it.name }
+        val liveViews = slugs.toSet()
         slugs.groupBy { it }.filter { it.value.size > 1 }.keys.forEach {
             add(Problem("Two views slugify to \"$it\" — retitle one"))
         }
         spec.views.forEachIndexed { i, view ->
-            if (view.kind == ViewKind.RECORDS) {
+            val isRecords = isRecordsType(view.kind)
+            if (isRecords) {
                 if (view.schema.isEmpty())
-                    add(Problem("A records view needs at least one schema field", i))
+                    add(Problem("A ${view.kind.name.lowercase()} view needs at least one schema field", i))
                 if (view.schema.any { it.prop.isBlank() })
                     add(Problem("A schema field has no property name", i))
                 val names = view.schema.map { it.prop.uppercase() }
                 if (names.size != names.distinct().size)
                     add(Problem("Duplicate property in the schema", i))
                 if (view.colTypes.size > view.schema.size && view.schema.isNotEmpty())
-                    add(Problem("More field types than schema fields", i))
+                    add(Problem(
+                        "More field types than schema fields",
+                        i,
+                        Severity.Warning,
+                    ))
+                if (view.kind == ViewKind.NOTES && view.source == null)
+                    add(Problem("A notes view needs an external source", i))
+
+                fun validateSchemaReference(value: String?, label: String) {
+                    if (value != null && view.schema.none {
+                            it.prop.equals(value, ignoreCase = true)
+                        }) {
+                        add(Problem(
+                            "$label \"$value\" is not a field in this view's schema",
+                            i,
+                        ))
+                    }
+                }
+                validateSchemaReference(
+                    view.groupBy ?: if (view.kind == ViewKind.BOARD) "TODO" else null,
+                    "Group-by field",
+                )
+                validateSchemaReference(
+                    view.dateField ?: if (view.kind == ViewKind.CALENDAR) "DEADLINE" else null,
+                    "Date field",
+                )
+                validateSchemaReference(
+                    view.imageField ?: if (view.kind == ViewKind.GALLERY) "IMAGE" else null,
+                    "Image field",
+                )
             }
             if (view.kind == ViewKind.TABLE) {
                 val width = when {
@@ -205,19 +266,182 @@ object ModelOps {
                     else -> view.columns.size
                 }
                 if (view.colTypes.size > width && width > 0)
-                    add(Problem("More column types than columns", i))
+                    add(Problem(
+                        "More column types than columns",
+                        i,
+                        Severity.Warning,
+                    ))
                 if (view.source == null &&
                     firstTable(view)?.header?.any { it.isBlank() } == true)
                     add(Problem("A column has no name", i))
                 if (view.source != null && view.columns.isEmpty())
                     add(Problem(
                         "External source without :COLUMNS: — it won't be " +
-                            "scaffolded if the file is missing", i))
-                view.colTypes.filterIsInstance<ColType.Enum>().forEach { e ->
-                    if (e.options.any { it.isBlank() })
-                        add(Problem("An enum option is blank", i))
+                            "scaffolded if the file is missing",
+                        i,
+                        Severity.Warning,
+                    ))
+            }
+
+            when (val source = view.source) {
+                is SourceRef.File -> if (source.file.isBlank())
+                    add(Problem("Source file cannot be blank", i))
+                is SourceRef.Dir -> if (source.dir.isBlank())
+                    add(Problem("Source directory cannot be blank", i))
+                null -> {}
+            }
+            view.colTypes.filterIsInstance<ColType.Enum>().forEach { enum ->
+                if (enum.options.none { it.isNotBlank() })
+                    add(Problem("An enum needs at least one non-blank option", i))
+                else if (enum.options.any { it.isBlank() })
+                    add(Problem("An enum option is blank", i, Severity.Warning))
+            }
+            view.colTypes.filterIsInstance<ColType.Ref>().forEach { ref ->
+                add(Problem(
+                    "Reference columns require FORMAT-2 runtime support",
+                    i,
+                ))
+                if (ref.targetView !in liveViews)
+                    add(Problem(
+                        "Reference target \"${ref.targetView}\" is not a live view",
+                        i,
+                    ))
+            }
+
+            val todoKeywords = if (spec.todoSequence.isEmpty()) {
+                setOf("TODO", "DONE")
+            } else {
+                spec.todoSequence.map { it.keyword }.toSet()
+            }
+            view.actions.filterIsInstance<ActionDef.SetTodo>().forEach { action ->
+                if (action.keyword.isBlank())
+                    add(Problem("A TODO action needs a keyword", i))
+                else if (action.keyword !in todoKeywords)
+                    add(Problem(
+                        "Action TODO keyword \"${action.keyword}\" is not in the app's TODO sequence",
+                        i,
+                        Severity.Warning,
+                    ))
+            }
+            // Placement: :GROUP: wins over :NAV:, so a grouped drawer view is
+            // a contradiction — the group is its bottom destination.
+            if (view.group != null && view.nav == ViewNav.DRAWER)
+                add(Problem(
+                    "A grouped view ignores :NAV: drawer — it belongs to its group's destination",
+                    i,
+                    Severity.Warning,
+                ))
+        }
+        // A tabulated group with a single member is just a tab with a
+        // redundant tab row.
+        spec.views.mapNotNull { it.group }
+            .groupBy { it }
+            .filter { it.value.size == 1 }
+            .keys.forEach {
+                add(Problem(
+                    "Group \"$it\" has only one view — a group needs two or more to be worth a tab row",
+                    severity = Severity.Warning,
+                ))
+            }
+    }
+
+    // ─── Schema Inference ────────────────────────────────────────────────
+
+    /**
+     * Infer a schema from org file content by scanning headings and
+     * property drawers. Uses [SchemaField.ORG_BUILTINS] for known
+     * properties; falls back to heuristic type detection for custom ones.
+     */
+    fun inferSchemaFromOrgContent(content: String): Pair<List<SchemaField>, List<ColType>> {
+        val lines = content.lines()
+        val propNames = mutableSetOf<String>()
+        val propValues = mutableMapOf<String, MutableList<String>>()
+
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            if (line.startsWith("* ")) {
+                // Check for TODO keyword in heading
+                val headingText = line.removePrefix("* ").trim()
+                val firstWord = headingText.split(" ").firstOrNull() ?: ""
+                if (firstWord.uppercase() in listOf("TODO","NEXT","DOING","WAITING","DONE","CANCELLED")) {
+                    propNames.add("TODO")
+                }
+
+                var j = i + 1
+                while (j < lines.size && lines[j].isBlank()) j++
+                if (j < lines.size && lines[j].trim().equals(":PROPERTIES:", ignoreCase = true)) {
+                    j++
+                    while (j < lines.size && !lines[j].trim().equals(":END:", ignoreCase = true)) {
+                        val propLine = lines[j].trim()
+                        val match = Regex("""^:([A-Za-z_][A-Za-z_0-9-]*):\s*(.*)$""").find(propLine)
+                        if (match != null) {
+                            val name = match.groupValues[1].let {
+                                if (it.uppercase() in SchemaField.SPECIAL) it.uppercase() else it
+                            }
+                            val value = match.groupValues[2].trim()
+                            propNames.add(name)
+                            if (value.isNotEmpty()) {
+                                propValues.getOrPut(name) { mutableListOf() }.add(value)
+                            }
+                        }
+                        j++
+                    }
+                }
+
+                // Check for SCHEDULED/DEADLINE in planning line
+                var k = i + 1
+                while (k < lines.size && lines[k].isBlank()) k++
+                if (k < lines.size) {
+                    val planLine = lines[k].trim()
+                    if (planLine.contains("SCHEDULED:")) propNames.add("SCHEDULED")
+                    if (planLine.contains("DEADLINE:")) propNames.add("DEADLINE")
                 }
             }
+            i++
         }
+
+        val schema = mutableListOf(SchemaField("ITEM", "Name"))
+        val types = mutableListOf<ColType>(ColType.Text)
+
+        for (name in propNames) {
+            if (name == "ITEM") continue
+
+            // Use ORG_BUILTINS for known properties
+            val builtin = SchemaField.ORG_BUILTINS[name.uppercase()]
+            if (builtin != null) {
+                schema.add(SchemaField(name.uppercase(),
+                    name.lowercase().replaceFirstChar { it.uppercase() }))
+                types.add(builtin.defaultType)
+                continue
+            }
+
+            // Heuristic for custom properties
+            schema.add(SchemaField(name,
+                name.lowercase().replaceFirstChar { it.uppercase() }))
+
+            val values = propValues[name] ?: emptyList()
+            if (values.isEmpty()) {
+                types.add(ColType.Text)
+                continue
+            }
+
+            val allNumbers = values.all { it.toDoubleOrNull() != null }
+            val allDates = values.all { it.matches(Regex("""^[<\[]\d{4}-\d{2}-\d{2}.*[>\]].*""")) }
+            val allCheckboxes = values.all { it == "[ ]" || it == "[X]" || it == "[x]" }
+
+            when {
+                allNumbers -> types.add(ColType.Number)
+                allDates -> types.add(ColType.Date)
+                allCheckboxes -> types.add(ColType.Checkbox)
+                else -> types.add(ColType.Text)
+            }
+        }
+
+        return schema to types
     }
+
+    /** Helper for views with records-like kinds. */
+    fun isRecordsType(kind: ViewKind): Boolean =
+        kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.UNKNOWN)
 }

@@ -1,0 +1,73 @@
+# CASE EXPECTATION FIXTURE
+#
+# Each vocabulary row deliberately names one accepted FORMAT-1 surface even
+# when several rows share the comprehensive fixture.  Both the JVM and ERT
+# suites consume every non-comment row below.
+keyword-jetpacs-app accept parser-parity-all.org
+keyword-title accept parser-parity-all.org
+keyword-jetpacs-icon accept parser-parity-all.org
+keyword-jetpacs-order accept parser-parity-all.org
+keyword-jetpacs-app-format accept parser-parity-all.org
+keyword-todo accept parser-parity-all.org
+keyword-tags accept parser-parity-all.org
+drawer-icon accept parser-parity-all.org
+drawer-order accept parser-parity-all.org
+drawer-kind accept parser-parity-all.org
+drawer-source accept parser-parity-all.org
+drawer-coltypes accept parser-parity-all.org
+drawer-columns accept parser-parity-all.org
+drawer-schema accept parser-parity-all.org
+drawer-filter accept parser-parity-all.org
+drawer-group-by accept parser-parity-all.org
+drawer-date-field accept parser-parity-all.org
+drawer-image-field accept parser-parity-all.org
+drawer-actions accept parser-parity-all.org
+kind-table accept parser-parity-all.org
+kind-checklist accept parser-parity-all.org
+kind-records accept parser-parity-all.org
+kind-notes accept parser-parity-all.org
+kind-board accept parser-parity-all.org
+kind-calendar accept parser-parity-all.org
+kind-gallery accept parser-parity-all.org
+coltype-text accept parser-parity-all.org
+coltype-number accept parser-parity-all.org
+coltype-date accept parser-parity-all.org
+coltype-checkbox accept parser-parity-all.org
+coltype-enum accept parser-parity-all.org
+special-item accept parser-parity-all.org
+special-todo accept parser-parity-all.org
+special-deadline accept parser-parity-all.org
+special-scheduled accept parser-parity-all.org
+special-priority accept parser-parity-all.org
+special-tags accept parser-parity-all.org
+special-effort accept parser-parity-all.org
+special-category accept parser-parity-all.org
+action-todo accept parser-parity-all.org
+action-schedule accept parser-parity-all.org
+action-deadline accept parser-parity-all.org
+action-tags accept parser-parity-all.org
+action-priority accept parser-parity-all.org
+action-refile accept parser-parity-all.org
+action-archive accept parser-parity-all.org
+
+# Forward-compatible leniency: vocabulary a parser does not know is
+# accepted with a warning and surfaced as Unknown (ViewKind.UNKNOWN /
+# ColType.Unknown / ActionDef.Unknown on the JVM; `unknown' tokens in
+# elisp, rendered as text) so an older runtime can open a newer doc.
+coltype-ref accept parser-parity-ref.org
+unknown-kind accept parser-parity-unknown-kind.org
+unknown-coltype accept malformed-coltype.org
+unknown-action accept parser-parity-unknown-action.org
+
+# FORMAT-1 structural rejection cases: structure stays strict even
+# though vocabulary is lenient.
+missing-app reject malformed-no-app.org
+unsupported-format reject parser-parity-unsupported-format.org
+duplicate-view-slug reject malformed-dup.org
+todo-missing-argument reject parser-parity-todo-missing-argument.org
+action-unexpected-argument reject parser-parity-action-unexpected-argument.org
+malformed-actions reject parser-parity-malformed-actions.org
+empty-enum reject parser-parity-empty-enum.org
+duplicate-schema reject parser-parity-duplicate-schema.org
+records-missing-schema reject parser-parity-records-missing-schema.org
+notes-missing-source reject parser-parity-notes-missing-source.org

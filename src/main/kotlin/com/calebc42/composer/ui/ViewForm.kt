@@ -28,13 +28,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.calebc42.composer.model.ActionDef
+import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
 import com.calebc42.composer.model.ModelOps
+import com.calebc42.composer.model.OrgBuiltin
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
+import com.calebc42.composer.model.TodoKeyword
 import com.calebc42.composer.model.ViewKind
+import com.calebc42.composer.model.ViewNav
 import com.calebc42.composer.model.ViewSpec
 
 // ─── App form ────────────────────────────────────────────────────────────────
@@ -77,9 +82,8 @@ fun AppForm(session: EditorSession) {
         )
         if (showAppIconPicker) {
             IconPicker(
-                onIconSelected = { 
-                    session.update { it.copy(icon = it.icon) /* fake update? no, real */ }
-                    session.update { spec -> spec.copy(icon = it) }
+                onIconSelected = { name ->
+                    session.update { spec -> spec.copy(icon = name) }
                     showAppIconPicker = false
                 },
                 onDismiss = { showAppIconPicker = false }
@@ -97,6 +101,82 @@ fun AppForm(session: EditorSession) {
         "Icons are Material symbol names (snake_case), e.g. kitchen, " +
             "table_chart, checklist. Unknown names render a placeholder.",
         style = MaterialTheme.typography.bodySmall,
+    )
+
+    // ─── TODO Keywords ───────────────────────────────────────────────────
+    Spacer(Modifier.height(16.dp))
+    Text("TODO Keywords", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "Keywords before the separator are active states; after are done states. " +
+            "Emitted as #+TODO: in the file.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        val activeKws = spec.todoSequence.filter { !it.isDone }
+        val doneKws = spec.todoSequence.filter { it.isDone }
+        activeKws.forEachIndexed { i, kw ->
+            OutlinedTextField(
+                kw.keyword,
+                { v ->
+                    session.update {
+                        it.copy(todoSequence = it.todoSequence.map { tk ->
+                            if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
+                        })
+                    }
+                },
+                singleLine = true, modifier = Modifier.width(100.dp),
+            )
+            TextButton(onClick = {
+                session.update { it.copy(todoSequence = it.todoSequence.filter { tk -> tk !== kw }) }
+            }) { Text("×") }
+        }
+        OutlinedButton(onClick = {
+            session.update {
+                it.copy(todoSequence = it.todoSequence + TodoKeyword("NEW", isDone = false))
+            }
+        }) { Text("+") }
+
+        Text(" | ", style = MaterialTheme.typography.titleMedium)
+
+        doneKws.forEachIndexed { i, kw ->
+            OutlinedTextField(
+                kw.keyword,
+                { v ->
+                    session.update {
+                        it.copy(todoSequence = it.todoSequence.map { tk ->
+                            if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
+                        })
+                    }
+                },
+                singleLine = true, modifier = Modifier.width(100.dp),
+            )
+            TextButton(onClick = {
+                session.update { it.copy(todoSequence = it.todoSequence.filter { tk -> tk !== kw }) }
+            }) { Text("×") }
+        }
+        OutlinedButton(onClick = {
+            session.update {
+                it.copy(todoSequence = it.todoSequence + TodoKeyword("DONE", isDone = true))
+            }
+        }) { Text("+") }
+    }
+
+    // ─── Tags ────────────────────────────────────────────────────────────
+    Spacer(Modifier.height(16.dp))
+    Text("Tags", style = MaterialTheme.typography.titleMedium)
+    OutlinedTextField(
+        spec.tags.joinToString(", "),
+        { v ->
+            session.update {
+                it.copy(tags = v.split(",").map(String::trim).filter(String::isNotEmpty))
+            }
+        },
+        label = { Text("tags (comma-separated)") }, singleLine = true,
+        modifier = Modifier.width(400.dp),
     )
 }
 
@@ -151,24 +231,72 @@ fun ViewForm(session: EditorSession, index: Int) {
 
     Spacer(Modifier.height(8.dp))
     Row(verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Kind:", style = MaterialTheme.typography.bodyMedium)
-        RadioButton(view.kind == ViewKind.TABLE,
-                    onClick = { edit { it.copy(kind = ViewKind.TABLE) } })
-        Text("table")
-        RadioButton(view.kind == ViewKind.CHECKLIST,
-                    onClick = { edit { it.copy(kind = ViewKind.CHECKLIST) } })
-        Text("checklist")
-        RadioButton(view.kind == ViewKind.RECORDS,
-                    onClick = {
-                        edit {
-                            it.copy(kind = ViewKind.RECORDS,
-                                    schema = it.schema.ifEmpty {
-                                        listOf(SchemaField("ITEM", "Name"))
-                                    })
+
+        var expanded by remember { mutableStateOf(false) }
+        androidx.compose.foundation.layout.Box {
+            OutlinedButton(onClick = { expanded = true }) {
+                Text(view.kind.name)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ViewKind.entries.forEach { kind ->
+                    DropdownMenuItem(
+                        text = { Text(kind.name) },
+                        onClick = {
+                            edit {
+                                val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE)) {
+                                    it.schema.ifEmpty { listOf(SchemaField("ITEM", "Name")) }
+                                } else it.schema
+                                it.copy(kind = kind, schema = schema)
+                            }
+                            expanded = false
                         }
-                    })
-        Text("records (headings + properties)")
+                    )
+                }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Placement:", style = MaterialTheme.typography.bodyMedium)
+
+        val placement = when {
+            view.group != null -> "Group"
+            view.nav == ViewNav.DRAWER -> "Drawer"
+            else -> "Bottom tab"
+        }
+        var placeExpanded by remember { mutableStateOf(false) }
+        androidx.compose.foundation.layout.Box {
+            OutlinedButton(onClick = { placeExpanded = true }) {
+                Text(placement)
+            }
+            DropdownMenu(expanded = placeExpanded,
+                         onDismissRequest = { placeExpanded = false }) {
+                DropdownMenuItem(text = { Text("Bottom tab") }, onClick = {
+                    edit { it.copy(nav = ViewNav.TAB, group = null) }
+                    placeExpanded = false
+                })
+                DropdownMenuItem(text = { Text("Drawer (hamburger)") }, onClick = {
+                    edit { it.copy(nav = ViewNav.DRAWER, group = null) }
+                    placeExpanded = false
+                })
+                DropdownMenuItem(text = { Text("Group (tabbed)…") }, onClick = {
+                    edit { it.copy(nav = ViewNav.TAB, group = it.group ?: "Group") }
+                    placeExpanded = false
+                })
+            }
+        }
+        if (view.group != null) {
+            OutlinedTextField(
+                view.group,
+                { v -> edit { it.copy(group = v.ifBlank { null }) } },
+                label = { Text("group name (shared destination)") }, singleLine = true,
+                modifier = Modifier.width(240.dp),
+            )
+        }
     }
 
     Spacer(Modifier.height(8.dp))
@@ -177,7 +305,14 @@ fun ViewForm(session: EditorSession, index: Int) {
     Spacer(Modifier.height(16.dp))
     when {
         view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit)
-        view.kind == ViewKind.RECORDS -> RecordsSchemaEditor(view, ::edit)
+        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE) -> {
+            RecordsSchemaEditor(view, ::edit)
+            Spacer(Modifier.height(16.dp))
+            ActionEditor(
+                actions = view.actions,
+                onUpdate = { newActions -> edit { it.copy(actions = newActions) } },
+            )
+        }
         view.source == null -> InlineTableEditor(view, ::edit)
         else -> ExternalColumnsEditor(view, ::edit)
     }
@@ -196,6 +331,22 @@ private fun RecordsSchemaEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -
              "over the type here.",
          style = MaterialTheme.typography.bodySmall)
     Spacer(Modifier.height(8.dp))
+
+    if (view.source is SourceRef.File) {
+        OutlinedButton(onClick = {
+            val file = java.io.File(view.source.file)
+            if (file.exists() && file.isFile) {
+                val content = file.readText(Charsets.UTF_8)
+                val (schema, types) = ModelOps.inferSchemaFromOrgContent(content)
+                if (schema.isNotEmpty()) {
+                    edit { it.copy(schema = schema, colTypes = types) }
+                }
+            }
+        }, modifier = Modifier.padding(bottom = 8.dp)) {
+            Text("🪄 Infer Schema from File")
+        }
+    }
+
     view.schema.forEachIndexed { i, field ->
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -243,18 +394,143 @@ private fun RecordsSchemaEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -
             }, enabled = view.schema.size > 1) { Text("Remove") }
         }
     }
-    OutlinedButton(onClick = {
-        edit { it.copy(schema = it.schema + SchemaField("NewProp"),
-                       colTypes = it.colTypes + ColType.Text) }
-    }) { Text("+ Field") }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = {
+            edit { it.copy(schema = it.schema + SchemaField("NewProp"),
+                           colTypes = it.colTypes + ColType.Text) }
+        }) { Text("+ Field") }
+
+        // "+ Org Builtin" dropdown — only shows builtins not already in the schema
+        var builtinExpanded by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(onClick = { builtinExpanded = true }) {
+                Text("+ Org Builtin")
+            }
+            DropdownMenu(
+                expanded = builtinExpanded,
+                onDismissRequest = { builtinExpanded = false },
+            ) {
+                val existing = view.schema.map { it.prop }.toSet()
+                SchemaField.ORG_BUILTINS
+                    .filter { it.key !in existing }
+                    .forEach { (name, builtin) ->
+                        DropdownMenuItem(
+                            text = { Text("$name — ${builtin.description}") },
+                            onClick = {
+                                edit {
+                                    it.copy(
+                                        schema = it.schema + SchemaField(name),
+                                        colTypes = it.colTypes + builtin.defaultType,
+                                    )
+                                }
+                                builtinExpanded = false
+                            },
+                        )
+                    }
+            }
+        }
+    }
 
     Spacer(Modifier.height(12.dp))
+    var showExpressionEditor by remember { mutableStateOf(false) }
     OutlinedTextField(
         view.filter.orEmpty(),
         { v -> edit { it.copy(filter = v.trim().ifBlank { null }) } },
         label = { Text("filter (org-ql: todo:NEXT tags:work, or a sexp)") },
         singleLine = true, modifier = Modifier.width(420.dp),
+        trailingIcon = {
+            androidx.compose.material3.IconButton(onClick = { showExpressionEditor = true }) {
+                androidx.compose.material3.Icon(
+                    androidx.compose.material.icons.Icons.Default.Edit,
+                    contentDescription = "Edit Expression"
+                )
+            }
+        }
     )
+    if (showExpressionEditor) {
+        ExpressionDialog(
+            initialValue = view.filter.orEmpty(),
+            onSave = { v ->
+                edit { it.copy(filter = v.trim().ifBlank { null }) }
+                showExpressionEditor = false
+            },
+            onDismiss = { showExpressionEditor = false }
+        )
+    }
+
+    // ─── View-kind-specific configuration ────────────────────────────────
+    Spacer(Modifier.height(12.dp))
+    when (view.kind) {
+        ViewKind.BOARD -> {
+            var groupByExpanded by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Group by:", style = MaterialTheme.typography.bodyMedium)
+                Box {
+                    OutlinedButton(onClick = { groupByExpanded = true }) {
+                        Text(view.groupBy ?: "(select)")
+                    }
+                    DropdownMenu(
+                        expanded = groupByExpanded,
+                        onDismissRequest = { groupByExpanded = false },
+                    ) {
+                        val enumFields = view.schema.zip(view.colTypes).filter { (field, type) ->
+                            field.prop == "TODO" || type is ColType.Enum
+                        }.map { it.first }
+                        if (enumFields.isEmpty()) {
+                            DropdownMenuItem(text = { Text("No enum fields available") }, onClick = {})
+                        } else {
+                            enumFields.forEach { field ->
+                                DropdownMenuItem(
+                                    text = { Text(field.prop) },
+                                    onClick = {
+                                        edit { it.copy(groupBy = field.prop) }
+                                        groupByExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ViewKind.CALENDAR -> {
+            var dateFieldExpanded by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Date field:", style = MaterialTheme.typography.bodyMedium)
+                Box {
+                    OutlinedButton(onClick = { dateFieldExpanded = true }) {
+                        Text(view.dateField ?: "(select)")
+                    }
+                    DropdownMenu(
+                        expanded = dateFieldExpanded,
+                        onDismissRequest = { dateFieldExpanded = false },
+                    ) {
+                        view.schema.forEach { field ->
+                            DropdownMenuItem(
+                                text = { Text(field.prop) },
+                                onClick = {
+                                    edit { it.copy(dateField = field.prop) }
+                                    dateFieldExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        ViewKind.GALLERY -> {
+            OutlinedTextField(
+                view.imageField.orEmpty(),
+                { v -> edit { it.copy(imageField = v.trim().ifBlank { null }) } },
+                label = { Text("Image field (schema property name)") },
+                singleLine = true,
+                modifier = Modifier.width(260.dp),
+            )
+        }
+        else -> {} // no extra config needed
+    }
 }
 
 @Composable
@@ -269,13 +545,13 @@ private fun SourceEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit)
                     onClick = {
                         edit {
                             it.copy(source = it.source
-                                ?: SourceRef("/sdcard/org/data.org", it.title))
+                                ?: SourceRef.File("/sdcard/org/data.org", it.title))
                         }
                     })
         Text("external org file")
     }
-    view.source?.let { source ->
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    when (val source = view.source) {
+        is SourceRef.File -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 source.file,
                 { v -> edit { it.copy(source = source.copy(file = v)) } },
@@ -289,7 +565,16 @@ private fun SourceEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit)
                 modifier = Modifier.width(220.dp),
             )
         }
-        if (view.kind == ViewKind.RECORDS) {
+        is SourceRef.Dir -> OutlinedTextField(
+            source.dir,
+            { v -> edit { it.copy(source = SourceRef.Dir(v)) } },
+            label = { Text("note vault directory") }, singleLine = true,
+            modifier = Modifier.width(320.dp),
+        )
+        null -> {}
+    }
+    if (view.source != null) {
+        if (ModelOps.isRecordsType(view.kind)) {
             Text(
                 "⚠ Bring-your-own file: the runtime edits it with org-mode's " +
                     "own commands. Property drawers in managed records are " +
@@ -477,6 +762,14 @@ internal fun ColTypePicker(current: ColType, onPick: (ColType) -> Unit) {
             },
             label = { Text("options") }, singleLine = true,
             modifier = Modifier.width(200.dp),
+        )
+    } else if (current is ColType.Ref) {
+        Spacer(Modifier.width(4.dp))
+        OutlinedTextField(
+            current.targetView,
+            { v -> onPick(ColType.Ref(v.trim().ifEmpty { "target" })) },
+            label = { Text("target view") }, singleLine = true,
+            modifier = Modifier.width(140.dp),
         )
     }
 }
