@@ -32,6 +32,17 @@ object Deployer {
         steps += Step("adb forward tcp:$SSH_PORT", forward)
         if (!forward.ok) return steps
 
+        // Create the destination before scp — on a first-ever deploy to a fresh
+        // device ~/.emacs.d/elisp doesn't exist yet (deploy.sh/deploy.ps1 do this).
+        val mkdir = Adb.exec(
+            listOf("ssh", "-p", SSH_PORT.toString(),
+                   "-o", "StrictHostKeyChecking=accept-new",
+                   SSH_TARGET, "mkdir -p .emacs.d/elisp"),
+            timeoutSeconds = 30,
+        )
+        steps += Step("ssh mkdir -p .emacs.d/elisp", mkdir)
+        if (!mkdir.ok) return steps
+
         val scp = Adb.exec(
             listOf("scp", "-P", SSH_PORT.toString(),
                    "-o", "StrictHostKeyChecking=accept-new",

@@ -42,6 +42,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.model.ViewKind
+import com.calebc42.composer.project.ComposerConfig
+import java.io.File
 
 /** What the detail pane is editing. */
 sealed interface Selection {
@@ -50,7 +52,8 @@ sealed interface Selection {
 }
 
 @Composable
-fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> Unit) {
+fun EditorScreen(session: EditorSession, config: ComposerConfig,
+                 onSettings: () -> Unit, onClose: () -> Unit) {
     var selection by remember { mutableStateOf<Selection>(Selection.App) }
     var preview by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deploying by remember { mutableStateOf(false) }
@@ -85,15 +88,17 @@ fun EditorScreen(session: EditorSession, onSettings: () -> Unit, onClose: () -> 
             }
             Button(onClick = {
                 if (session.file == null)
-                    pickSaveFile("Save app document", "${session.spec.id}.org")
+                    pickSaveFile("Save app document", "${session.spec.id}.org",
+                                 config.defaultAppPath)
                         ?.let { session.save(it) }
                 else session.save()
             }) { Text("Save") }
             Button(onClick = {
                 if (session.file == null)
-                    pickSaveFile("Save app document", "${session.spec.id}.org")
+                    pickSaveFile("Save app document", "${session.spec.id}.org",
+                                 config.defaultAppPath)
                         ?.let { session.save(it) }
-                session.export()
+                session.export(config.defaultExportPath?.let(::File))
             }, enabled = !hasErrors) { Text("Export bundle") }
             Button(onClick = { browsingFiles = true }) { Text("Device Files…") }
             Button(onClick = { deploying = true }, enabled = !hasErrors) { Text("Deploy…") }

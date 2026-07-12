@@ -51,8 +51,11 @@ class EditorSession private constructor(
         }.getOrElse { it.message }.also { lastError = it }
     }
 
-    /** Write the shippable bundle next to the document. Saves first. */
-    fun export(): Result<File> {
+    /**
+     * Write the shippable bundle. Saves first. Lands in EXPORTDIR when given
+     * (the Settings "Default Export Path"), else next to the document.
+     */
+    fun export(exportDir: File? = null): Result<File> {
         val errors = ModelOps.validate(spec)
             .filter { it.severity == ModelOps.Severity.Error }
         if (errors.isNotEmpty()) {
@@ -81,7 +84,8 @@ class EditorSession private constructor(
         save()?.let { return Result.failure(Exception(it)) }
         val doc = file!!
         return runCatching {
-            val out = File(doc.parentFile, BundleExporter.bundleFileName(spec))
+            val out = File(exportDir?.takeIf { it.path.isNotBlank() } ?: doc.parentFile,
+                           BundleExporter.bundleFileName(spec))
             out.writeText(BundleExporter.assemble(spec, document), Charsets.UTF_8)
             out
         }.onFailure { lastError = it.message }

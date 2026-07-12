@@ -53,11 +53,11 @@ val CommonIcons: List<Pair<String, ImageVector>> = listOf(
     "warning" to Icons.Default.Warning,
     "lock" to Icons.Default.Lock,
     "calendar_today" to Icons.Default.DateRange,
-    "camera" to Icons.Default.Call,
-    "kitchen" to Icons.Default.List,
-    "table_chart" to Icons.Default.List,
-    "checklist" to Icons.Default.CheckCircle,
-    "palette" to Icons.Default.Edit
+    "camera" to Icons.Default.PhotoCamera,
+    "kitchen" to Icons.Default.Kitchen,
+    "table_chart" to Icons.Default.TableChart,
+    "checklist" to Icons.Default.Checklist,
+    "palette" to Icons.Default.Palette,
 )
 
 @Composable

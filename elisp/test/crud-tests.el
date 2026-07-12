@@ -677,6 +677,42 @@ Only for intentional wire changes; review the diff."
         (let ((scratch (jetpacs-crud--view spec "scratch")))
           (should (= (length (jetpacs-crud--scan-records spec scratch)) 1)))))))
 
+(ert-deftest jetpacs-crud-filter-org-ql-extends ()
+  "A FILTER term past the built-in subset filters via org-ql when installed —
+in both whole-file and subtree (`::*Heading') scopes."
+  (skip-unless (require 'org-ql nil t))
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((dir (make-temp-file "jetpacs-orgql" t))
+           (app (expand-file-name "flagged.org" dir))
+           (backing (expand-file-name "people.org" dir)))
+      (push dir jetpacs-crud-tests--temp-dirs)
+      (with-temp-file backing
+        (insert "* Alice :work:urgent:\n* Bob :work:\n* Carol :urgent:\n"
+                "* Group\n** Dana :work:urgent:\n** Evan :work:\n"))
+      (with-temp-file app
+        ;; tags-all is an org-ql predicate the built-in interpreter lacks.
+        (insert "#+JETPACS_APP: flagged\n\n"
+                "* Flagged\n:PROPERTIES:\n:KIND: records\n"
+                ":SOURCE: people.org\n:SCHEMA: %ITEM(Name)\n"
+                ":FILTER: (tags-all \"work\" \"urgent\")\n:END:\n"
+                "* Grouped\n:PROPERTIES:\n:KIND: records\n"
+                ":SOURCE: people.org::*Group\n:SCHEMA: %ITEM(Name)\n"
+                ":FILTER: (tags-all \"work\" \"urgent\")\n:END:\n"))
+      (jetpacs-crud-register-file app)
+      (let* ((spec (jetpacs-crud--app "flagged"))
+             (names (lambda (view-name)
+                      (mapcar (lambda (r)
+                                (alist-get "ITEM" (plist-get r :fields)
+                                           nil nil #'equal))
+                              (jetpacs-crud--scan-records
+                               spec (jetpacs-crud--view spec view-name))))))
+        ;; Whole-file scope: only Alice carries both tags at the top level
+        ;; (Dana matches the query but is a child of Group, not a record).
+        (should (equal (funcall names "flagged") '("Alice")))
+        ;; Subtree scope: within *Group, only Dana matches — proving the
+        ;; org-ql match set lines up with the narrowed subtree walk.
+        (should (equal (funcall names "grouped") '("Dana")))))))
+
 (ert-deftest jetpacs-crud-records-views-lint-clean ()
   (jetpacs-crud-tests--with-clean-state
     (jetpacs-crud-register-file (jetpacs-crud-tests--stage "crm.org" "people.org"))

@@ -121,10 +121,14 @@ fun pickOrgFile(title: String): File? {
     return dialog.file?.let { File(dialog.directory, it) }
 }
 
-/** A native save dialog seeded with NAME; null when cancelled. */
-fun pickSaveFile(title: String, name: String): File? {
+/**
+ * A native save dialog seeded with NAME, opening in DIRECTORY when given
+ * (the Settings "Default App Path"); null when cancelled.
+ */
+fun pickSaveFile(title: String, name: String, directory: String? = null): File? {
     val dialog = java.awt.FileDialog(null as java.awt.Frame?, title,
                                      java.awt.FileDialog.SAVE)
+    directory?.takeIf { it.isNotBlank() }?.let { dialog.directory = it }
     dialog.file = name
     dialog.isVisible = true
     return dialog.file?.let { File(dialog.directory, it) }

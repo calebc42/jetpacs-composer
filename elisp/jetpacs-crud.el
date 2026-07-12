@@ -110,9 +110,12 @@ phone (the minibuffer bridge).  Signals `user-error' on invalid input."
 ;; A view's `:FILTER:' is a query over its records.  We reuse org-ql's sexp
 ;; language as the grammar — the same shape Glasspane's search speaks — and
 ;; carry a built-in interpreter (`jetpacs-crud--entry-matches-p') that covers
-;; the common subset.  When the org-ql package is installed on the device it
-;; extends the language for whole-file scopes (the notes datasource); for the
-;; per-entry, subtree-scoped kinds here the interpreter is always the engine.
+;; the common subset.  When the org-ql package is installed, a FILTER that
+;; reaches beyond that subset (on records / heading scopes) is handed to org-ql
+;; wholesale — its full query language becomes available, evaluated over the
+;; same narrowed buffer.  Without org-ql such a term signals, so "install
+;; org-ql" is an honest instruction.  Notes match against the vulpea index
+;; instead (`jetpacs-crud--note-matches-p'), which carries its own subset.
 ;;
 ;; Three input shapes, one grammar (`jetpacs-crud--parse-query'):
 ;;   - an org-ql sexp:        (and (todo "NEXT") (tags "work"))
@@ -259,6 +262,52 @@ needs the org-ql package, which extends this interpreter when present."
     (`(scheduled . ,args) (jetpacs-crud--planning-match-p 'scheduled args))
     (`(deadline . ,args) (jetpacs-crud--planning-match-p 'deadline args))
     (_ (user-error "Query term %S needs the org-ql package installed" tree))))
+
+;; org-ql handoff: when a FILTER reaches past the interpreter's subset and the
+;; package is installed, org-ql evaluates the whole query over the scan buffer.
+
+(declare-function org-ql-select "org-ql" (buffers-or-files query &rest args))
+
+(defvar jetpacs-crud--org-ql 'unknown
+  "Cached org-ql availability: `unknown' re-probes, else t / nil.
+Reset on `jetpacs-shell-refresh-hook' so installing org-ql mid-session
+widens FILTER without a restart.")
+
+(defun jetpacs-crud--org-ql-p ()
+  "Non-nil when the org-ql package is installed."
+  (when (eq jetpacs-crud--org-ql 'unknown)
+    (setq jetpacs-crud--org-ql (and (require 'org-ql nil t)
+                                    (fboundp 'org-ql-select)
+                                    t)))
+  jetpacs-crud--org-ql)
+
+(add-hook 'jetpacs-shell-refresh-hook
+          (lambda () (setq jetpacs-crud--org-ql 'unknown)))
+
+(defun jetpacs-crud--query-supported-p (tree)
+  "Non-nil when org-ql sexp TREE uses only terms the interpreter covers.
+When it does not — and org-ql is installed — the query is delegated wholesale
+to org-ql rather than matched term-by-term here."
+  (pcase tree
+    (`(and . ,cs) (cl-every #'jetpacs-crud--query-supported-p cs))
+    (`(or . ,cs) (cl-every #'jetpacs-crud--query-supported-p cs))
+    (`(not ,c) (jetpacs-crud--query-supported-p c))
+    (`(,head . ,_)
+     (and (memq head '(todo done tags priority heading regexp
+                       property level scheduled deadline))
+          t))
+    (_ nil)))
+
+(defun jetpacs-crud--org-ql-positions (tree)
+  "Heading positions matching org-ql sexp TREE, as a hash keyed by point.
+Requires org-ql; honors the current narrowing, so a subtree-scoped scan sees
+only its own region."
+  (let ((set (make-hash-table :test 'eql)))
+    (dolist (pos (org-ql-select (current-buffer) tree
+                                :action (lambda () (point))
+                                :narrow t))
+      (puthash pos t set))
+    set))
 
 ;; ─── Locating and scanning source tables ─────────────────────────────────────
 
@@ -552,7 +601,11 @@ org itself."
          (tree (if (and search (not (string-empty-p search)))
                    (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
                      (if static-tree (list 'and static-tree q) q))
-                 static-tree)))
+                 static-tree))
+         ;; A term past the interpreter's subset falls to org-ql when present.
+         (use-org-ql (and tree
+                          (not (jetpacs-crud--query-supported-p tree))
+                          (jetpacs-crud--org-ql-p))))
     (when (file-readable-p file)
       (jetpacs-crud--with-source file
         (save-restriction
@@ -563,7 +616,9 @@ org itself."
               (setq base (org-outline-level))
               (org-narrow-to-subtree))
             (let ((target (1+ base))
-                  (records nil))
+                  (records nil)
+                  (matchset (and use-org-ql
+                                 (jetpacs-crud--org-ql-positions tree))))
               ;; MATCH is nil — we walk every entry in scope and gate on the
               ;; parsed FILTER ourselves, so the query grammar is org-ql's,
               ;; not org's tags/property MATCH syntax.
@@ -571,7 +626,9 @@ org itself."
                (lambda ()
                  (when (and (= (org-outline-level) target)
                             (or (null tree)
-                                (jetpacs-crud--entry-matches-p tree)))
+                                (if use-org-ql
+                                    (gethash (point) matchset)
+                                  (jetpacs-crud--entry-matches-p tree))))
                    (push (list :pos (point)
                                :fields (mapcar
                                         (lambda (p)
@@ -973,8 +1030,8 @@ match `and'/`or'/`not', `todo', `tags', `property', `regexp', `level'."
            (case-fold-search t))
        (cl-every (lambda (re) (string-match-p re hay)) res)))
     (`(level ,n) (= (vulpea-note-level note) n))
-    (_ (user-error "FILTER term %S is not supported over notes; \
-narrow the SOURCE or install org-ql" tree))))
+    (_ (user-error "FILTER term %S isn't supported over the notes index; \
+use a supported term (todo/tags/property/regexp/level)" tree))))
 
 (defun jetpacs-crud--scan-notes (spec view)
   "VIEW's note records: plists (:id ID :fields ALIST), FILTER-matched."

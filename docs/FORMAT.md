@@ -167,10 +167,13 @@ so an empty result always means "nothing matched", never "didn't parse".
 The runtime carries a **built-in interpreter** for the common terms —
 `and` / `or` / `not`, `todo` / `done`, `tags`, `priority`, `heading`,
 `regexp`, `property`, `level`, `scheduled` / `deadline`. These work on
-every device with no extra packages. Terms beyond this subset require
-the `org-ql` package installed on the device; using one without it is a
-clear error naming org-ql, not a silent empty view. (Filtering applies
-to records and notes views; table views are unfiltered — see non-goals.)
+every device with no extra packages. When the `org-ql` package **is**
+installed, a records filter that reaches beyond this subset is handed to
+org-ql wholesale, so its full query language becomes available; without
+org-ql such a term is a clear error naming the package, not a silent
+empty view. (Filtering applies to records and notes views; table views
+are unfiltered — see non-goals. Notes filter against the vulpea index,
+which carries its own subset — see below.)
 
 Rendering: one card per record — title line (`ITEM`, prefixed by the
 `TODO` keyword when in the schema), then one tappable row per remaining
@@ -190,9 +193,12 @@ Without it the view renders a "Notes need vulpea" placeholder and the
 rest of the app runs normally — the bundle never depends on vulpea, it
 uses it when present.
 
-`:SCHEMA:` and `:FILTER:` work exactly as for records; fields are org
-**properties** on each note, which vulpea indexes. The `:SOURCE:` picks
-one of two record shapes:
+`:SCHEMA:` works exactly as for records. `:FILTER:` is matched against
+the vulpea **index** (no file scan), so it covers `and` / `or` / `not`,
+`todo`, `tags`, `property`, `regexp`, `level` — other terms (and the
+org-ql extension available to records) do not apply here; narrow the
+`:SOURCE:` instead. Fields are org **properties** on each note, which
+vulpea indexes. The `:SOURCE:` picks one of two record shapes:
 
 - `contacts/` (a trailing-slash directory) — **file-per-record**: every
   `.org` note file in the vault is one record. Adding a record writes a

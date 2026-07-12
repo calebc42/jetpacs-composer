@@ -69,14 +69,19 @@ fun main() {
                     if (showExitWarning) {
                         UnsavedChangesDialog(
                             onSaveAndClose = {
-                                session?.let { s ->
-                                    if (s.file == null) {
-                                        pickSaveFile("Save app document", "${s.spec.id}.org")?.let { s.save(it) }
-                                    } else {
-                                        s.save()
+                                val s = session
+                                val saved = when {
+                                    s == null -> true
+                                    s.file != null -> { s.save(); true }
+                                    else -> {
+                                        val target = pickSaveFile(
+                                            "Save app document", "${s.spec.id}.org",
+                                            appConfig.defaultAppPath)
+                                        if (target != null) { s.save(target); true } else false
                                     }
                                 }
-                                exitApplication()
+                                // A cancelled Save-As must not close and lose the doc.
+                                if (saved) exitApplication() else showExitWarning = false
                             },
                             onDiscardAndClose = { exitApplication() },
                             onCancel = { showExitWarning = false }
@@ -115,23 +120,28 @@ private fun App(
         var showCloseWarning by remember { mutableStateOf(false) }
         
         EditorScreen(
-            current, 
-            onSettings = { showSettings = true }, 
-            onClose = { 
-                if (current.dirty) showCloseWarning = true 
-                else onSessionChange(null) 
+            current,
+            config = config,
+            onSettings = { showSettings = true },
+            onClose = {
+                if (current.dirty) showCloseWarning = true
+                else onSessionChange(null)
             }
         )
         
         if (showCloseWarning) {
             UnsavedChangesDialog(
                 onSaveAndClose = {
-                    if (current.file == null) {
-                        pickSaveFile("Save app document", "${current.spec.id}.org")?.let { current.save(it) }
+                    val saved = if (current.file != null) {
+                        current.save(); true
                     } else {
-                        current.save()
+                        val target = pickSaveFile(
+                            "Save app document", "${current.spec.id}.org",
+                            config.defaultAppPath)
+                        if (target != null) { current.save(target); true } else false
                     }
-                    onSessionChange(null)
+                    // A cancelled Save-As returns to the editor, doc intact.
+                    if (saved) onSessionChange(null)
                     showCloseWarning = false
                 },
                 onDiscardAndClose = {
