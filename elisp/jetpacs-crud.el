@@ -29,6 +29,7 @@
 (require 'jetpacs-surfaces)
 (require 'jetpacs-shell)
 (require 'jetpacs-apps)
+(require 'jetpacs-device)
 
 ;; ─── Registry ────────────────────────────────────────────────────────────────
 
@@ -1117,6 +1118,7 @@ fire the `crud.note.*' actions."
          (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
                   (if (and item (not (string-empty-p item))) item "Untitled")))
          (todo (alist-get "TODO" fields nil nil #'equal))
+         (actions (jetpacs-crud--action-tokens (plist-get view :actions)))
          (args-for (lambda (prop)
                      `((app . ,(plist-get spec :id))
                        (view . ,(plist-get view :name))
@@ -1136,24 +1138,40 @@ fire the `crud.note.*' actions."
                    (jetpacs-action "crud.note.field.edit"
                                 :args (funcall args-for "ITEM"))))
         (jetpacs-menu
-         (list (jetpacs-menu-item "Delete note"
-                               (jetpacs-action "crud.note.menu"
-                                            :args (funcall args-for nil))
-                               :icon "delete"))))
+         (append
+          (delq nil (mapcar (lambda (a) (jetpacs-crud--action-menu a args-for))
+                            actions))
+          (list (jetpacs-menu-item "Delete note"
+                                (jetpacs-action "crud.note.menu"
+                                             :args (funcall args-for nil))
+                                :icon "delete")))))
        (apply #'jetpacs-column
               (cl-loop for (prop . label) in schema
                        unless (member prop '("ITEM" "TODO"))
                        collect
-                       (let ((value (alist-get prop fields nil nil #'equal)))
+                       (let ((value (alist-get prop fields nil nil #'equal))
+                             (ctype (jetpacs-crud--field-type view prop)))
                          (jetpacs-box
                           (list (jetpacs-row
                                  (jetpacs-text (or label prop) 'caption nil nil nil 1)
                                  (jetpacs-spacer :width 12)
-                                 (jetpacs-text (if (string-empty-p value) "—" value)
+                                 (jetpacs-text (if (string-empty-p value)
+                                                   "—"
+                                                 (if (and (consp ctype)
+                                                          (eq (car ctype) 'ref))
+                                                     (jetpacs-crud--ref-resolve
+                                                      spec (cadr ctype) value (caddr ctype))
+                                                   value))
                                             'body 1)))
-                          :on-tap (jetpacs-action "crud.note.field.edit"
-                                               :args (funcall args-for prop))
-                          :padding 2)))))))))
+                          :on-tap (or (jetpacs-crud--ref-action spec ctype value)
+                                      (jetpacs-action "crud.note.field.edit"
+                                                   :args (funcall args-for prop)))
+                          :on-long-tap (when (and (consp ctype) (eq (car ctype) 'ref))
+                                         (jetpacs-action "crud.note.field.edit"
+                                                      :args (funcall args-for prop)))
+                          :padding 2)))))))
+     :swipe-start (jetpacs-crud--action-swipe (nth 0 actions) args-for)
+     :swipe-end (jetpacs-crud--action-swipe (nth 1 actions) args-for))))
 
 (defun jetpacs-crud--notes-body (spec view)
   "The body node for a notes VIEW of SPEC (vulpea-backed, degrades)."
@@ -1214,6 +1232,83 @@ action string the add-FAB fires.")
 
 ;; ─── The view builder ────────────────────────────────────────────────────────
 
+(defun jetpacs-crud--export-matrix (spec view)
+  "Return VIEW data as a rectangular list of string rows."
+  (pcase (plist-get view :kind)
+    ('table
+     (let* ((table (cdr (jetpacs-crud--source-table spec view)))
+            (rows (delq 'hline (copy-sequence (plist-get table :rows)))))
+       (mapcar (lambda (row) (mapcar #'car row)) rows)))
+    ((or 'records 'board 'calendar 'gallery 'tree)
+     (let ((props (mapcar #'car (jetpacs-crud--schema-props view))))
+       (cons props
+             (mapcar (lambda (record)
+                       (mapcar (lambda (prop)
+                                 (or (alist-get prop (plist-get record :fields)
+                                                nil nil #'equal) ""))
+                               props))
+                     (jetpacs-crud--scan-records spec view)))))
+    ('notes
+     (let ((props (mapcar #'car (jetpacs-crud--schema-props view))))
+       (cons props
+             (mapcar (lambda (record)
+                       (mapcar (lambda (prop)
+                                 (or (alist-get prop (plist-get record :fields)
+                                                nil nil #'equal) ""))
+                               props))
+                     (jetpacs-crud--scan-notes spec view)))))
+    (_ nil)))
+
+(defun jetpacs-crud--csv-cell (value)
+  "Encode VALUE as a spreadsheet-safe RFC 4180-style CSV field."
+  (let ((text (or value "")))
+    ;; Neutralize formula-like cells before a spreadsheet sees them.
+    (when (string-match-p "\\`[ \t]*[=+@-]" text)
+      (setq text (concat "'" text)))
+    (if (string-match-p "[,\"\n\r]" text)
+        (concat "\"" (replace-regexp-in-string "\"" "\"\"" text t t) "\"")
+      text)))
+
+(defun jetpacs-crud--matrix-csv (matrix)
+  "Serialize MATRIX to CSV with a final newline."
+  (concat (mapconcat (lambda (row)
+                       (mapconcat #'jetpacs-crud--csv-cell row ","))
+                     matrix "\n")
+          "\n"))
+
+(defun jetpacs-crud--matrix-org-table (matrix)
+  "Serialize MATRIX as org-table text with a header rule."
+  (let ((lines
+         (mapcar (lambda (row)
+                   (concat "| "
+                           (mapconcat
+                            (lambda (cell)
+                              (replace-regexp-in-string "|" "\\\\vert{}" (or cell "") t t))
+                            row " | ")
+                           " |"))
+                 matrix)))
+    (when lines
+      (setq lines (append (list (car lines)
+                                (concat "|" (mapconcat
+                                             (lambda (_) "---") (car matrix) "+") "|"))
+                          (cdr lines))))
+    (concat (mapconcat #'identity lines "\n") "\n")))
+
+(defun jetpacs-crud--export-actions (spec view)
+  "Top-bar copy/share actions for exportable VIEW."
+  (when-let ((matrix (jetpacs-crud--export-matrix spec view)))
+    (let ((csv (jetpacs-crud--matrix-csv matrix))
+          (org-table (jetpacs-crud--matrix-org-table matrix))
+          (args `((app . ,(plist-get spec :id))
+                  (view . ,(plist-get view :name)))))
+      (list
+       (jetpacs-icon-button "content_copy" (jetpacs-clipboard-action csv)
+                            :content-description "Copy view as CSV")
+       (jetpacs-icon-button "table_view" (jetpacs-clipboard-action org-table)
+                            :content-description "Copy view as org table")
+       (jetpacs-icon-button "share" (jetpacs-action "crud.view.share" :args args)
+                            :content-description "Share view as CSV")))))
+
 (defun jetpacs-crud--fab (spec view)
   "The add FAB for VIEW of SPEC."
   (let ((args `((app . ,(plist-get spec :id))
@@ -1233,7 +1328,9 @@ action string the add-FAB fires.")
     (jetpacs-shell-tab-view
      (format "%s.%s" id name)
      (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view)
-     :top-bar (jetpacs-shell-default-top-bar (plist-get view :title))
+     :top-bar (jetpacs-shell-default-top-bar
+               (plist-get view :title)
+               :extra-actions (jetpacs-crud--export-actions spec view))
      :fab (jetpacs-crud--fab spec view)
      :snackbar snackbar)))
 
@@ -1493,28 +1590,60 @@ phone are refreshed before the user can tap again."
         (save-buffer)))
     (jetpacs-shell-push)))
 
+(defun jetpacs-crud--action-apply-at-point (token options)
+  "Apply closed action TOKEN with OPTIONS at the current org entry."
+  (pcase token
+    ("todo"
+     (let ((state (and options (string-trim options))))
+       (when (and state (not (string-empty-p state))) (org-todo state))))
+    ("schedule" (call-interactively #'org-schedule))
+    ("deadline" (call-interactively #'org-deadline))
+    ("tags"
+     (if (and options (not (string-empty-p (string-trim options))))
+         (org-set-tags (split-string options "," t "[ \t]+"))
+       (call-interactively #'org-set-tags-command)))
+    ("priority"
+     (if (and options (not (string-empty-p (string-trim options))))
+         (org-priority (string-to-char (upcase (string-trim options))))
+       (call-interactively #'org-priority)))
+    ("refile" (call-interactively #'org-refile))
+    ("archive" (org-archive-subtree-default))
+    (_ (user-error "Unknown record action: %s" token))))
+
 (defun jetpacs-crud-action-apply (args _payload)
-  "Apply the action TOKEN to the record."
-  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t))
-               (token (alist-get 'token args))
-               (options (alist-get 'options args)))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (goto-char pos)
-       (pcase token
-         ("todo"
-          (let ((state (and options (string-trim options))))
-            (when (and state (not (string-empty-p state)))
-              (org-todo state))))
-         ("schedule" (call-interactively #'org-schedule))
-         ("deadline" (call-interactively #'org-deadline))
-         ("tags" (call-interactively #'org-set-tags-command))
-         ("priority" (call-interactively #'org-priority))
-         ("refile" (call-interactively #'org-refile))
-         ("archive" (org-archive-subtree-default)))))
-    (with-current-buffer (find-file-noselect file)
-      (let ((save-silently t)) (save-buffer)))
-    (jetpacs-shell-push)))
+  "Apply the action TOKEN to a position- or stable-ID-addressed record."
+  (let ((token (alist-get 'token args))
+        (options (alist-get 'options args)))
+    (if (alist-get 'id args)
+        (pcase-let* ((`(,_spec ,_view ,note) (jetpacs-crud--note-resolve args))
+                     (file (vulpea-note-path note))
+                     (nid (vulpea-note-id note)))
+          (jetpacs-crud--note-mutate file nid
+            (lambda () (jetpacs-crud--action-apply-at-point token options))))
+      (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t)))
+        (with-current-buffer (find-file-noselect file)
+          (org-with-wide-buffer
+           (goto-char pos)
+           (jetpacs-crud--action-apply-at-point token options))
+          (let ((save-silently t)) (save-buffer)))
+        (jetpacs-shell-push)))))
+
+(defun jetpacs-crud-action-view-share (args _payload)
+  "Share a freshly rendered CSV export of the declared app/view."
+  (let* ((appid (alist-get 'app args))
+         (name (alist-get 'view args))
+         (spec (or (jetpacs-crud--app appid)
+                   (user-error "Unknown CRUD app: %S" appid)))
+         (view (or (jetpacs-crud--view spec name)
+                   (user-error "Unknown view %S in app %s" name appid)))
+         (matrix (or (jetpacs-crud--export-matrix spec view)
+                     (user-error "View %s is not exportable" name)))
+         (csv (jetpacs-crud--matrix-csv matrix)))
+    (jetpacs-device-intent
+     :action "android.intent.action.SEND"
+     :mime "text/csv"
+     :extras `((android.intent.extra.TEXT . ,csv)
+               (android.intent.extra.TITLE . ,(plist-get view :title))))))
 
 (defun jetpacs-crud-action-node-move (args payload)
   "Reorder or reparent a tree node.
@@ -2101,6 +2230,7 @@ Re-renders the add-record dialog to reflect the picked value."
   (jetpacs-defaction "crud.view.search"     #'jetpacs-crud-action-view-search)
   (jetpacs-defaction "crud.field.state-sink" #'jetpacs-crud-action-field-state-sink)
   (jetpacs-defaction "crud.action.apply"    #'jetpacs-crud-action-apply)
+  (jetpacs-defaction "crud.view.share"      #'jetpacs-crud-action-view-share)
   (jetpacs-defaction "crud.node.move"       #'jetpacs-crud-action-node-move)
   (jetpacs-defaction "crud.dialog.dismiss"  #'jetpacs-crud-action-dialog-dismiss))
 

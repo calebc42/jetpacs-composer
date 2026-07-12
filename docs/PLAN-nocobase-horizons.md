@@ -297,6 +297,10 @@ import ref-inference (misproposes on hand-authored org).
 
 ### B3. Revive the `ActionDef` vocabulary — [high / L]
 
+**Landed:** records and notes expose the same configured menu/swipe actions;
+all writes dispatch through the closed interpreter and resolve their source
+server-side from either a position or stable note ID.
+
 Resurrect the phantom `:ACTIONS:` drawer as one closed `crud.action--apply(file,
 pos, token)` interpreter over the **7 existing tokens** (set-todo,
 schedule, deadline, tags, priority, refile, archive) — each maps to an
@@ -312,6 +316,10 @@ what keeps the no-formulas non-goal intact. From NocoBase's
 separate frontier + review; see F4.)
 
 ### B4. Bulk data I/O — CSV import / export / share — [high / export M, import L]
+
+**Export landed:** table and record-like views can copy spreadsheet-safe CSV,
+copy org-table text, or explicitly share CSV. Import remains intentionally
+separate and table-only.
 
 From `plugin-action-export` / `-import`. **Export** (M) renders a table /
 records view to CSV (header = schema) or org-table text via *core*

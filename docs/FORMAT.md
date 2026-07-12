@@ -212,6 +212,12 @@ They dispatch through the single closed `crud.action.apply` handler and map to
 org's own mutation commands. Unknown future tokens are preserved and ignored by
 an older runtime rather than preventing the whole app from loading.
 
+Table and record-like views also expose explicit top-bar export actions: copy
+CSV, copy org-table text, and share CSV. CSV cells beginning with optional
+whitespace followed by `=`, `+`, `-`, or `@` are prefixed with an apostrophe to
+prevent spreadsheet formula execution. Share recomputes the data from the
+registered view and never accepts a source or destination path from the wire.
+
 ## Derived record views
 
 `board`, `calendar`, `gallery`, and `tree` use the same `:SCHEMA:`, `:SOURCE:`,

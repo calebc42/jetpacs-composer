@@ -271,6 +271,17 @@ as an `unknown' marker (rendered as text) instead of erroring."
     (should (equal (plist-get view :coltypes)
                    '(text (ref "Customers" "NAME"))))))
 
+(ert-deftest jetpacs-crud-export-csv-neutralizes-formulas-and-quotes ()
+  (should
+   (equal (jetpacs-crud--matrix-csv
+           '(("Name" "Value") ("Ada, Inc." " =2+2") ("Quote" "a\"b")))
+          "Name,Value\n\"Ada, Inc.\",' =2+2\nQuote,\"a\"\"b\"\n")))
+
+(ert-deftest jetpacs-crud-export-org-table-adds-header-rule ()
+  (should
+   (equal (jetpacs-crud--matrix-org-table '(("Name" "Value") ("A|B" "2")))
+          "| Name | Value |\n|---+---|\n| A\\vert{}B | 2 |\n")))
+
 (ert-deftest jetpacs-crud-parse-unicode ()
   (let ((spec (jetpacs-crud-parse-app
                (expand-file-name "unicode.org" jetpacs-crud-tests--fixtures))))
