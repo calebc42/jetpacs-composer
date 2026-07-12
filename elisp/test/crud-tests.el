@@ -282,6 +282,34 @@ as an `unknown' marker (rendered as text) instead of erroring."
    (equal (jetpacs-crud--matrix-org-table '(("Name" "Value") ("A|B" "2")))
           "| Name | Value |\n|---+---|\n| A\\vert{}B | 2 |\n")))
 
+(ert-deftest jetpacs-crud-parse-csv-handles-quotes-and-newlines ()
+  (should
+   (equal (jetpacs-crud--parse-csv
+           "Name,Note\r\n\"Ada, Inc.\",\"line 1\nline 2\"\r\n")
+          '(("Name" "Note") ("Ada, Inc." "line 1\nline 2")))))
+
+(ert-deftest jetpacs-crud-import-csv-appends-only-after-full-validation ()
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "pantry.org")))
+      (jetpacs-crud-register-file file)
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (&rest _)
+                   "Item,Qty,Expires,Stock,Restock\nBeans,4,2027-02-03,High,true\n")))
+        (jetpacs-crud-action-view-import-csv
+         '((app . "pantry") (view . "inventory")) nil))
+      (should (string-match-p
+               "| *Beans *| *4 *| *2027-02-03 *| *High *| *\\[X\\] *|"
+               (jetpacs-crud-tests--slurp file)))
+      (let ((before (jetpacs-crud-tests--slurp file)))
+        (cl-letf (((symbol-function 'read-string)
+                   (lambda (&rest _)
+                     "Item,Qty,Expires,Stock,Restock\nGood,2,2027-01-01,Low,false\nBad,nope,2027-01-01,Low,false\n")))
+          (should-error
+           (jetpacs-crud-action-view-import-csv
+            '((app . "pantry") (view . "inventory")) nil)
+           :type 'user-error))
+        (should (equal before (jetpacs-crud-tests--slurp file)))))))
+
 (ert-deftest jetpacs-crud-parse-unicode ()
   (let ((spec (jetpacs-crud-parse-app
                (expand-file-name "unicode.org" jetpacs-crud-tests--fixtures))))

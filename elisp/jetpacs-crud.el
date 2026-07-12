@@ -1276,6 +1276,76 @@ action string the add-FAB fires.")
                      matrix "\n")
           "\n"))
 
+(defun jetpacs-crud--parse-csv (text)
+  "Parse RFC 4180-style CSV TEXT into rows, including quoted newlines."
+  (let ((i 0) (n (length text)) (quoted nil)
+        (field "") (row nil) (rows nil))
+    (cl-labels ((end-field ()
+                  (push field row)
+                  (setq field ""))
+                (end-row ()
+                  (end-field)
+                  (unless (cl-every #'string-empty-p row)
+                    (push (nreverse row) rows))
+                  (setq row nil)))
+      (while (< i n)
+        (let ((ch (aref text i)))
+          (cond
+           (quoted
+            (if (eq ch ?\")
+                (if (and (< (1+ i) n) (eq (aref text (1+ i)) ?\"))
+                    (progn (setq field (concat field "\"")) (setq i (1+ i)))
+                  (setq quoted nil))
+              (setq field (concat field (char-to-string ch)))))
+           ((eq ch ?\")
+            (if (string-empty-p field)
+                (setq quoted t)
+              (user-error "Unexpected quote in CSV field")))
+           ((eq ch ?,) (end-field))
+           ((or (eq ch ?\n) (eq ch ?\r))
+            (when (and (eq ch ?\r) (< (1+ i) n) (eq (aref text (1+ i)) ?\n))
+              (setq i (1+ i)))
+            (end-row))
+           (t (setq field (concat field (char-to-string ch))))))
+        (setq i (1+ i)))
+      (when quoted (user-error "Unterminated quoted CSV field"))
+      (when (or row (not (string-empty-p field))) (end-row)))
+    (nreverse rows)))
+
+(defun jetpacs-crud--import-cell (value type row col label)
+  "Validate and normalize CSV VALUE of TYPE, reporting ROW/COL/LABEL."
+  (let ((raw value) text)
+    ;; Reverse only the apostrophe inserted by our formula-safe exporter.
+    (when (string-match "\\`'\\([ \t]*[=+@-].*\\)\\'" raw)
+      (setq raw (match-string 1 raw)))
+    (setq text (string-trim raw))
+    (condition-case err
+        (pcase type
+          ('number
+           (unless (or (string-empty-p text)
+                       (string-match-p "\\`-?[0-9]+\\(\\.[0-9]+\\)?\\'" text))
+             (user-error "not a number"))
+           text)
+          ('date
+           (unless (or (string-empty-p text)
+                       (string-match-p
+                        "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" text))
+             (user-error "not a date (YYYY-MM-DD)"))
+           text)
+          ('checkbox
+           (pcase (downcase text)
+             ((or "" "[ ]" "false" "0") "[ ]")
+             ((or "[x]" "x" "true" "1") "[X]")
+             (_ (user-error "not a checkbox ([X]/[ ], true/false, 1/0)"))))
+          (`(enum . ,options)
+           (unless (or (string-empty-p text) (member text options))
+             (user-error "not one of %s" (mapconcat #'identity options ", ")))
+           text)
+          (_ raw))
+      (user-error
+       (user-error "CSV row %d, column %d (%s): %s"
+                   row col label (error-message-string err))))))
+
 (defun jetpacs-crud--matrix-org-table (matrix)
   "Serialize MATRIX as org-table text with a header rule."
   (let ((lines
@@ -1301,13 +1371,17 @@ action string the add-FAB fires.")
           (org-table (jetpacs-crud--matrix-org-table matrix))
           (args `((app . ,(plist-get spec :id))
                   (view . ,(plist-get view :name)))))
-      (list
+      (delq nil (list
        (jetpacs-icon-button "content_copy" (jetpacs-clipboard-action csv)
                             :content-description "Copy view as CSV")
        (jetpacs-icon-button "table_view" (jetpacs-clipboard-action org-table)
                             :content-description "Copy view as org table")
        (jetpacs-icon-button "share" (jetpacs-action "crud.view.share" :args args)
-                            :content-description "Share view as CSV")))))
+                            :content-description "Share view as CSV")
+       (when (eq (plist-get view :kind) 'table)
+         (jetpacs-icon-button "upload_file"
+                              (jetpacs-action "crud.view.import-csv" :args args)
+                              :content-description "Import pasted CSV")))))))
 
 (defun jetpacs-crud--fab (spec view)
   "The add FAB for VIEW of SPEC."
@@ -1644,6 +1718,49 @@ phone are refreshed before the user can tap again."
      :mime "text/csv"
      :extras `((android.intent.extra.TEXT . ,csv)
                (android.intent.extra.TITLE . ,(plist-get view :title))))))
+
+(defun jetpacs-crud-action-view-import-csv (args _payload)
+  "Validate and atomically append pasted CSV rows to a table view."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args))
+               (_ (unless (eq (plist-get view :kind) 'table)
+                    (user-error "CSV import is table-only")))
+               (table-pos (jetpacs-crud--locate-table spec view file))
+               (matrix (or (jetpacs-crud--export-matrix spec view)
+                           (user-error "Table has no header")))
+               (header (car matrix))
+               (parsed (jetpacs-crud--parse-csv (read-string "Paste CSV: ")))
+               (_ (unless parsed (user-error "CSV is empty")))
+               (_ (unless (equal (car parsed) header)
+                    (user-error "CSV header must exactly match: %s"
+                                (mapconcat #'identity header ","))))
+               (rows
+                (cl-loop for row in (cdr parsed)
+                         for row-index from 2
+                         collect
+                         (progn
+                           (unless (= (length row) (length header))
+                             (user-error "CSV row %d has %d columns; expected %d"
+                                         row-index (length row) (length header)))
+                           (cl-loop for value in row
+                                    for label in header
+                                    for col from 1
+                                    collect (jetpacs-crud--sanitize-field
+                                             (jetpacs-crud--import-cell
+                                              value (jetpacs-crud--coltype view col)
+                                              row-index col label)))))))
+    (unless rows (user-error "CSV contains a header but no data rows"))
+    ;; Every row is validated before entering the single mutation transaction.
+    (jetpacs-crud--table-mutate file table-pos
+      (lambda ()
+        (dolist (values rows)
+          (goto-char (org-table-end))
+          (forward-line -1)
+          (org-table-insert-row t)
+          (cl-loop for value in values
+                   for col from 1
+                   unless (string-empty-p value)
+                   do (org-table-goto-column col)
+                   (org-table-get-field nil value)))))))
 
 (defun jetpacs-crud-action-node-move (args payload)
   "Reorder or reparent a tree node.
@@ -2231,6 +2348,7 @@ Re-renders the add-record dialog to reflect the picked value."
   (jetpacs-defaction "crud.field.state-sink" #'jetpacs-crud-action-field-state-sink)
   (jetpacs-defaction "crud.action.apply"    #'jetpacs-crud-action-apply)
   (jetpacs-defaction "crud.view.share"      #'jetpacs-crud-action-view-share)
+  (jetpacs-defaction "crud.view.import-csv" #'jetpacs-crud-action-view-import-csv)
   (jetpacs-defaction "crud.node.move"       #'jetpacs-crud-action-node-move)
   (jetpacs-defaction "crud.dialog.dismiss"  #'jetpacs-crud-action-dialog-dismiss))
 

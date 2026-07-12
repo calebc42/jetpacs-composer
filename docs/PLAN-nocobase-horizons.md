@@ -317,9 +317,10 @@ separate frontier + review; see F4.)
 
 ### B4. Bulk data I/O — CSV import / export / share — [high / export M, import L]
 
-**Export landed:** table and record-like views can copy spreadsheet-safe CSV,
-copy org-table text, or explicitly share CSV. Import remains intentionally
-separate and table-only.
+**Landed:** table and record-like views can copy spreadsheet-safe CSV, copy
+org-table text, or explicitly share CSV. Table views can paste-import CSV with
+exact-header and typed per-row validation before one atomic append; records and
+notes import remain deliberately out of scope.
 
 From `plugin-action-export` / `-import`. **Export** (M) renders a table /
 records view to CSV (header = schema) or org-table text via *core*

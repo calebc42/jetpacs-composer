@@ -111,6 +111,13 @@ include `ID` in their schema. Editing presents the target records as choices,
 while tapping drills in by `(app, view, id)`, never by sending a source path
 over the wire.
 
+Table views additionally offer paste-driven CSV import. The first row must
+exactly match the current table header. Every subsequent row must have the same
+width and pass its declared column type (`number`, `date`, `checkbox`, or
+`enum`) before any source mutation begins; the first error reports its CSV row,
+column, and label. A valid batch appends atomically through the normal org-table
+mutation path. CSV import does not synthesize records or notes.
+
 ## Table views (`:KIND: table`)
 
 The first row of the table is the header (= the schema's column names);
