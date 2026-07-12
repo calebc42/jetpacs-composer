@@ -306,7 +306,7 @@ fun ViewForm(session: EditorSession, index: Int) {
     when {
         view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit)
         view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE) -> {
-            RecordsSchemaEditor(view, ::edit)
+            RecordsSchemaEditor(session.spec, view, ::edit)
             Spacer(Modifier.height(16.dp))
             ActionEditor(
                 actions = view.actions,
@@ -321,7 +321,11 @@ fun ViewForm(session: EditorSession, index: Int) {
 // ─── Records: schema + filter (the data lives on the device) ────────────────
 
 @Composable
-private fun RecordsSchemaEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -> Unit) {
+private fun RecordsSchemaEditor(
+    spec: AppSpec,
+    view: ViewSpec,
+    edit: ((ViewSpec) -> ViewSpec) -> Unit,
+) {
     Text("Schema — fields of each record",
          style = MaterialTheme.typography.titleMedium)
     Text("A record is a heading with a property drawer. Special names — " +
@@ -436,13 +440,13 @@ private fun RecordsSchemaEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -
     OutlinedTextField(
         view.filter.orEmpty(),
         { v -> edit { it.copy(filter = v.trim().ifBlank { null }) } },
-        label = { Text("filter (org-ql: todo:NEXT tags:work, or a sexp)") },
+        label = { Text("filter (guided device terms or raw org-ql)") },
         singleLine = true, modifier = Modifier.width(420.dp),
         trailingIcon = {
             androidx.compose.material3.IconButton(onClick = { showExpressionEditor = true }) {
                 androidx.compose.material3.Icon(
                     androidx.compose.material.icons.Icons.Default.Edit,
-                    contentDescription = "Edit Expression"
+                    contentDescription = "Edit filter"
                 )
             }
         }
@@ -450,6 +454,11 @@ private fun RecordsSchemaEditor(view: ViewSpec, edit: ((ViewSpec) -> ViewSpec) -
     if (showExpressionEditor) {
         ExpressionDialog(
             initialValue = view.filter.orEmpty(),
+            viewKind = view.kind,
+            properties = view.schema.map { it.prop },
+            todoKeywords = spec.todoSequence.map { it.keyword }
+                .ifEmpty { listOf("TODO", "DONE") },
+            tags = spec.tags,
             onSave = { v ->
                 edit { it.copy(filter = v.trim().ifBlank { null }) }
                 showExpressionEditor = false

@@ -259,6 +259,9 @@ object ModelOps {
                     view.imageField ?: if (view.kind == ViewKind.GALLERY) "IMAGE" else null,
                     "Image field",
                 )
+                val filterResult = FilterQuery.parse(view.filter.orEmpty(), view.kind)
+                if (filterResult is FilterQuery.ParseResult.Invalid)
+                    add(Problem("Malformed filter: ${filterResult.message}", i))
             }
             if (view.kind == ViewKind.TABLE) {
                 val width = when {

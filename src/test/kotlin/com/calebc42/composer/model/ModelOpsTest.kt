@@ -186,6 +186,28 @@ class ModelOpsTest {
     }
 
     @Test
+    fun validateRejectsMalformedFiltersButAllowsRawOrgQlTerms() {
+        val view = ViewSpec(
+            title = "Records",
+            kind = ViewKind.RECORDS,
+            schema = listOf(SchemaField("ITEM")),
+            colTypes = listOf(ColType.Text),
+        )
+        val malformed = AppSpec(id = "filters", views = listOf(
+            view.copy(filter = "(and (todo \"NEXT\")")))
+        assertTrue(ModelOps.validate(malformed).any {
+            it.message.startsWith("Malformed filter") &&
+                it.severity == ModelOps.Severity.Error
+        })
+
+        val orgQlOnly = malformed.copy(views = listOf(
+            view.copy(filter = "(clocked :on today)")))
+        assertTrue(ModelOps.validate(orgQlOnly).none {
+            it.message.startsWith("Malformed filter")
+        })
+    }
+
+    @Test
     fun validateCatchesParserRejectsAndRuntimeFieldDefaults() {
         assertTrue(ModelOps.validate(AppSpec(id = "empty")).any {
             it.message == "An app needs at least one view" &&
