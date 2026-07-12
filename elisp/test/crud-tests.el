@@ -830,6 +830,24 @@ in both whole-file and subtree (`::*Heading') scopes."
         (should (string-match-p "Notes about Ada that must survive" content))
         (should (string-match-p "Prose before any heading" content))))))
 
+(ert-deftest jetpacs-crud-record-detail-includes-fields-and-entry-prose ()
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (dialog nil)
+           (style nil))
+      (jetpacs-crud-register-file file)
+      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+        (cl-letf (((symbol-function 'jetpacs-send-dialog)
+                   (lambda (node &optional dialog-style)
+                     (setq dialog node style dialog-style))))
+          (jetpacs-crud-action-record-detail
+           `((app . "crm") (view . "people") (pos . ,pos)) nil)))
+      (let ((json (jetpacs-render-to-json dialog)))
+        (should (equal style "sheet_full"))
+        (should (string-match-p "555-0100" json))
+        (should (string-match-p "Notes about Ada that must survive" json))
+        (should (string-match-p "Duplicate record" json)))))
+
 (ert-deftest jetpacs-crud-field-edit-todo-uses-real-keywords ()
   (jetpacs-crud-tests--with-clean-state
     (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))

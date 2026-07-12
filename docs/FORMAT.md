@@ -270,6 +270,12 @@ registered view and never accepts a source or destination path from the wire.
 - **tree** walks the source outline at every depth and supports org-native
   reorder/reparent operations.
 
+Tapping a record card—or a resolved reference value—opens a full-height detail
+sheet. It uses the appropriate records/notes identity resolver, shows every
+schema field with its typed/reference behavior, retains configured actions, and
+adds the org entry's body prose below the fields. Writes still use the original
+view-bound mutation handlers; the detail overlay does not accept a source path.
+
 ## Notes views (`:KIND: notes`) — a vulpea vault as the datasource
 
 A notes view is a records view whose datasource is a

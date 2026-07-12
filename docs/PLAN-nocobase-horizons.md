@@ -378,6 +378,10 @@ releasing surfaces on teardown (F5).
 
 ### B7. Record `detail` overlay — [both / L]
 
+**Landed:** record-card and reference taps resolve into a full-height sheet
+using the correct records/notes builder, with every schema field, configured
+actions, reference behavior, and the entry's org body prose.
+
 From NocoBase `DetailsBlockModel` + `openView`. A full-record view (all
 schema fields, body prose) opened from a card tap or a ref chip (B2),
 carrying the `ActionDef` buttons (B3) as its record actions. The natural
@@ -445,9 +449,12 @@ its Tier B).
   backward-compatible `&key` params **unblock undo snackbars and bulk
   toolbars for every tab-view app at once** — a prerequisite for A-tier
   undo and F4.
-- **F5. Release surfaces in `jetpacs-app-unregister`** — [S]. Teardown
-  (`apps.el:82`) releases actions/views/settings/chrome/fab but not
-  surfaces, so redeploys leak stale `customN` slots. Prerequisite for B6.
+- **F5. Quick Tile teardown + slot ownership** — [M].
+  `jetpacs-app-unregister` (`apps.el:82`) must release every surface claimed by
+  the app, including `tile:customN`, and the framework needs an owner-aware
+  allocator for the five custom tile slots so two apps cannot silently claim
+  the same slot. Redeploy/uninstall must push an unavailable/empty replacement
+  before releasing the claim. Prerequisite for B6's off-app capture tile.
 - **F6. Trigger owner-scoping** — [S]. `jetpacs-trigger-register` should
   `(jetpacs--claim "trigger" id)` under the ambient owner and teardown
   iterate `--owned-names` — identical to how actions/views already scope —
