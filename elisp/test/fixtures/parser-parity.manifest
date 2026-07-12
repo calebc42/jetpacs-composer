@@ -71,3 +71,4 @@ empty-enum reject parser-parity-empty-enum.org
 duplicate-schema reject parser-parity-duplicate-schema.org
 records-missing-schema reject parser-parity-records-missing-schema.org
 notes-missing-source reject parser-parity-notes-missing-source.org
+ref-too-many-arguments reject parser-parity-ref-too-many-arguments.org

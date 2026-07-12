@@ -256,7 +256,12 @@ object OrgCodec {
                 "ref" -> {
                     if (options.isNullOrBlank())
                         throw FormatException("ref needs a target view, e.g. ref(companies)")
-                    ColType.Ref(options.trim())
+                    val parts = options.split(",").map { it.trim() }
+                    if (parts[0].isEmpty())
+                        throw FormatException("ref needs a target view, e.g. ref(companies)")
+                    if (parts.size > 2)
+                        throw FormatException("ref accepts target and optional display field")
+                    ColType.Ref(parts[0], parts.getOrNull(1)?.ifEmpty { null })
                 }
                 else -> ColType.Unknown(token)
             }.also {

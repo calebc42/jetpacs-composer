@@ -873,10 +873,10 @@ internal fun ColTypePicker(
     } else if (current is ColType.Ref) {
         Spacer(Modifier.width(4.dp))
         var targetOpen by remember { mutableStateOf(false) }
+        val selectedTarget = referenceTargets.find { it.name == current.targetView }
         Box {
             OutlinedButton(onClick = { targetOpen = true }) {
-                Text(referenceTargets.find { it.name == current.targetView }?.title
-                    ?: current.targetView)
+                Text(selectedTarget?.title ?: current.targetView)
             }
             DropdownMenu(expanded = targetOpen, onDismissRequest = { targetOpen = false }) {
                 referenceTargets.forEach { target ->
@@ -887,6 +887,34 @@ internal fun ColTypePicker(
                             targetOpen = false
                         },
                     )
+                }
+            }
+        }
+        if (selectedTarget != null) {
+            Spacer(Modifier.width(4.dp))
+            var displayOpen by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { displayOpen = true }) {
+                    Text(current.displayField ?: "title")
+                }
+                DropdownMenu(expanded = displayOpen,
+                    onDismissRequest = { displayOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("title (default)") },
+                        onClick = {
+                            onPick(current.copy(displayField = null))
+                            displayOpen = false
+                        },
+                    )
+                    selectedTarget.schema.forEach { field ->
+                        DropdownMenuItem(
+                            text = { Text(field.label ?: field.prop) },
+                            onClick = {
+                                onPick(current.copy(displayField = field.prop))
+                                displayOpen = false
+                            },
+                        )
+                    }
                 }
             }
         }

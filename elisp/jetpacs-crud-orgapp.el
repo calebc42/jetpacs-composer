@@ -56,10 +56,18 @@ Unknown future tokens warn and degrade to text without rejecting the app."
                    (user-error "%s: %s takes no options in COLTYPES" file token))
                  (intern token))
                 ("ref"
-                 (let ((opt (and options (string-trim options))))
-                   (unless (and opt (not (string-empty-p opt)))
+                 (let* ((parts (and options
+                                    (mapcar #'string-trim
+                                            (split-string options ","))))
+                        (target (car parts))
+                        (display (cadr parts)))
+                   (unless (and target (not (string-empty-p target)))
                      (user-error "%s: ref needs a target view, e.g. ref(companies)" file))
-                   (list 'ref opt)))
+                   (when (> (length parts) 2)
+                     (user-error "%s: ref accepts target and optional display field" file))
+                   (append (list 'ref target)
+                           (when (and display (not (string-empty-p display)))
+                             (list display)))))
                 ("enum"
                  (let ((opts (and options
                                   (cl-remove-if #'string-empty-p

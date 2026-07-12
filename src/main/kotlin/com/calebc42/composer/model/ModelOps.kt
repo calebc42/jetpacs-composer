@@ -374,6 +374,13 @@ object ModelOps {
                         "Reference target \"${ref.targetView}\" needs an ID field",
                         i,
                     ))
+                else if (ref.displayField != null && target.schema.none {
+                        it.prop.equals(ref.displayField, ignoreCase = true)
+                    })
+                    add(Problem(
+                        "Reference display field \"${ref.displayField}\" is not in target \"${ref.targetView}\"",
+                        i,
+                    ))
             }
 
             val todoKeywords = if (spec.todoSequence.isEmpty()) {

@@ -138,7 +138,10 @@ sealed interface ColType {
     @Serializable object Date : ColType
     @Serializable object Checkbox : ColType
     @Serializable data class Enum(val options: List<String>) : ColType
-    @Serializable data class Ref(val targetView: String) : ColType
+    @Serializable data class Ref(
+        val targetView: String,
+        val displayField: String? = null,
+    ) : ColType
     @Serializable data class Unknown(val token: String) : ColType
 
     fun toToken(): String = when (this) {
@@ -147,7 +150,7 @@ sealed interface ColType {
         Date -> "date"
         Checkbox -> "checkbox"
         is Enum -> "enum(${options.joinToString(",")})"
-        is Ref -> "ref($targetView)"
+        is Ref -> "ref($targetView${displayField?.let { ",$it" }.orEmpty()})"
         is Unknown -> token
     }
 }

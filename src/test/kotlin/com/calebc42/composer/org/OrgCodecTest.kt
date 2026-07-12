@@ -58,6 +58,24 @@ class OrgCodecTest {
     }
 
     @Test
+    fun referenceDisplayFieldRoundTrips() {
+        val text = """
+            #+JETPACS_APP: refs
+            #+JETPACS_APP_FORMAT: 2
+
+            * Orders
+            :PROPERTIES:
+            :KIND: records
+            :SCHEMA: %ITEM %CUSTOMER
+            :COLTYPES: text ref(customers,NAME)
+            :END:
+        """.trimIndent()
+        val spec = OrgCodec.parse(text)
+        assertEquals(ColType.Ref("customers", "NAME"), spec.views.single().colTypes[1])
+        assertEquals(spec, OrgCodec.parse(OrgCodec.write(spec)))
+    }
+
+    @Test
     fun parserParityFixtureExercisesTheWholeAcceptedSurface() {
         val spec = OrgCodec.parse(fixture("parser-parity-all.org"))
 

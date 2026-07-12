@@ -209,6 +209,11 @@ class ModelOpsTest {
         assertTrue(ModelOps.validate(AppSpec(id = "refs", views = listOf(referrer, tableTarget)))
             .any { "must be a records or notes view" in it.message })
 
+        val badDisplay = referrer.copy(
+            colTypes = listOf(ColType.Ref("customers", "MISSING")))
+        assertTrue(ModelOps.validate(AppSpec(id = "refs", views = listOf(badDisplay, target)))
+            .any { "Reference display field" in it.message })
+
         val badFields = ViewSpec(
             title = "Board",
             kind = ViewKind.BOARD,

@@ -411,7 +411,7 @@ heading alone.  Inline sources and existing files are left untouched."
 
 ;; ─── Rendering: table views ──────────────────────────────────────────────────
 
-(defun jetpacs-crud--ref-resolve (spec target-view val)
+(defun jetpacs-crud--ref-resolve (spec target-view val &optional display-field)
   "Resolve reference VAL (an :ID:) against TARGET-VIEW in SPEC.
 Returns the target record's title, or VAL if not found/resolved."
   (if (or (null val) (string-empty-p val))
@@ -428,9 +428,8 @@ Returns the target record's title, or VAL if not found/resolved."
                                          (equal (alist-get "ID" (plist-get r :fields) nil nil #'equal) val)))
                                      records)))
               (if found
-                  (or (if (eq (plist-get tview :kind) 'notes)
-                          (alist-get "TITLE" (plist-get found :fields) nil nil #'equal)
-                        (alist-get "ITEM" (plist-get found :fields) nil nil #'equal))
+                  (or (alist-get (or display-field "ITEM")
+                                 (plist-get found :fields) nil nil #'equal)
                       val)
                 val)))
         val))))
@@ -442,7 +441,7 @@ Returns the target record's title, or VAL if not found/resolved."
      ((eq ctype 'checkbox)
       (if (string-match-p "\\`\\[[xX]\\]\\'" text) "☑" "☐"))
      ((and (consp ctype) (eq (car ctype) 'ref))
-      (jetpacs-crud--ref-resolve spec (cadr ctype) text))
+      (jetpacs-crud--ref-resolve spec (cadr ctype) text (caddr ctype)))
      (t text))))
 
 (defun jetpacs-crud--ref-action (spec ctype value)
@@ -455,6 +454,37 @@ never the target source path."
                     :args `((app . ,(plist-get spec :id))
                             (view . ,(cadr ctype))
                             (id . ,value)))))
+
+(defun jetpacs-crud--ref-choices (spec ctype)
+  "Return display-labelled (LABEL . ID) choices for reference CTYPE."
+  (let* ((target-name (cadr ctype))
+         (display-field (caddr ctype))
+         (target (cl-find target-name (plist-get spec :views)
+                          :key (lambda (v) (plist-get v :name)) :test #'equal))
+         (records (when target
+                    (if (eq (plist-get target :kind) 'notes)
+                        (jetpacs-crud--scan-notes spec target)
+                      (jetpacs-crud--scan-records spec target)))))
+    (delq nil
+          (mapcar
+           (lambda (record)
+             (let* ((fields (plist-get record :fields))
+                    (id (if (eq (plist-get target :kind) 'notes)
+                            (plist-get record :id)
+                          (alist-get "ID" fields nil nil #'equal)))
+                    (label (alist-get (or display-field "ITEM") fields
+                                      nil nil #'equal)))
+               (when (and id (not (string-empty-p id)))
+                 (cons (format "%s — %s" (or label id) id) id))))
+           records))))
+
+(defun jetpacs-crud--prompt-ref (spec ctype current)
+  "Prompt for a CTYPE target record in SPEC, returning its stable ID."
+  (let* ((choices (cons '("(clear)" . "")
+                        (jetpacs-crud--ref-choices spec ctype)))
+         (initial (car (rassoc current choices)))
+         (picked (completing-read "Reference: " choices nil t nil nil initial)))
+    (or (cdr (assoc picked choices)) "")))
 
 (defun jetpacs-crud--cell-node (spec view col cell &optional header)
   "Build the table-cell node for CELL (TEXT . POS) at data column COL.
@@ -743,7 +773,7 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                                                   (if (and (consp ctype)
                                                            (eq (car ctype) 'ref))
                                                       (jetpacs-crud--ref-resolve
-                                                       spec (cadr ctype) value)
+                                                       spec (cadr ctype) value (caddr ctype))
                                                     value))
                                              'body 1)))
                            :on-tap (or (jetpacs-crud--ref-action spec ctype value)
@@ -1644,6 +1674,10 @@ declares them, else from the declared column type."
                  (allowed
                   (completing-read (format "%s: " label) (car allowed)
                                    nil (cdr allowed) nil nil current))
+                 ((and (consp (jetpacs-crud--field-type view prop))
+                       (eq (car (jetpacs-crud--field-type view prop)) 'ref))
+                  (jetpacs-crud--prompt-ref
+                   spec (jetpacs-crud--field-type view prop) current))
                  (dateish (jetpacs-crud--prompt-value
                            label 'date (jetpacs-crud--current-date current)))
                  (t (jetpacs-crud--prompt-value

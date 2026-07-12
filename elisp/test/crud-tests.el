@@ -263,6 +263,14 @@ as an `unknown' marker (rendered as text) instead of erroring."
          (view (car (plist-get spec :views))))
     (should (equal (plist-get view :coltypes) '(text (unknown "florb"))))))
 
+(ert-deftest jetpacs-crud-parse-ref-display-field ()
+  (let* ((spec (jetpacs-crud-parse-app
+                (expand-file-name "parser-parity-ref.org"
+                                  jetpacs-crud-tests--fixtures)))
+         (view (car (plist-get spec :views))))
+    (should (equal (plist-get view :coltypes)
+                   '(text (ref "Customers" "NAME"))))))
+
 (ert-deftest jetpacs-crud-parse-unicode ()
   (let ((spec (jetpacs-crud-parse-app
                (expand-file-name "unicode.org" jetpacs-crud-tests--fixtures))))
