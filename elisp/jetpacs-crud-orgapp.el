@@ -152,6 +152,22 @@ Known tokens mirror `ActionDef'; unknown future tokens warn and are preserved."
           (setq pos end))))
     (string-trim value)))
 
+(defun jetpacs-crud-orgapp--parse-metrics (value file)
+  "Parse closed dashboard metric VALUE into (OP FIELD?) entries."
+  (let ((metrics
+         (mapcar
+          (lambda (raw)
+            (let ((token (string-trim raw)))
+              (cond
+               ((equal token "count") '(count))
+               ((string-match "\\`\\(sum\\|avg\\)(\\([^)]+\\))\\'" token)
+                (list (intern (match-string 1 token))
+                      (string-trim (match-string 2 token))))
+               (t (user-error "%s: unknown dashboard metric %S" file token)))))
+          (cl-remove-if #'string-empty-p (split-string value "|")))))
+    (unless metrics (user-error "%s: METRICS needs at least one metric" file))
+    metrics))
+
 (defun jetpacs-crud-orgapp--parse-source (value app-file)
   "Parse a `:SOURCE:' VALUE.
 nil for inline; (:dir D) for a trailing-slash vault directory (notes
@@ -188,6 +204,7 @@ Point must be on the heading line."
                  ("calendar" 'calendar)
                  ("gallery" 'gallery)
                  ("tree" 'tree)
+                 ("dashboard" 'dashboard)
                  (other (display-warning 'jetpacs-crud
                                          (format "%s: unknown KIND %S under %S (falling back to unknown)"
                                                  app-file other title)
@@ -201,6 +218,7 @@ Point must be on the heading line."
          (group-by-raw (funcall prop "GROUP_BY"))
          (date-field-raw (funcall prop "DATE_FIELD"))
          (image-field-raw (funcall prop "IMAGE_FIELD"))
+         (metrics-raw (funcall prop "METRICS"))
          (on-raw (funcall prop "ON"))
          (rel-raw (funcall prop "REL"))
          (reminder-field-raw (funcall prop "DATEFIELD"))
@@ -208,12 +226,15 @@ Point must be on the heading line."
          (order-raw (funcall prop "ORDER"))
          (nav-raw (funcall prop "NAV"))
          (group-raw (funcall prop "GROUP")))
-    (when (and (memq kind '(records notes board calendar gallery tree)) (not schema-raw))
+    (when (and (memq kind '(records notes board calendar gallery tree dashboard)) (not schema-raw))
       (user-error "%s: a %s view needs a :SCHEMA: under %S"
                   app-file (symbol-name kind) title))
     (when (and (eq kind 'notes) (not source-raw))
       (user-error "%s: a notes view needs a :SOURCE: (a vault dir or \
 file::*Heading) under %S" app-file title))
+    (when (and (eq kind 'dashboard) (not metrics-raw))
+      (user-error "%s: a dashboard view needs :METRICS: under %S"
+                  app-file title))
     (when (and (not on-raw) (or rel-raw reminder-field-raw))
       (user-error "%s: :REL: and :DATEFIELD: require :ON: date-field under %S"
                   app-file title))
@@ -237,6 +258,7 @@ file::*Heading) under %S" app-file title))
                       ('calendar "calendar_month")
                       ('gallery "grid_view")
                       ('tree "account_tree")
+                      ('dashboard "bar_chart")
                       (_ "table_chart")))
           :order (if order-raw (string-to-number order-raw)
                    (* 10 (1+ index)))
@@ -259,6 +281,8 @@ file::*Heading) under %S" app-file title))
           :group-by (and group-by-raw (string-trim group-by-raw))
           :date-field (and date-field-raw (string-trim date-field-raw))
           :image-field (and image-field-raw (string-trim image-field-raw))
+          :metrics (and metrics-raw
+                        (jetpacs-crud-orgapp--parse-metrics metrics-raw app-file))
           :reminder (and on-raw
                          (list :date-field (string-trim reminder-field-raw)
                                :relative-days

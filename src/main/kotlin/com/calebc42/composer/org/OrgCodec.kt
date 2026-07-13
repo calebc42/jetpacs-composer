@@ -2,11 +2,13 @@
 package com.calebc42.composer.org
 
 import com.calebc42.composer.model.ActionDef
+import com.calebc42.composer.model.AggregateOp
 import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
 import com.calebc42.composer.model.DateReminderRule
+import com.calebc42.composer.model.DashboardMetric
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.TodoKeyword
@@ -128,14 +130,17 @@ object OrgCodec {
             "calendar" -> ViewKind.CALENDAR
             "gallery" -> ViewKind.GALLERY
             "tree" -> ViewKind.TREE
+            "dashboard" -> ViewKind.DASHBOARD
             else -> ViewKind.UNKNOWN
         }
-        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE)
+        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD)
         if (isRecordsType && props["SCHEMA"].isNullOrBlank())
             throw FormatException("a ${kind.name.lowercase()} view needs a :SCHEMA: under \"$title\"")
         if (kind == ViewKind.NOTES && props["SOURCE"].isNullOrBlank())
             throw FormatException(
                 "a notes view needs a :SOURCE: (a vault dir or file::*Heading) under \"$title\"")
+        if (kind == ViewKind.DASHBOARD && props["METRICS"].isNullOrBlank())
+            throw FormatException("a dashboard view needs :METRICS: under \"$title\"")
         return ViewSpec(
             title = title,
             icon = props["ICON"],
@@ -150,6 +155,7 @@ object OrgCodec {
             groupBy = props["GROUP_BY"]?.trim()?.ifEmpty { null },
             dateField = props["DATE_FIELD"]?.trim()?.ifEmpty { null },
             imageField = props["IMAGE_FIELD"]?.trim()?.ifEmpty { null },
+            metrics = props["METRICS"]?.let(::parseMetrics) ?: emptyList(),
             reminder = parseReminder(props),
             actions = props["ACTIONS"]?.let { parseActions(it) } ?: emptyList(),
             nav = when (props["NAV"]?.trim()?.lowercase()) {
@@ -256,6 +262,27 @@ object OrgCodec {
             ?: throw FormatException("REL must be whole days, e.g. -3d or +1d")
         return DateReminderRule(field, match.groupValues[1].toInt())
     }
+
+    private fun parseMetrics(value: String): List<DashboardMetric> =
+        value.split("|").map { it.trim() }.filter { it.isNotEmpty() }.map { token ->
+            when {
+                token.equals("count", ignoreCase = true) ->
+                    DashboardMetric(AggregateOp.COUNT)
+                Regex("""sum\(([^)]+)\)""", RegexOption.IGNORE_CASE).matchEntire(token) != null -> {
+                    val field = token.substringAfter('(').substringBeforeLast(')').trim()
+                    if (field.isEmpty()) throw FormatException("sum metric needs a field")
+                    DashboardMetric(AggregateOp.SUM, field)
+                }
+                Regex("""avg\(([^)]+)\)""", RegexOption.IGNORE_CASE).matchEntire(token) != null -> {
+                    val field = token.substringAfter('(').substringBeforeLast(')').trim()
+                    if (field.isEmpty()) throw FormatException("avg metric needs a field")
+                    DashboardMetric(AggregateOp.AVG, field)
+                }
+                else -> throw FormatException("unknown dashboard metric \"$token\"")
+            }
+        }.also {
+            if (it.isEmpty()) throw FormatException("METRICS needs count, sum(FIELD), or avg(FIELD)")
+        }
 
     private fun parseColTypes(value: String): List<ColType> =
         COLTYPE_RE.findAll(value).map { m ->
@@ -384,6 +411,7 @@ object OrgCodec {
                 ViewKind.CALENDAR -> add("KIND" to "calendar")
                 ViewKind.GALLERY -> add("KIND" to "gallery")
                 ViewKind.TREE -> add("KIND" to "tree")
+                ViewKind.DASHBOARD -> add("KIND" to "dashboard")
                 ViewKind.UNKNOWN -> add("KIND" to "unknown")
                 ViewKind.TABLE -> {}
             }
@@ -405,6 +433,8 @@ object OrgCodec {
             view.groupBy?.let { add("GROUP_BY" to it) }
             view.dateField?.let { add("DATE_FIELD" to it) }
             view.imageField?.let { add("IMAGE_FIELD" to it) }
+            if (view.metrics.isNotEmpty())
+                add("METRICS" to view.metrics.joinToString(" | ") { it.toToken() })
             view.reminder?.let {
                 add("ON" to "date-field")
                 add("REL" to "%+dd".format(it.relativeDays))

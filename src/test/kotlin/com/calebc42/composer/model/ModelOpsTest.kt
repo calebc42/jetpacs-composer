@@ -338,4 +338,22 @@ class ModelOpsTest {
         assertTrue(ModelOps.validate(AppSpec(id = "reminders", views = listOf(valid)))
             .none { "reminder" in it.message.lowercase() })
     }
+
+    @Test
+    fun dashboardMetricsRequireExistingFields() {
+        val dashboard = ViewSpec(
+            title = "Dashboard",
+            kind = ViewKind.DASHBOARD,
+            schema = listOf(SchemaField("ITEM"), SchemaField("Amount")),
+            metrics = listOf(DashboardMetric(AggregateOp.SUM, "Missing")),
+        )
+        assertTrue(ModelOps.validate(AppSpec(id = "dash", views = listOf(dashboard)))
+            .any { "metric field" in it.message })
+        val valid = dashboard.copy(metrics = listOf(
+            DashboardMetric(AggregateOp.COUNT),
+            DashboardMetric(AggregateOp.AVG, "Amount"),
+        ))
+        assertTrue(ModelOps.validate(AppSpec(id = "dash", views = listOf(valid)))
+            .none { "metric" in it.message })
+    }
 }

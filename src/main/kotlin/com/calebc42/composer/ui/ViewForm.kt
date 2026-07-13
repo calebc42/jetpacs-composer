@@ -29,11 +29,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.ActionDef
+import com.calebc42.composer.model.AggregateOp
 import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.BodyElement
 import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
 import com.calebc42.composer.model.DateReminderRule
+import com.calebc42.composer.model.DashboardMetric
 import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.model.OrgBuiltin
 import com.calebc42.composer.model.SchemaField
@@ -262,10 +264,18 @@ fun ViewForm(session: EditorSession, index: Int) {
                         text = { Text(kind.name) },
                         onClick = {
                             edit {
-                                val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE)) {
+                                val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD)) {
                                     it.schema.ifEmpty { listOf(SchemaField("ITEM", "Name")) }
                                 } else it.schema
-                                it.copy(kind = kind, schema = schema)
+                                it.copy(
+                                    kind = kind,
+                                    schema = schema,
+                                    metrics = if (kind == ViewKind.DASHBOARD)
+                                        it.metrics.ifEmpty {
+                                            listOf(DashboardMetric(AggregateOp.COUNT))
+                                        }
+                                    else emptyList(),
+                                )
                             }
                             expanded = false
                         }
@@ -322,7 +332,7 @@ fun ViewForm(session: EditorSession, index: Int) {
     Spacer(Modifier.height(16.dp))
     when {
         view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit, ::editText)
-        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE) -> {
+        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD) -> {
             RecordsSchemaEditor(spec, view, ::edit, ::editText)
             Spacer(Modifier.height(16.dp))
             ActionEditor(
@@ -580,11 +590,85 @@ private fun RecordsSchemaEditor(
                 modifier = Modifier.width(260.dp),
             )
         }
+        ViewKind.DASHBOARD -> {
+            var groupOpen by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Group charts by:")
+                Box {
+                    OutlinedButton(onClick = { groupOpen = true }) {
+                        Text(view.groupBy ?: "All records")
+                    }
+                    DropdownMenu(expanded = groupOpen,
+                        onDismissRequest = { groupOpen = false }) {
+                        DropdownMenuItem(text = { Text("All records") }, onClick = {
+                            edit { it.copy(groupBy = null) }; groupOpen = false
+                        })
+                        view.schema.forEach { field ->
+                            DropdownMenuItem(text = { Text(field.label ?: field.prop) }, onClick = {
+                                edit { it.copy(groupBy = field.prop) }; groupOpen = false
+                            })
+                        }
+                    }
+                }
+            }
+            view.metrics.forEachIndexed { metricIndex, metric ->
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    var opOpen by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(onClick = { opOpen = true }) {
+                            Text(metric.operation.name.lowercase())
+                        }
+                        DropdownMenu(expanded = opOpen, onDismissRequest = { opOpen = false }) {
+                            AggregateOp.entries.forEach { op ->
+                                DropdownMenuItem(text = { Text(op.name.lowercase()) }, onClick = {
+                                    edit {
+                                        it.copy(metrics = it.metrics.mapIndexed { i, old ->
+                                            if (i == metricIndex) DashboardMetric(
+                                                op, if (op == AggregateOp.COUNT) null
+                                                else old.field ?: it.schema.firstOrNull()?.prop)
+                                            else old
+                                        })
+                                    }
+                                    opOpen = false
+                                })
+                            }
+                        }
+                    }
+                    if (metric.operation != AggregateOp.COUNT) {
+                        var fieldOpen by remember { mutableStateOf(false) }
+                        Box {
+                            OutlinedButton(onClick = { fieldOpen = true }) {
+                                Text(metric.field ?: "Select field")
+                            }
+                            DropdownMenu(expanded = fieldOpen,
+                                onDismissRequest = { fieldOpen = false }) {
+                                view.schema.forEach { field ->
+                                    DropdownMenuItem(text = { Text(field.label ?: field.prop) }, onClick = {
+                                        edit { it.copy(metrics = it.metrics.mapIndexed { i, old ->
+                                            if (i == metricIndex) old.copy(field = field.prop) else old
+                                        }) }
+                                        fieldOpen = false
+                                    })
+                                }
+                            }
+                        }
+                    }
+                    TextButton(onClick = { edit {
+                        it.copy(metrics = it.metrics.filterIndexed { i, _ -> i != metricIndex })
+                    } }) { Text("Remove") }
+                }
+            }
+            OutlinedButton(onClick = { edit {
+                it.copy(metrics = it.metrics + DashboardMetric(AggregateOp.COUNT))
+            } }) { Text("+ Metric") }
+        }
         else -> {} // no extra config needed
     }
 
     if (view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD,
-            ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE)) {
+            ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD)) {
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {

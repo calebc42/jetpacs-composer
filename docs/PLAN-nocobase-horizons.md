@@ -390,6 +390,10 @@ list can't give.
 
 ### B8. Chart `dashboard` view kind — [medium / M]
 
+**Landed:** closed count/sum/avg metrics, optional schema-field grouping,
+composer controls, chart-card workbench rendering, and records-list fallback
+when the companion does not support the additive chart node.
+
 Aggregate records (count / sum / avg — from `plugin-workflow-aggregate`)
 into the existing `jetpacs-chart`, laid out as a workbench of chart
 blocks (`plugin-block-workbench`). Gate on `jetpacs-node-supported-p

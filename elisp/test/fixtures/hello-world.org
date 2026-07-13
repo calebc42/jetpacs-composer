@@ -180,3 +180,27 @@ loads on a bare jetpacs-core.
 
 An external relative source: the runtime scaffolds shopping-list.org
 (header row from :COLUMNS:) next to this document on first load.
+
+* Dashboard
+:PROPERTIES:
+:ICON: bar_chart
+:ORDER: 100
+:KIND: dashboard
+:SCHEMA: %ITEM(Item) %Category %Amount
+:COLTYPES: text text number
+:GROUP_BY: Category
+:METRICS: count | sum(Amount) | avg(Amount)
+:NAV: drawer
+:END:
+
+** Paint
+:PROPERTIES:
+:Category: House
+:Amount: 40
+:END:
+
+** Seeds
+:PROPERTIES:
+:Category: Garden
+:Amount: 12
+:END:

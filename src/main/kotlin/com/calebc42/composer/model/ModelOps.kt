@@ -21,7 +21,7 @@ object ModelOps {
                 BodyElement.Table(header = listOf("Name"), rows = emptyList()))
             ViewKind.CHECKLIST -> listOf(
                 BodyElement.Checklist(emptyList()))
-            ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.UNKNOWN -> emptyList()
+            ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.UNKNOWN -> emptyList()
         }
         val isRecords = isRecordsType(kind)
         val schema = when (kind) {
@@ -36,6 +36,10 @@ object ModelOps {
             ViewKind.GALLERY -> listOf(
                 SchemaField("ITEM", "Name"),
                 SchemaField("IMAGE", "Image"),
+            )
+            ViewKind.DASHBOARD -> listOf(
+                SchemaField("ITEM", "Name"),
+                SchemaField("AMOUNT", "Amount"),
             )
             else -> if (isRecords) listOf(SchemaField("ITEM", "Name")) else emptyList()
         }
@@ -53,6 +57,8 @@ object ModelOps {
             schema = schema,
             groupBy = if (kind == ViewKind.BOARD) "TODO" else null,
             dateField = if (kind == ViewKind.CALENDAR) "SCHEDULED" else null,
+            metrics = if (kind == ViewKind.DASHBOARD)
+                listOf(DashboardMetric(AggregateOp.COUNT)) else emptyList(),
             body = body,
         )
         return spec.copy(views = spec.views + view)
@@ -403,6 +409,26 @@ object ModelOps {
                     })
                     add(Problem("Date reminders require an ID field for stable identity", i))
             }
+            if (view.kind == ViewKind.DASHBOARD) {
+                if (view.metrics.isEmpty())
+                    add(Problem("A dashboard needs at least one metric", i))
+                view.metrics.forEach { metric ->
+                    when (metric.operation) {
+                        AggregateOp.COUNT -> if (metric.field != null)
+                            add(Problem("Count metric does not take a field", i))
+                        AggregateOp.SUM, AggregateOp.AVG -> {
+                            val field = metric.field
+                            if (field.isNullOrBlank() || view.schema.none {
+                                    it.prop.equals(field, ignoreCase = true)
+                                })
+                                add(Problem(
+                                    "${metric.operation.name.lowercase()} metric field is not in this view's schema",
+                                    i,
+                                ))
+                        }
+                    }
+                }
+            }
 
             val todoKeywords = if (spec.todoSequence.isEmpty()) {
                 setOf("TODO", "DONE")
@@ -539,5 +565,5 @@ object ModelOps {
 
     /** Helper for views with records-like kinds. */
     fun isRecordsType(kind: ViewKind): Boolean =
-        kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.UNKNOWN)
+        kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.UNKNOWN)
 }

@@ -133,6 +133,37 @@ class OrgCodecTest {
     }
 
     @Test
+    fun dashboardMetricsRoundTrip() {
+        val text = """
+            #+JETPACS_APP: dashboard
+            #+JETPACS_APP_FORMAT: 2
+            * Revenue
+            :PROPERTIES:
+            :KIND: dashboard
+            :SCHEMA: %ITEM %Region %Amount
+            :COLTYPES: text text number
+            :GROUP_BY: Region
+            :METRICS: count | sum(Amount) | avg(Amount)
+            :END:
+        """.trimIndent()
+        val spec = OrgCodec.parse(text)
+        val view = spec.views.single()
+        assertEquals(ViewKind.DASHBOARD, view.kind)
+        assertEquals(
+            listOf(
+                com.calebc42.composer.model.DashboardMetric(
+                    com.calebc42.composer.model.AggregateOp.COUNT),
+                com.calebc42.composer.model.DashboardMetric(
+                    com.calebc42.composer.model.AggregateOp.SUM, "Amount"),
+                com.calebc42.composer.model.DashboardMetric(
+                    com.calebc42.composer.model.AggregateOp.AVG, "Amount"),
+            ),
+            view.metrics,
+        )
+        assertEquals(spec, OrgCodec.parse(OrgCodec.write(spec)))
+    }
+
+    @Test
     fun parserParityFixtureExercisesTheWholeAcceptedSurface() {
         val spec = OrgCodec.parse(fixture("parser-parity-all.org"))
 

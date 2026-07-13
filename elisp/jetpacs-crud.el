@@ -850,6 +850,70 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                                                        :args `((app . ,(plist-get spec :id))
                                                                (view . ,(plist-get view :name)))))))
 
+(defun jetpacs-crud--dashboard-groups (records group-by)
+  "Ordered alist of (GROUP . RECORDS) from RECORDS and GROUP-BY."
+  (let (order groups)
+    (dolist (record records)
+      (let* ((fields (plist-get record :fields))
+             (raw (and group-by (alist-get group-by fields nil nil #'equal)))
+             (group (if group-by
+                        (if (string-empty-p (or raw "")) "(blank)" raw)
+                      "All")))
+        (unless (member group order) (setq order (append order (list group))))
+        (push record (alist-get group groups nil nil #'equal))))
+    (mapcar (lambda (group)
+              (cons group (nreverse (alist-get group groups nil nil #'equal))))
+            order)))
+
+(defun jetpacs-crud--dashboard-value (metric records)
+  "Numeric aggregate METRIC over RECORDS."
+  (let ((op (car metric)) (field (cadr metric)))
+    (if (eq op 'count)
+        (length records)
+      (let ((values
+             (delq nil
+                   (mapcar
+                    (lambda (record)
+                      (let ((raw (alist-get field (plist-get record :fields)
+                                            nil nil #'equal)))
+                        (when (and raw (string-match-p
+                                        "\\`-?[0-9]+\\(?:\\.[0-9]+\\)?\\'" raw))
+                          (string-to-number raw))))
+                    records))))
+        (pcase op
+          ('sum (apply #'+ values))
+          ('avg (if values (/ (float (apply #'+ values)) (length values)) 0.0))
+          (_ 0))))))
+
+(defun jetpacs-crud--dashboard-body (spec view)
+  "Chart workbench for dashboard VIEW, with records fallback."
+  (if (not (jetpacs-node-supported-p 'chart))
+      (jetpacs-crud--records-body spec view)
+    (let* ((records (jetpacs-crud--scan-records spec view))
+           (groups (jetpacs-crud--dashboard-groups records (plist-get view :group-by))))
+      (apply
+       #'jetpacs-lazy-column
+       (mapcar
+        (lambda (metric)
+          (let* ((op (car metric))
+                 (field (cadr metric))
+                 (label (if field
+                            (format "%s %s" (capitalize (symbol-name op)) field)
+                          "Count"))
+                 (points (mapcar (lambda (group)
+                                   (list (car group)
+                                         (jetpacs-crud--dashboard-value metric (cdr group))))
+                                 groups)))
+            (jetpacs-card
+             (list (jetpacs-column
+                    (jetpacs-text label 'title)
+                    (jetpacs-chart
+                     (list (jetpacs-chart-series points :label label))
+                     :kind "bar" :height 220
+                     :summary (format "%s by %s" label
+                                      (or (plist-get view :group-by) "all records"))))))))
+        (plist-get view :metrics))))))
+
 (defun jetpacs-crud--group-values (spec view prop)
   "The org-declared value set for PROP in VIEW's source, as strings.
 TODO lanes come from the source file's real keyword sequence, other
@@ -1237,6 +1301,8 @@ action string the add-FAB fires.")
   :body #'jetpacs-crud--gallery-body :fab "crud.record.add")
 (jetpacs-crud--define-kind 'tree
   :body #'jetpacs-crud--tree-body :fab "crud.record.add")
+(jetpacs-crud--define-kind 'dashboard
+  :body #'jetpacs-crud--dashboard-body :fab "crud.record.add")
 
 ;; ─── The view builder ────────────────────────────────────────────────────────
 
@@ -1247,7 +1313,7 @@ action string the add-FAB fires.")
      (let* ((table (cdr (jetpacs-crud--source-table spec view)))
             (rows (delq 'hline (copy-sequence (plist-get table :rows)))))
        (mapcar (lambda (row) (mapcar #'car row)) rows)))
-    ((or 'records 'board 'calendar 'gallery 'tree)
+    ((or 'records 'board 'calendar 'gallery 'tree 'dashboard)
      (let ((props (mapcar #'car (jetpacs-crud--schema-props view))))
        (cons props
              (mapcar (lambda (record)
@@ -1474,7 +1540,7 @@ the first member's (all four of hello-world's Tasks members add records)."
 (defun jetpacs-crud--view-reminders (spec view)
   "Derive durable reminder wire objects for VIEW's declared rule."
   (when-let ((rule (and (memq (plist-get view :kind)
-                              '(records notes board calendar gallery tree))
+                              '(records notes board calendar gallery tree dashboard))
                          (plist-get view :reminder))))
     (let ((field (plist-get rule :date-field))
           (relative (plist-get rule :relative-days))

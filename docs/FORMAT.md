@@ -38,7 +38,7 @@ lives in the heading's property drawer:
 |---|---|
 | `:ICON:` | Tab icon (Material name; default `table_chart` for tables, `checklist` for checklists). |
 | `:ORDER:` | Tab order (integer; default: 10, 20, … in document order). |
-| `:KIND:` | `table` (default), `checklist`, `records`, `notes`, `board`, `calendar`, `gallery`, or `tree`. |
+| `:KIND:` | `table` (default), `checklist`, `records`, `notes`, `board`, `calendar`, `gallery`, `tree`, or `dashboard`. |
 | `:SOURCE:` | Where the data lives — see below. Default `inline`. |
 | `:COLTYPES:` | Table and records views: per-column/field types, space-separated, positional. |
 | `:COLUMNS:` | Table views with an external `:SOURCE:`: column names, `|`-separated, used to scaffold the backend table when its file doesn't exist yet. |
@@ -47,6 +47,7 @@ lives in the heading's property drawer:
 | `:GROUP_BY:` | Board views: schema field used for lanes (default `TODO`). |
 | `:DATE_FIELD:` | Calendar views: schema field containing the org timestamp/date (default `DEADLINE`). |
 | `:IMAGE_FIELD:` | Gallery views: schema field containing the image URL/path (default `IMAGE`). |
+| `:METRICS:` | Dashboard views: `|`-separated `count`, `sum(FIELD)`, or `avg(FIELD)` chart blocks. |
 | `:ACTIONS:` | Records-like views: closed, space-separated org action tokens (see below). |
 | `:ON:` | Optional closed automation type; currently only `date-field`. |
 | `:REL:` | With `:ON: date-field`, a whole-day offset such as `-3d`, `0d`, or `+1d`. |
@@ -275,6 +276,16 @@ sheet. It uses the appropriate records/notes identity resolver, shows every
 schema field with its typed/reference behavior, retains configured actions, and
 adds the org entry's body prose below the fields. Writes still use the original
 view-bound mutation handlers; the detail overlay does not accept a source path.
+
+## Dashboard views (`:KIND: dashboard`)
+
+Dashboards reuse the records source, schema, and filter contract. `:METRICS:`
+declares one or more closed aggregations, for example `count | sum(Amount) |
+avg(Amount)`. Optional `:GROUP_BY:` supplies the chart's labeled x-axis; without
+it every metric has one `All` point. Each metric renders as a bar-chart card.
+Blank/non-numeric cells do not contribute to sum or average. When the companion
+does not advertise the additive `chart` node, the dashboard degrades to the
+normal records list over the same filtered data.
 
 ## Notes views (`:KIND: notes`) — a vulpea vault as the datasource
 

@@ -282,6 +282,7 @@ private fun OutlinePane(
                     ViewKind.CALENDAR -> "📅 ${view.title}"
                     ViewKind.GALLERY -> "🖼 ${view.title}"
                     ViewKind.TREE -> "🌳 ${view.title}"
+                    ViewKind.DASHBOARD -> "📊 ${view.title}"
                     ViewKind.UNKNOWN -> "❓ ${view.title}"
                 },
                 selected = selection == Selection.View(i),
@@ -318,6 +319,7 @@ private fun OutlinePane(
                         ViewKind.CALENDAR -> "📅"
                         ViewKind.GALLERY -> "🖼"
                         ViewKind.TREE -> "🌳"
+                        ViewKind.DASHBOARD -> "📊"
                         ViewKind.UNKNOWN -> "❓"
                     }
                     androidx.compose.material3.DropdownMenuItem(

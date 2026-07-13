@@ -3,5 +3,5 @@
 
 * Unknown
 :PROPERTIES:
-:KIND: dashboard
+:KIND: future-dashboard
 :END:

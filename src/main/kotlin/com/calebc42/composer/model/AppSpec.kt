@@ -37,7 +37,22 @@ data class AppSpec(
 data class TodoKeyword(val keyword: String, val isDone: Boolean)
 
 @Serializable
-enum class ViewKind { TABLE, CHECKLIST, RECORDS, NOTES, BOARD, CALENDAR, GALLERY, TREE, UNKNOWN }
+enum class ViewKind { TABLE, CHECKLIST, RECORDS, NOTES, BOARD, CALENDAR, GALLERY, TREE, DASHBOARD, UNKNOWN }
+
+@Serializable
+enum class AggregateOp { COUNT, SUM, AVG }
+
+@Serializable
+data class DashboardMetric(
+    val operation: AggregateOp,
+    val field: String? = null,
+) {
+    fun toToken(): String = when (operation) {
+        AggregateOp.COUNT -> "count"
+        AggregateOp.SUM -> "sum(${field.orEmpty()})"
+        AggregateOp.AVG -> "avg(${field.orEmpty()})"
+    }
+}
 
 /**
  * Where a view lives in the app chrome (`:NAV:`). [TAB] is a bottom-bar
@@ -97,6 +112,8 @@ data class ViewSpec(
     val dateField: String? = null,
     /** Gallery views: which schema field provides the image path. */
     val imageField: String? = null,
+    /** Dashboard views: aggregate chart blocks. */
+    val metrics: List<DashboardMetric> = emptyList(),
     /** Optional durable reminder derived from one org date field. */
     val reminder: DateReminderRule? = null,
     /** Per-view actions (org-native operations shown as buttons/swipe actions). */

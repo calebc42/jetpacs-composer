@@ -319,6 +319,16 @@ as an `unknown' marker (rendered as text) instead of erroring."
             (should-not (file-exists-p decoy)))
         (delete-directory dir t)))))
 
+(ert-deftest jetpacs-crud-dashboard-aggregates-count-sum-and-average ()
+  (let* ((records '((:fields (("Region" . "West") ("Amount" . "10")))
+                    (:fields (("Region" . "West") ("Amount" . "20")))
+                    (:fields (("Region" . "East") ("Amount" . "5")))))
+         (groups (jetpacs-crud--dashboard-groups records "Region")))
+    (should (equal (mapcar #'car groups) '("West" "East")))
+    (should (= (jetpacs-crud--dashboard-value '(count) (cdar groups)) 2))
+    (should (= (jetpacs-crud--dashboard-value '(sum "Amount") (cdar groups)) 30))
+    (should (= (jetpacs-crud--dashboard-value '(avg "Amount") (cdar groups)) 15.0))))
+
 (ert-deftest jetpacs-crud-export-csv-neutralizes-formulas-and-quotes ()
   (should
    (equal (jetpacs-crud--matrix-csv
