@@ -264,7 +264,7 @@ fun ViewForm(session: EditorSession, index: Int) {
                         text = { Text(kind.name) },
                         onClick = {
                             edit {
-                                val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD)) {
+                                val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT)) {
                                     it.schema.ifEmpty { listOf(SchemaField("ITEM", "Name")) }
                                 } else it.schema
                                 it.copy(
@@ -332,7 +332,7 @@ fun ViewForm(session: EditorSession, index: Int) {
     Spacer(Modifier.height(16.dp))
     when {
         view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit, ::editText)
-        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD) -> {
+        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT) -> {
             RecordsSchemaEditor(spec, view, ::edit, ::editText)
             Spacer(Modifier.height(16.dp))
             ActionEditor(
@@ -668,7 +668,8 @@ private fun RecordsSchemaEditor(
     }
 
     if (view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD,
-            ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD)) {
+            ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD,
+            ViewKind.GANTT)) {
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {

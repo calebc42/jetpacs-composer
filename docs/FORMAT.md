@@ -38,7 +38,7 @@ lives in the heading's property drawer:
 |---|---|
 | `:ICON:` | Tab icon (Material name; default `table_chart` for tables, `checklist` for checklists). |
 | `:ORDER:` | Tab order (integer; default: 10, 20, … in document order). |
-| `:KIND:` | `table` (default), `checklist`, `records`, `notes`, `board`, `calendar`, `gallery`, `tree`, or `dashboard`. |
+| `:KIND:` | `table` (default), `checklist`, `records`, `notes`, `board`, `calendar`, `gallery`, `tree`, `dashboard`, or `gantt`. |
 | `:SOURCE:` | Where the data lives — see below. Default `inline`. |
 | `:COLTYPES:` | Table and records views: per-column/field types, space-separated, positional. |
 | `:COLUMNS:` | Table views with an external `:SOURCE:`: column names, `|`-separated, used to scaffold the backend table when its file doesn't exist yet. |
@@ -286,6 +286,16 @@ it every metric has one `All` point. Each metric renders as a bar-chart card.
 Blank/non-numeric cells do not contribute to sum or average. When the companion
 does not advertise the additive `chart` node, the dashboard degrades to the
 normal records list over the same filtered data.
+
+## Gantt views (`:KIND: gantt`)
+
+Gantt views are record views with a fixed org-native timeline contract:
+`SCHEDULED` is the start, `DEADLINE` is the end, and `TODO` is progress/state.
+All three properties must appear in `:SCHEMA:`. Until the companion advertises
+a native timeline node, records render as fully actionable cards sorted by end
+date (then start date), with a visible `start → end · TODO` footer; undated
+records sort last. This fallback preserves filters, details, references, and
+configured actions.
 
 ## Notes views (`:KIND: notes`) — a vulpea vault as the datasource
 

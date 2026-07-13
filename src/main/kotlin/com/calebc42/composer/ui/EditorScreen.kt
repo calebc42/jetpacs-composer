@@ -62,7 +62,7 @@ sealed interface Selection {
 fun EditorScreen(session: EditorSession, config: ComposerConfig,
                  onSettings: () -> Unit, onClose: () -> Unit) {
     var selection by remember { mutableStateOf<Selection>(Selection.App) }
-    var preview by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var sourcePreviewDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
     var deploying by remember { mutableStateOf(false) }
     var browsingFiles by remember { mutableStateOf(false) }
 
@@ -70,13 +70,15 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
     val hasErrors = problems.any { it.severity == ModelOps.Severity.Error }
 
     fun moveHistory(move: () -> Boolean) {
-        val selectedName = (selection as? Selection.View)?.index
-            ?.let { session.spec.views.getOrNull(it)?.name }
+        val selectedIndex = (selection as? Selection.View)?.index
+        val selectedName = selectedIndex?.let { session.spec.views.getOrNull(it)?.name }
         if (!move()) return
         selection = selectedName?.let { name ->
             session.spec.views.indexOfFirst { it.name == name }
                 .takeIf { it >= 0 }?.let(Selection::View)
-        } ?: Selection.App
+        } ?: selectedIndex?.takeIf { it in session.spec.views.indices }
+            ?.let(Selection::View)
+            ?: Selection.App
     }
     fun undo() = moveHistory(session::undo)
     fun redo() = moveHistory(session::redo)
@@ -111,10 +113,10 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
                     contentDescription = "Settings"
                 )
             }
-            OutlinedButton(onClick = { preview = session.documentText() to "org" }) {
+            OutlinedButton(onClick = { sourcePreviewDialog = session.documentText() to "org" }) {
                 Text("app.org")
             }
-            OutlinedButton(onClick = { preview = session.bundleText() to "elisp" }) {
+            OutlinedButton(onClick = { sourcePreviewDialog = session.bundleText() to "elisp" }) {
                 Text("Exported elisp")
             }
             Button(onClick = {
@@ -191,12 +193,12 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
     if (browsingFiles) DeviceFilesDialog(onDismiss = { browsingFiles = false })
     if (deploying) DeployDialog(session, onDismiss = { deploying = false })
 
-    preview?.let { (text, type) ->
+    sourcePreviewDialog?.let { (text, type) ->
         val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
         AlertDialog(
-            onDismissRequest = { preview = null },
+            onDismissRequest = { sourcePreviewDialog = null },
             confirmButton = {
-                TextButton(onClick = { preview = null }) { Text("Close") }
+                TextButton(onClick = { sourcePreviewDialog = null }) { Text("Close") }
             },
             dismissButton = {
                 TextButton(onClick = { 
@@ -283,6 +285,7 @@ private fun OutlinePane(
                     ViewKind.GALLERY -> "🖼 ${view.title}"
                     ViewKind.TREE -> "🌳 ${view.title}"
                     ViewKind.DASHBOARD -> "📊 ${view.title}"
+                    ViewKind.GANTT -> "▰ ${view.title}"
                     ViewKind.UNKNOWN -> "❓ ${view.title}"
                 },
                 selected = selection == Selection.View(i),
@@ -320,6 +323,7 @@ private fun OutlinePane(
                         ViewKind.GALLERY -> "🖼"
                         ViewKind.TREE -> "🌳"
                         ViewKind.DASHBOARD -> "📊"
+                        ViewKind.GANTT -> "▰"
                         ViewKind.UNKNOWN -> "❓"
                     }
                     androidx.compose.material3.DropdownMenuItem(

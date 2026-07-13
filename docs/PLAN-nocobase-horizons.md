@@ -1,8 +1,8 @@
 # Plan: horizons from NocoBase — the roadmap past v1
 
-**STATUS (2026-07-12): active implementation.** Tier 0 and the Tier A
-non-drag milestones have landed; the repository is now making a clean FORMAT 2
-cutover before continuing the Tier B core. This remains a wide-horizon ranking of
+**STATUS (2026-07-12): active implementation.** Tier 0, Tier A, and the
+composer-owned Tier B surface have landed on FORMAT 2; the remaining B5/B6/B9
+native pieces are explicitly tracked as Jetpacs framework prerequisites. This remains a wide-horizon ranking of
 where jetpacs-composer goes after the original v1 format
 ([FORMAT.md](FORMAT.md)), mined from [NocoBase](https://github.com/nocobase/nocobase)
 — a mature open-source no-code platform — for design concepts that
@@ -60,10 +60,10 @@ exists and composer simply isn't using it.
    are correct there.
 6. **The composer is a convenience, not a gatekeeper** — `app.org` stays
    hand-authorable and round-trips losslessly (opaque bodies verbatim).
-7. **New keyword / kind / coltype / action ⇒ `#+JETPACS_APP_FORMAT` bump**
-   (currently `1`). v1 non-goals: formulas, conditionals, arbitrary
-   layout, per-node styling, cross-source refs, tag editing, table-view
-   filters.
+7. **New keyword / kind / coltype / action ⇒ deliberate format decision.**
+   The current clean-cut version is `2`; there is no installed v1 compatibility
+   ladder. Current non-goals include formulas, conditionals, arbitrary layout,
+   per-node styling, and cross-app data-source references.
 8. **Core org does the heavy lifting** — `TODO/DEADLINE/PRIORITY/ITEM`
    are first-class via org's own machinery; enums from `*_ALL`;
    filtering speaks org-ql's grammar.
@@ -401,9 +401,24 @@ blocks (`plugin-block-workbench`). Gate on `jetpacs-node-supported-p
 
 ### B9. `gantt` view kind — [both / L]
 
+**Fallback landed; native rendering framework-gated:** format/composer support,
+required org-native fields, deadline/start sorting, range/progress footers, and
+normal record actions are implemented. A true horizontal timeline awaits F8.
+
 From `plugin-gantt`. `SCHEDULED` + `DEADLINE` are the start/end; progress
 from `TODO`. Needs a **new native timeline primitive** (the frontier);
 until then it degrades to a sorted deadline list.
+
+## Desktop preview track — live semantic preview
+
+This is the next composer-owned track, not a Tier C format feature. It adds no
+keyword, kind, action, or runtime behavior: it projects the current `AppSpec`
+into a desktop Compose phone-like preview that updates with `EditorSession.spec`.
+It covers app chrome, every view kind, representative/device-only data states,
+details, references, and safe preview-local interactions while remaining
+explicitly non-pixel-identical and non-mutating. See
+[PLAN-live-semantic-preview.md](PLAN-live-semantic-preview.md) for architecture,
+data provenance, phases, acceptance gates, and tests.
 
 ## Tier C — deeper structural (as demand appears)
 
@@ -480,9 +495,12 @@ its Tier B).
   rendering, with the selection set in ephemeral `ui-state`. Unblocks
   `crud.action.bulk.*` fan-out over `ActionDef` (B3 phase 2); scope
   destructive-undo-over-N as a real design item, not a freebie.
-- **F8. Timeline + calendar week/day widgets** — the native primitives
-  B9 (gantt) and A1's deferred week/day mode need; `month_grid` is
-  month-only today.
+- **F8. Timeline + calendar week/day widgets** — native primitives for B9 and
+  A1's deferred modes. The timeline node should accept stable item IDs, labels,
+  start/end epoch values, progress/state, and an ID-addressed tap action; it
+  must handle horizontal pan/zoom companion-locally. `month_grid` remains
+  month-only, so calendar also needs week/day range nodes rather than composer
+  attempting canvas-based interaction.
 - Jetpacs framework still lacks jetpacs-reminders-owner-set. Composer
   therefore warns and arms nothing instead of issuing a global reminders.set
   that could erase alarms belonging to other apps.
@@ -510,24 +528,22 @@ its Tier B).
   validates SDUI node trees, not the CRUD spec, and needs the Emacs the
   composer deliberately avoids (constraint 5). If a headless lint is
   wanted it belongs in the elisp CI path where Emacs already runs.
-- **Live device-mirror WYSIWYG preview** — [XL]. Genuinely nice (drive
-  the real runtime as a headless oracle), but the cost isn't justified
-  until the format and view set stabilize.
+- **Pixel-identical live device-runtime mirror** — [XL]. Driving the real
+  runtime as a headless oracle remains rejected at current value/cost. The
+  Composer-native semantic preview is a separate active track: useful structure
+  and behavior without duplicating the Android SDUI renderer or promising pixels.
 - **A `form` datasource *kind* and a `form_container` *node*** — a
   category error and unnecessary: A5 composes the form from existing
   auto-publishing primitives with no new kind, node, action, or bump.
 
 ## Sequencing
 
-Tier 0 and the non-drag Tier A work landed first, guarded by the parser
-parity corpus. Tree and closed record actions also landed while there was
-still no installed base. The repository now moves atomically to FORMAT 2;
-the remaining Tier B model core begins with B2 references, followed by the
-mobile-native reminders/capture work. Tier C accretes
-as demand shows. On the frontier, **F1 goes first** (it is an afternoon
-and unblocks A-tier undo + F4); F5/F6/F7 ride with the B batch they
-enable; F2/F3/F4/F8 graduate to their own jetpacs plan docs when their
-consumer here is picked up.
+Tier 0, Tier A, the FORMAT-2 cutover, and Composer-owned Tier B work landed
+behind the parser-parity corpus. Reminder publication, the off-app capture tile,
+and native Gantt rendering remain honestly gated by their Jetpacs frontier
+items. The live semantic preview is now the next desktop-owned track; Tier C
+accretes as demand shows. F2/F3/F4/F5/F6/F8 graduate to Jetpacs implementation
+plans when their consumers need native framework work.
 
 ---
 

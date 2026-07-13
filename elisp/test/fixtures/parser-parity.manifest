@@ -31,6 +31,7 @@ kind-calendar accept parser-parity-all.org
 kind-gallery accept parser-parity-all.org
 kind-dashboard accept hello-world.org
 drawer-metrics accept hello-world.org
+kind-gantt accept hello-world.org
 coltype-text accept parser-parity-all.org
 coltype-number accept parser-parity-all.org
 coltype-date accept parser-parity-all.org

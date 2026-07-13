@@ -131,9 +131,10 @@ object OrgCodec {
             "gallery" -> ViewKind.GALLERY
             "tree" -> ViewKind.TREE
             "dashboard" -> ViewKind.DASHBOARD
+            "gantt" -> ViewKind.GANTT
             else -> ViewKind.UNKNOWN
         }
-        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD)
+        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT)
         if (isRecordsType && props["SCHEMA"].isNullOrBlank())
             throw FormatException("a ${kind.name.lowercase()} view needs a :SCHEMA: under \"$title\"")
         if (kind == ViewKind.NOTES && props["SOURCE"].isNullOrBlank())
@@ -412,6 +413,7 @@ object OrgCodec {
                 ViewKind.GALLERY -> add("KIND" to "gallery")
                 ViewKind.TREE -> add("KIND" to "tree")
                 ViewKind.DASHBOARD -> add("KIND" to "dashboard")
+                ViewKind.GANTT -> add("KIND" to "gantt")
                 ViewKind.UNKNOWN -> add("KIND" to "unknown")
                 ViewKind.TABLE -> {}
             }

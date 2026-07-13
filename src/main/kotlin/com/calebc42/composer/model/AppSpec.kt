@@ -37,7 +37,7 @@ data class AppSpec(
 data class TodoKeyword(val keyword: String, val isDone: Boolean)
 
 @Serializable
-enum class ViewKind { TABLE, CHECKLIST, RECORDS, NOTES, BOARD, CALENDAR, GALLERY, TREE, DASHBOARD, UNKNOWN }
+enum class ViewKind { TABLE, CHECKLIST, RECORDS, NOTES, BOARD, CALENDAR, GALLERY, TREE, DASHBOARD, GANTT, UNKNOWN }
 
 @Serializable
 enum class AggregateOp { COUNT, SUM, AVG }

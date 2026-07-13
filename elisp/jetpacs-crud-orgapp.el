@@ -205,6 +205,7 @@ Point must be on the heading line."
                  ("gallery" 'gallery)
                  ("tree" 'tree)
                  ("dashboard" 'dashboard)
+                 ("gantt" 'gantt)
                  (other (display-warning 'jetpacs-crud
                                          (format "%s: unknown KIND %S under %S (falling back to unknown)"
                                                  app-file other title)
@@ -226,7 +227,7 @@ Point must be on the heading line."
          (order-raw (funcall prop "ORDER"))
          (nav-raw (funcall prop "NAV"))
          (group-raw (funcall prop "GROUP")))
-    (when (and (memq kind '(records notes board calendar gallery tree dashboard)) (not schema-raw))
+    (when (and (memq kind '(records notes board calendar gallery tree dashboard gantt)) (not schema-raw))
       (user-error "%s: a %s view needs a :SCHEMA: under %S"
                   app-file (symbol-name kind) title))
     (when (and (eq kind 'notes) (not source-raw))
@@ -259,6 +260,7 @@ file::*Heading) under %S" app-file title))
                       ('gallery "grid_view")
                       ('tree "account_tree")
                       ('dashboard "bar_chart")
+                      ('gantt "view_timeline")
                       (_ "table_chart")))
           :order (if order-raw (string-to-number order-raw)
                    (* 10 (1+ index)))

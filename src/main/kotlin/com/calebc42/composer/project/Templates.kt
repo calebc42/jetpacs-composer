@@ -4,6 +4,7 @@ package com.calebc42.composer.project
 import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.ColType
 import com.calebc42.composer.model.BodyElement
+import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.TodoKeyword
@@ -165,16 +166,13 @@ object Templates {
     // -- General builder -----------------------------------------------------
 
     /** Whether [kind] uses a `:SCHEMA:` rather than a table header row. */
-    private fun isRecordsType(kind: ViewKind): Boolean = kind in listOf(
-        ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD,
-        ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE,
-    )
+    private fun isRecordsType(kind: ViewKind): Boolean = ModelOps.isRecordsType(kind)
 
     /**
      * The data-first wizard: columns in, a working one-view app out.
      *
      * For TABLE / CHECKLIST kinds the [columns] list drives the header row.
-     * For records-type kinds (RECORDS, NOTES, BOARD, CALENDAR, GALLERY) the
+     * For record-like kinds the
      * [schema] list drives the `:SCHEMA:` drawer instead.
      *
      * [backendPath] is a shorthand for a [SourceRef.File]; pass [source]

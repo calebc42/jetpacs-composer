@@ -204,3 +204,21 @@ An external relative source: the runtime scaffolds shopping-list.org
 :Category: Garden
 :Amount: 12
 :END:
+
+* Timeline
+:PROPERTIES:
+:ICON: view_timeline
+:ORDER: 110
+:KIND: gantt
+:SCHEMA: %ITEM(Task) %TODO(Progress) %SCHEDULED(Start) %DEADLINE(End)
+:COLTYPES: text text date date
+:NAV: drawer
+:END:
+
+** TODO Prepare beds
+SCHEDULED: <2026-03-01 Sun>
+DEADLINE: <2026-03-05 Thu>
+
+** NEXT Plant seeds
+SCHEDULED: <2026-03-06 Fri>
+DEADLINE: <2026-03-12 Thu>

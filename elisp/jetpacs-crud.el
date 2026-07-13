@@ -914,6 +914,44 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                                       (or (plist-get view :group-by) "all records"))))))))
         (plist-get view :metrics))))))
 
+(defun jetpacs-crud--gantt-date-key (record)
+  "Sortable end/start date key for Gantt RECORD; undated records sort last."
+  (let* ((fields (plist-get record :fields))
+         (value (or (alist-get "DEADLINE" fields nil nil #'equal)
+                    (alist-get "SCHEDULED" fields nil nil #'equal)
+                    "")))
+    (if (string-match "[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" value)
+        (match-string 0 value)
+      "9999-99-99")))
+
+(defun jetpacs-crud--gantt-footer (record)
+  "Range/progress footer for Gantt RECORD."
+  (let* ((fields (plist-get record :fields))
+         (start (alist-get "SCHEDULED" fields nil nil #'equal))
+         (end (alist-get "DEADLINE" fields nil nil #'equal))
+         (todo (alist-get "TODO" fields nil nil #'equal)))
+    (jetpacs-text
+     (format "%s → %s%s"
+             (if (string-empty-p (or start "")) "No start" start)
+             (if (string-empty-p (or end "")) "No end" end)
+             (if (string-empty-p (or todo "")) "" (format " · %s" todo)))
+     'caption)))
+
+(defun jetpacs-crud--gantt-body (spec view)
+  "Deadline-sorted Gantt fallback over normal actionable record cards."
+  (let ((records (sort (copy-sequence (jetpacs-crud--scan-records spec view))
+                       (lambda (a b)
+                         (string< (jetpacs-crud--gantt-date-key a)
+                                  (jetpacs-crud--gantt-date-key b))))))
+    (apply #'jetpacs-lazy-column
+           (or (mapcar (lambda (record)
+                         (jetpacs-crud--record-card
+                          spec view record (jetpacs-crud--gantt-footer record)))
+                       records)
+               (list (jetpacs-empty-state
+                      :icon "view_timeline" :title "No timeline records"
+                      :caption "Add records with SCHEDULED and DEADLINE"))))))
+
 (defun jetpacs-crud--group-values (spec view prop)
   "The org-declared value set for PROP in VIEW's source, as strings.
 TODO lanes come from the source file's real keyword sequence, other
@@ -1303,6 +1341,8 @@ action string the add-FAB fires.")
   :body #'jetpacs-crud--tree-body :fab "crud.record.add")
 (jetpacs-crud--define-kind 'dashboard
   :body #'jetpacs-crud--dashboard-body :fab "crud.record.add")
+(jetpacs-crud--define-kind 'gantt
+  :body #'jetpacs-crud--gantt-body :fab "crud.record.add")
 
 ;; ─── The view builder ────────────────────────────────────────────────────────
 
@@ -1313,7 +1353,7 @@ action string the add-FAB fires.")
      (let* ((table (cdr (jetpacs-crud--source-table spec view)))
             (rows (delq 'hline (copy-sequence (plist-get table :rows)))))
        (mapcar (lambda (row) (mapcar #'car row)) rows)))
-    ((or 'records 'board 'calendar 'gallery 'tree 'dashboard)
+    ((or 'records 'board 'calendar 'gallery 'tree 'dashboard 'gantt)
      (let ((props (mapcar #'car (jetpacs-crud--schema-props view))))
        (cons props
              (mapcar (lambda (record)
@@ -1540,7 +1580,7 @@ the first member's (all four of hello-world's Tasks members add records)."
 (defun jetpacs-crud--view-reminders (spec view)
   "Derive durable reminder wire objects for VIEW's declared rule."
   (when-let ((rule (and (memq (plist-get view :kind)
-                              '(records notes board calendar gallery tree dashboard))
+                              '(records notes board calendar gallery tree dashboard gantt))
                          (plist-get view :reminder))))
     (let ((field (plist-get rule :date-field))
           (relative (plist-get rule :relative-days))

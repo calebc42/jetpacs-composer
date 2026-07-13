@@ -356,4 +356,17 @@ class ModelOpsTest {
         assertTrue(ModelOps.validate(AppSpec(id = "dash", views = listOf(valid)))
             .none { "metric" in it.message })
     }
+
+    @Test
+    fun ganttRequiresOrgNativeTimelineFields() {
+        val gantt = ViewSpec(
+            title = "Timeline",
+            kind = ViewKind.GANTT,
+            schema = listOf(SchemaField("ITEM"), SchemaField("DEADLINE")),
+        )
+        val messages = ModelOps.validate(AppSpec(id = "gantt", views = listOf(gantt)))
+            .map { it.message }
+        assertTrue(messages.any { "TODO field" in it })
+        assertTrue(messages.any { "SCHEDULED field" in it })
+    }
 }

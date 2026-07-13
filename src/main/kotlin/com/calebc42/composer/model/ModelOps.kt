@@ -21,7 +21,7 @@ object ModelOps {
                 BodyElement.Table(header = listOf("Name"), rows = emptyList()))
             ViewKind.CHECKLIST -> listOf(
                 BodyElement.Checklist(emptyList()))
-            ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.UNKNOWN -> emptyList()
+            ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT, ViewKind.UNKNOWN -> emptyList()
         }
         val isRecords = isRecordsType(kind)
         val schema = when (kind) {
@@ -40,6 +40,12 @@ object ModelOps {
             ViewKind.DASHBOARD -> listOf(
                 SchemaField("ITEM", "Name"),
                 SchemaField("AMOUNT", "Amount"),
+            )
+            ViewKind.GANTT -> listOf(
+                SchemaField("ITEM", "Name"),
+                SchemaField("TODO", "Progress"),
+                SchemaField("SCHEDULED", "Start"),
+                SchemaField("DEADLINE", "End"),
             )
             else -> if (isRecords) listOf(SchemaField("ITEM", "Name")) else emptyList()
         }
@@ -429,6 +435,12 @@ object ModelOps {
                     }
                 }
             }
+            if (view.kind == ViewKind.GANTT) {
+                listOf("TODO", "SCHEDULED", "DEADLINE").forEach { required ->
+                    if (view.schema.none { it.prop.equals(required, ignoreCase = true) })
+                        add(Problem("Gantt view needs a $required field", i))
+                }
+            }
 
             val todoKeywords = if (spec.todoSequence.isEmpty()) {
                 setOf("TODO", "DONE")
@@ -565,5 +577,5 @@ object ModelOps {
 
     /** Helper for views with records-like kinds. */
     fun isRecordsType(kind: ViewKind): Boolean =
-        kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.UNKNOWN)
+        kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT, ViewKind.UNKNOWN)
 }

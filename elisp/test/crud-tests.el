@@ -329,6 +329,22 @@ as an `unknown' marker (rendered as text) instead of erroring."
     (should (= (jetpacs-crud--dashboard-value '(sum "Amount") (cdar groups)) 30))
     (should (= (jetpacs-crud--dashboard-value '(avg "Amount") (cdar groups)) 15.0))))
 
+(ert-deftest jetpacs-crud-gantt-sorts-by-end-then-start-with-undated-last ()
+  (let* ((records '((:fields (("ITEM" . "Undated")))
+                    (:fields (("ITEM" . "Later")
+                              ("DEADLINE" . "<2027-02-10>")))
+                    (:fields (("ITEM" . "Sooner")
+                              ("SCHEDULED" . "<2027-01-01>")))))
+         (sorted (sort records
+                       (lambda (a b)
+                         (string< (jetpacs-crud--gantt-date-key a)
+                                  (jetpacs-crud--gantt-date-key b))))))
+    (should (equal (mapcar (lambda (r)
+                             (alist-get "ITEM" (plist-get r :fields)
+                                        nil nil #'equal))
+                           sorted)
+                   '("Sooner" "Later" "Undated")))))
+
 (ert-deftest jetpacs-crud-export-csv-neutralizes-formulas-and-quotes ()
   (should
    (equal (jetpacs-crud--matrix-csv
