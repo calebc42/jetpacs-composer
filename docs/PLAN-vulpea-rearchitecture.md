@@ -1,10 +1,21 @@
 # Plan: rearchitect jetpacs-composer on vulpea + MELPA engines
 
-**STATUS (2026-07-13): Phase 0 landed.** The `jetpacs` submodule is bumped
-to the commit shipping `jetpacs-org.el`/`jetpacs-source.el`, the full ERT
-suite (66/66) and bundle smoke (pantry + hello-world) are green under
-`VULPEA_DIR`-enabled WSL, and the test-dep bootstrap script exists. Phases
-1–5 below are the remaining work, not yet started.
+**STATUS (2026-07-13): Phases 0–1 landed.** The `jetpacs` submodule is
+bumped to the commit shipping `jetpacs-org.el`/`jetpacs-source.el`; the
+full ERT suite (68/68) and bundle smoke (pantry + hello-world) are green
+under `VULPEA_DIR`-enabled WSL. Phase 1 (M9) added `#+JETPACS_DEPENDS:`,
+the composer's engine-install bootstrap, and the FORMAT.md fixes.
+Phases 2–5 below are the remaining work, not yet started.
+
+**Known pre-existing failures (not introduced here, tracked for later):**
+three JVM `OrgCodecTest` cases are red from before Phase 1 —
+`writerEmitsParsableCanonicalForm` and `formatTwoIsTheCleanCutoverVersion`
+still assume the format-2 era (the writer now emits format 3 and old
+formats are accepted per FORMAT.md), and `sharedParserParityManifest`
+hits a JVM-vs-elisp divergence on unknown-`:KIND:` leniency (the elisp
+parser accepts it, the JVM parser demands a `:SCHEMA:`). Fixing these is
+a small parser-parity cleanup plus a decision on whether old format
+versions should be rejected outright.
 
 ## Why
 
