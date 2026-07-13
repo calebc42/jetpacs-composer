@@ -411,7 +411,8 @@ until then it degrades to a sorted deadline list.
 
 ## Desktop preview track — live semantic preview
 
-This is the next composer-owned track, not a Tier C format feature. It adds no
+**Paused after P2:** the shell plus core table/checklist/record/note renderers
+remain available, but P3+ is not the current roadmap priority. It adds no
 keyword, kind, action, or runtime behavior: it projects the current `AppSpec`
 into a desktop Compose phone-like preview that updates with `EditorSession.spec`.
 It covers app chrome, every view kind, representative/device-only data states,
@@ -419,6 +420,42 @@ details, references, and safe preview-local interactions while remaining
 explicitly non-pixel-identical and non-mutating. See
 [PLAN-live-semantic-preview.md](PLAN-live-semantic-preview.md) for architecture,
 data provenance, phases, acceptance gates, and tests.
+
+## Jetpacs-native abstraction track — vocabulary + bundled Elisp
+
+Jetpacs is Composer's application renderer, not an adjacent implementation:
+Emacs loads the generated Tier-1 app into Jetpacs' App Switcher. Glasspane is
+the direct-DSL reference application; Composer's job is to make the useful
+parts of that public DSL declarative and org-native without exposing arbitrary
+code in `app.org`.
+
+Work therefore proceeds compiler-first:
+
+- **V1. Coltype-driven native forms — landed.** The bundled CRUD Elisp now
+  compiles record-add fields to Jetpacs' real decimal input, switch, enum-list,
+  and date-picker nodes. Widget arrays/booleans normalize back to stable org
+  strings, and invalid numbers are rejected before a heading is written.
+- **V2. Direct-DSL record vocabulary — landed.** This brings the proven
+  Glasspane information hierarchy into `jetpacs-crud`: rich TODO/priority headlines, semantic date
+  rows, tag chips, compact captions, and explicit reference/edit affordances.
+  These are derived from today's schema and org built-ins; no format keyword is
+  needed.
+- **V3. Dedicated typed detail/edit composition.** Replace the current
+  "record card inside a sheet" with a detail builder using section headers,
+  typed values and native field editors while retaining the closed `crud.*`
+  action boundary and source-scoped handlers.
+- **V4. Vocabulary graduation gate.** Add `AppSpec`/FORMAT vocabulary only when
+  direct-DSL evidence shows that data cannot be derived from schema, coltype,
+  org properties, or view kind. The field-interface layer remains the likely
+  next additive format seam; generic layout/style nodes remain out of scope.
+
+Every slice is tested against the pinned Jetpacs public constructors, linted as
+wire data, and exercised through an actual `jetpacs-defapp` registration. The
+App Switcher/owner contract is part of acceptance, not preview chrome.
+
+The org parser remains a separate reusable concern. The fork/integration
+boundary and shadow-parser cutover are specified in
+[PLAN-orgmode-kmp-integration.md](PLAN-orgmode-kmp-integration.md).
 
 ## Tier C — deeper structural (as demand appears)
 
@@ -530,8 +567,9 @@ its Tier B).
   wanted it belongs in the elisp CI path where Emacs already runs.
 - **Pixel-identical live device-runtime mirror** — [XL]. Driving the real
   runtime as a headless oracle remains rejected at current value/cost. The
-  Composer-native semantic preview is a separate active track: useful structure
-  and behavior without duplicating the Android SDUI renderer or promising pixels.
+  existing Composer-native semantic preview remains useful editor tooling, but
+  further renderer duplication is paused in favor of improving the vocabulary
+  and Elisp compiler that feed Jetpacs itself.
 - **A `form` datasource *kind* and a `form_container` *node*** — a
   category error and unnecessary: A5 composes the form from existing
   auto-publishing primitives with no new kind, node, action, or bump.
@@ -541,8 +579,9 @@ its Tier B).
 Tier 0, Tier A, the FORMAT-2 cutover, and Composer-owned Tier B work landed
 behind the parser-parity corpus. Reminder publication, the off-app capture tile,
 and native Gantt rendering remain honestly gated by their Jetpacs frontier
-items. The live semantic preview is now the next desktop-owned track; Tier C
-accretes as demand shows. F2/F3/F4/F5/F6/F8 graduate to Jetpacs implementation
+items. The Jetpacs-native abstraction track is now the active composer-owned
+work; preview P3+ is paused and Tier C accretes as demand shows.
+F2/F3/F4/F5/F6/F8 graduate to Jetpacs implementation
 plans when their consumers need native framework work.
 
 ---

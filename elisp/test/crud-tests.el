@@ -868,11 +868,11 @@ in both whole-file and subtree (`::*Heading') scopes."
                      (setq dialog node style dialog-style))))
           (jetpacs-crud-action-record-detail
            `((app . "crm") (view . "people") (pos . ,pos)) nil)))
-      (let ((json (jetpacs-render-to-json dialog)))
+      (let ((json (json-serialize (jetpacs-render-to-json dialog))))
         (should (equal style "sheet_full"))
         (should (string-match-p "555-0100" json))
         (should (string-match-p "Notes about Ada that must survive" json))
-        (should (string-match-p "Duplicate record" json)))))
+        (should (string-match-p "Duplicate record" json))))))
 
 (ert-deftest jetpacs-crud-field-edit-todo-uses-real-keywords ()
   (jetpacs-crud-tests--with-clean-state
@@ -958,6 +958,61 @@ in both whole-file and subtree (`::*Heading') scopes."
         (should (string-match-p ":Phone: *555-0202" content))
         (should (< (string-match "Katherine Johnson" content)
                    (string-match "^\\* Unrelated" content)))))))
+
+(ert-deftest jetpacs-crud-record-add-uses-declared-native-field-widgets ()
+  "The CRUD abstraction should compile coltypes into Jetpacs' real DSL nodes."
+  (let ((view '(:schema (("ITEM" . "Name") ("Amount" . "Amount")
+                         ("Done" . "Done") ("Tier" . "Tier")
+                         ("When" . "When"))
+                :coltypes (text number checkbox (enum "Low" "High") date)))
+        (args '((app . "typed") (view . "items"))))
+    (let ((number (jetpacs-render-to-json
+                   (jetpacs-crud--add-field-node view "Amount" "Amount" "12.5" nil args)))
+          (toggle (jetpacs-render-to-json
+                   (jetpacs-crud--add-field-node view "Done" "Done" t nil args)))
+          (enum (jetpacs-render-to-json
+                 (jetpacs-crud--add-field-node view "Tier" "Tier" "High" nil args)))
+          (date (jetpacs-render-to-json
+                 (jetpacs-crud--add-field-node view "When" "When" "2026-07-12" nil args))))
+      (should (equal (alist-get 'keyboard number) "decimal"))
+      (should (equal (alist-get 't toggle) "switch"))
+      (should (eq (alist-get 'checked toggle) t))
+      (should (equal (alist-get 't enum) "enum_list"))
+      (should (equal (append (alist-get 'options enum) nil) '("Low" "High")))
+      (should (equal (alist-get 't date) "date_button")))))
+
+(ert-deftest jetpacs-crud-record-add-normalizes-widget-state-for-org ()
+  (should (equal (jetpacs-crud--draft-value '(enum "A" "B") ["B"]) "B"))
+  (should (equal (jetpacs-crud--draft-value '(enum "A" "B") []) ""))
+  (should (equal (jetpacs-crud--draft-value 'checkbox t) "[X]"))
+  (should (equal (jetpacs-crud--draft-value 'checkbox :false) "[ ]")))
+
+(ert-deftest jetpacs-crud-record-card-uses-org-native-semantic-vocabulary ()
+  (let* ((spec '(:id "work"))
+         (view '(:name "tasks"
+                 :schema (("ITEM" . "Task") ("TODO" . "State")
+                          ("PRIORITY" . "Priority") ("SCHEDULED" . "Start")
+                          ("DEADLINE" . "Due") ("TAGS" . "Tags")
+                          ("Owner" . "Owner"))
+                 :coltypes (text text text date date text text)))
+         (record '(:pos 42 :done t
+                   :fields (("ITEM" . "Ship release") ("TODO" . "DONE")
+                            ("PRIORITY" . "A")
+                            ("SCHEDULED" . "<2026-07-10 Fri>")
+                            ("DEADLINE" . "<2026-07-12 Sun>")
+                            ("TAGS" . ":work:release:")
+                            ("Owner" . "Caleb"))))
+         (node (jetpacs-crud--record-card spec view record))
+         (json (json-serialize (jetpacs-render-to-json node))))
+    (should (null (jetpacs-lint-spec node)))
+    (should (string-match-p "rich_text" json))
+    (should (string-match-p "date_stamp" json))
+    (should (string-match-p "#work" json))
+    (should (string-match-p "crud.view.search-set" json))
+    (should (string-match-p "\\\"strike\\\":true" json))
+    ;; Special org fields render once in the semantic header/metadata; ordinary
+    ;; schema fields retain the generic editable row.
+    (should (string-match-p "Caleb" json))))
 
 (ert-deftest jetpacs-crud-field-clear-removes-specials-for-real ()
   "Clearing TODO/DEADLINE must go through org's removal commands —

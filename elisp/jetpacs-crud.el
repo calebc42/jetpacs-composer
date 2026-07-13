@@ -677,6 +677,7 @@ org itself."
                                     (gethash (point) matchset)
                                   (jetpacs-crud--entry-matches-p tree))))
                    (push (list :pos (point)
+                               :done (and (org-entry-is-done-p) t)
                                :fields (mapcar
                                         (lambda (p)
                                           (cons p (or (org-entry-get (point) p)
@@ -722,6 +723,78 @@ org itself."
     (pcase-let ((`(,label ,icon ,_color ,action) (jetpacs-crud--action-spec token-cons args-for)))
       (jetpacs-menu-item label action :icon icon))))
 
+(defconst jetpacs-crud--card-special-props
+  '("ITEM" "TODO" "PRIORITY" "TAGS" "SCHEDULED" "DEADLINE")
+  "Org-native fields rendered by the record card's semantic header/metadata.")
+
+(defun jetpacs-crud--record-title-node (record fields title)
+  "Rich Jetpacs headline for RECORD from FIELDS and TITLE."
+  (let ((todo (alist-get "TODO" fields nil nil #'equal))
+        (priority (alist-get "PRIORITY" fields nil nil #'equal)))
+    (jetpacs-rich-text
+     (delq nil
+           (list
+            (when (and priority (not (string-empty-p priority)))
+              (jetpacs-span (format "[#%s] " priority)
+                            :bold t :color "#F57C00"))
+            (when (and todo (not (string-empty-p todo)))
+              (jetpacs-span (format "%s " todo) :bold t))
+            (jetpacs-span title :strike (plist-get record :done))))
+     :style 'title)))
+
+(defun jetpacs-crud--tag-values (raw)
+  "Normalize org's RAW :tag:rail: string to tag names."
+  (and raw (split-string raw "[: 	]+" t)))
+
+(defun jetpacs-crud--record-meta-nodes (spec view fields args-for edit-action-name)
+  "Semantic date and tag nodes for a record card.
+ARGS-FOR builds the record-scoped args; EDIT-ACTION-NAME differs for heading
+and note records."
+  (let ((dates nil)
+        (tags (jetpacs-crud--tag-values
+               (alist-get "TAGS" fields nil nil #'equal))))
+    (dolist (entry '(("SCHEDULED" . "Scheduled") ("DEADLINE" . "Deadline")))
+      (let* ((prop (car entry))
+             (label (cdr entry))
+             (raw (alist-get prop fields nil nil #'equal))
+             (date (jetpacs-crud--current-date raw)))
+        (when date
+          (push
+           (jetpacs-box
+            (list
+             (jetpacs-row
+              (jetpacs-date-stamp :date date)
+              (jetpacs-column
+               (jetpacs-text label 'label)
+               (jetpacs-text raw 'caption))))
+            :on-tap (jetpacs-action edit-action-name
+                                    :args (funcall args-for prop))
+            :padding 4)
+           dates))))
+    (nconc
+     (nreverse dates)
+     (when tags
+       (list
+        (apply #'jetpacs-flow-row
+               (append
+                (mapcar
+                 (lambda (tag)
+                   (jetpacs-assist-chip
+                    (concat "#" tag)
+                    :on-tap
+                    (jetpacs-action
+                     "crud.view.search-set"
+                     :args `((app . ,(plist-get spec :id))
+                             (view . ,(plist-get view :name))
+                             (value . ,tag)))))
+                 tags)
+                (list
+                 (jetpacs-icon-button
+                  "edit"
+                  (jetpacs-action edit-action-name
+                                  :args (funcall args-for "TAGS"))
+                  :content-description "Edit tags")))))))))
+
 (defun jetpacs-crud--record-card (spec view record &optional footer)
   "The card node for RECORD of VIEW in SPEC.
 If FOOTER is provided, it is appended as the last child of the card's column."
@@ -730,7 +803,6 @@ If FOOTER is provided, it is appended as the last child of the card's column."
          (schema (jetpacs-crud--schema-props view))
          (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
                   (if (and item (not (string-empty-p item))) item "Untitled")))
-         (todo (alist-get "TODO" fields nil nil #'equal))
          (actions (jetpacs-crud--action-tokens (plist-get view :actions)))
          (args-for (lambda (prop)
                      `((app . ,(plist-get spec :id))
@@ -743,10 +815,7 @@ If FOOTER is provided, it is appended as the last child of the card's column."
 
        (jetpacs-row
         (jetpacs-box
-         (list (jetpacs-text (if (and todo (not (string-empty-p todo)))
-                               (format "%s %s" todo title)
-                             title)
-                          'title))
+         (list (jetpacs-crud--record-title-node record fields title))
          :weight 1
          :on-tap (jetpacs-action "crud.record.detail"
                               :args (funcall args-for nil)))
@@ -763,29 +832,37 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                                 :icon "delete")))))
        (apply #'jetpacs-column
               (append
+               (jetpacs-crud--record-meta-nodes
+                spec view fields args-for "crud.field.edit")
                (cl-loop for (prop . label) in schema
-                        unless (member prop '("ITEM" "TODO"))
+                        unless (member prop jetpacs-crud--card-special-props)
                         collect
-                        (let ((value (alist-get prop fields nil nil #'equal))
-                              (ctype (jetpacs-crud--field-type view prop)))
+                        (let* ((value (alist-get prop fields nil nil #'equal))
+                               (ctype (jetpacs-crud--field-type view prop))
+                               (refp (and (consp ctype) (eq (car ctype) 'ref)))
+                               (edit-action (jetpacs-action "crud.field.edit"
+                                                            :args (funcall args-for prop))))
                           (jetpacs-box
-                           (list (jetpacs-row
-                                  (jetpacs-text (or label prop) 'caption nil nil nil 1)
-                                  (jetpacs-spacer :width 12)
-                                  (jetpacs-text (if (string-empty-p value)
-                                                    "—"
-                                                  (if (and (consp ctype)
-                                                           (eq (car ctype) 'ref))
-                                                      (jetpacs-crud--ref-resolve
-                                                       spec (cadr ctype) value (caddr ctype))
-                                                    value))
-                                             'body 1)))
+                           (list
+                            (apply #'jetpacs-row
+                                   (delq nil
+                                         (list
+                                          (jetpacs-text (or label prop) 'caption nil nil nil 1)
+                                          (jetpacs-spacer :width 12)
+                                          (jetpacs-text (if (string-empty-p value)
+                                                            "—"
+                                                          (if refp
+                                                              (jetpacs-crud--ref-resolve
+                                                               spec (cadr ctype) value (caddr ctype))
+                                                            value))
+                                                        'body 1)
+                                          (when refp
+                                            (jetpacs-icon-button
+                                             "edit" edit-action
+                                             :content-description
+                                             (format "Edit %s reference" (or label prop))))))))
                            :on-tap (or (jetpacs-crud--ref-action spec ctype value)
-                                       (jetpacs-action "crud.field.edit"
-                                                    :args (funcall args-for prop)))
-                           :on-long-tap (when (and (consp ctype) (eq (car ctype) 'ref))
-                                          (jetpacs-action "crud.field.edit"
-                                                       :args (funcall args-for prop)))
+                                       edit-action)
                            :padding 2)))
                (when footer (list footer))))))
      :swipe-start (jetpacs-crud--action-swipe (nth 0 actions) args-for)
@@ -1222,7 +1299,6 @@ fire the `crud.note.*' actions."
          (schema (jetpacs-crud--schema-props view))
          (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
                   (if (and item (not (string-empty-p item))) item "Untitled")))
-         (todo (alist-get "TODO" fields nil nil #'equal))
          (actions (jetpacs-crud--action-tokens (plist-get view :actions)))
          (args-for (lambda (prop)
                      `((app . ,(plist-get spec :id))
@@ -1234,10 +1310,7 @@ fire the `crud.note.*' actions."
       (jetpacs-column
        (jetpacs-row
         (jetpacs-box
-         (list (jetpacs-text (if (and todo (not (string-empty-p todo)))
-                               (format "%s %s" todo title)
-                             title)
-                          'title))
+         (list (jetpacs-crud--record-title-node record fields title))
          :weight 1
          :on-tap (if detailp
                      (when (cl-find "ITEM" schema :key #'car :test #'equal)
@@ -1255,29 +1328,37 @@ fire the `crud.note.*' actions."
                                 :icon "delete")))))
        (apply #'jetpacs-column
               (append
+               (jetpacs-crud--record-meta-nodes
+                spec view fields args-for "crud.note.field.edit")
                (cl-loop for (prop . label) in schema
-                       unless (member prop '("ITEM" "TODO"))
+                       unless (member prop jetpacs-crud--card-special-props)
                        collect
-                       (let ((value (alist-get prop fields nil nil #'equal))
-                             (ctype (jetpacs-crud--field-type view prop)))
+                       (let* ((value (alist-get prop fields nil nil #'equal))
+                              (ctype (jetpacs-crud--field-type view prop))
+                              (refp (and (consp ctype) (eq (car ctype) 'ref)))
+                              (edit-action (jetpacs-action "crud.note.field.edit"
+                                                           :args (funcall args-for prop))))
                          (jetpacs-box
-                          (list (jetpacs-row
-                                 (jetpacs-text (or label prop) 'caption nil nil nil 1)
-                                 (jetpacs-spacer :width 12)
-                                 (jetpacs-text (if (string-empty-p value)
-                                                   "—"
-                                                 (if (and (consp ctype)
-                                                          (eq (car ctype) 'ref))
-                                                     (jetpacs-crud--ref-resolve
-                                                      spec (cadr ctype) value (caddr ctype))
-                                                   value))
-                                            'body 1)))
+                          (list
+                           (apply #'jetpacs-row
+                                  (delq nil
+                                        (list
+                                         (jetpacs-text (or label prop) 'caption nil nil nil 1)
+                                         (jetpacs-spacer :width 12)
+                                         (jetpacs-text (if (string-empty-p value)
+                                                           "—"
+                                                         (if refp
+                                                             (jetpacs-crud--ref-resolve
+                                                              spec (cadr ctype) value (caddr ctype))
+                                                           value))
+                                                       'body 1)
+                                         (when refp
+                                           (jetpacs-icon-button
+                                            "edit" edit-action
+                                            :content-description
+                                            (format "Edit %s reference" (or label prop))))))))
                           :on-tap (or (jetpacs-crud--ref-action spec ctype value)
-                                      (jetpacs-action "crud.note.field.edit"
-                                                   :args (funcall args-for prop)))
-                          :on-long-tap (when (and (consp ctype) (eq (car ctype) 'ref))
-                                         (jetpacs-action "crud.note.field.edit"
-                                                      :args (funcall args-for prop)))
+                                      edit-action)
                           :padding 2)))
                (when footer (list footer))))))
      :swipe-start (jetpacs-crud--action-swipe (nth 0 actions) args-for)
@@ -2180,6 +2261,60 @@ declares them, else from the declared column type."
      (jetpacs-text "Notes" 'title)
      (jetpacs-text prose 'body))))
 
+(defun jetpacs-crud--draft-value (type value)
+  "Normalize companion widget VALUE for org storage according to TYPE.
+Single-select enums publish a JSON array and toggles publish booleans;
+the app format deliberately stores both as ordinary org strings."
+  (pcase type
+    (`(enum . ,_)
+     (cond ((vectorp value) (if (> (length value) 0) (or (aref value 0) "") ""))
+           ((listp value) (or (car value) ""))
+           (t (or value ""))))
+    ('checkbox
+     (if (and value (not (eq value :false))
+              (not (equal value "false"))
+              (not (equal value "[ ]")))
+         "[X]"
+       "[ ]"))
+    (_ (or value ""))))
+
+(defun jetpacs-crud--add-field-node (view prop label value allowed add-args)
+  "Build the native Jetpacs input for one add-record field.
+VIEW supplies the declared coltype; PROP/LABEL identify the schema field,
+VALUE is its current preview-local draft, ALLOWED is org's optional
+(OPTIONS . REQUIRE-MATCH), and ADD-ARGS reopens the form after a picker."
+  (let* ((id (format "add_%s" prop))
+         (type (jetpacs-crud--field-type view prop))
+         (value (jetpacs-crud--draft-value type value))
+         (dateish (or (member prop '("DEADLINE" "SCHEDULED"))
+                      (eq type 'date)))
+         (enum-options (or (car-safe allowed)
+                           (and (consp type) (eq (car type) 'enum)
+                                (cdr type))))
+         (sink (jetpacs-action "crud.field.state-sink"
+                                :args `((id . ,id) (add_args . ,add-args)))))
+    (cond
+     ((equal prop "ITEM")
+      (jetpacs-text-input id :label label :value value
+                          :single-line t :padding 16))
+     (enum-options
+      (jetpacs-enum-list id enum-options
+                         :value (unless (string-empty-p value) (list value))
+                         :padding 16))
+     ((eq type 'checkbox)
+      (jetpacs-switch id :label label
+                      :checked (equal value "[X]") :padding 16))
+     (dateish
+      (jetpacs-date-button (if (string-empty-p value)
+                               label
+                             (format "%s: %s" label value))
+                           sink :value value))
+     ((eq type 'number)
+      (jetpacs-text-input id :label label :value value
+                          :keyboard "decimal" :single-line t :padding 16))
+     (t
+      (jetpacs-text-input id :label label :value value :padding 16)))))
+
 (defun jetpacs-crud-action-record-detail (args _payload)
   "Show the detail view for a record.
 Opens the full record card inside a bottom sheet dialog."
@@ -2238,24 +2373,10 @@ Opens the full record card inside a bottom sheet dialog."
            (fields
             (cl-loop for (prop . label) in schema
                      collect
-                     (let* ((id (format "add_%s" prop))
-                            (lbl (or label prop))
-                            (val (or (jetpacs-ui-state id) ""))
-                            (allowed (cdr (assoc prop allowed-alist)))
-                            (dateish (or (member prop '("DEADLINE" "SCHEDULED"))
-                                         (eq (jetpacs-crud--field-type view prop) 'date))))
-                       (cond
-                        ((equal prop "ITEM")
-                         (jetpacs-text-input id :label lbl :value val :single-line t :padding 16))
-                        (allowed
-                         (jetpacs-enum-list id (car allowed) :value val :padding 16))
-                        (dateish
-                         (jetpacs-date-button (if (string-empty-p val) lbl (format "%s: %s" lbl val))
-                                              (jetpacs-action "crud.field.state-sink"
-                                                              :args `((id . ,id) (add_args . ,args)))
-                                              :value val))
-                        (t
-                         (jetpacs-text-input id :label lbl :value val :padding 16)))))))
+                     (let ((id (format "add_%s" prop)))
+                       (jetpacs-crud--add-field-node
+                        view prop (or label prop) (jetpacs-ui-state id)
+                        (cdr (assoc prop allowed-alist)) args)))))
       (jetpacs-send-dialog
        (apply #'jetpacs-column
               (append
@@ -2277,8 +2398,17 @@ Opens the full record card inside a bottom sheet dialog."
            (values
             (cl-loop for (prop . _label) in schema
                      unless (member prop '("ITEM"))
-                     collect (cons prop (or (jetpacs-ui-state (format "add_%s" prop)) "")))))
+                     collect
+                     (let ((type (jetpacs-crud--field-type view prop)))
+                       (cons prop
+                             (jetpacs-crud--draft-value
+                              type (jetpacs-ui-state (format "add_%s" prop))))))))
       (when (string-empty-p title) (user-error "A record needs a title"))
+      (dolist (kv values)
+        (when (and (eq (jetpacs-crud--field-type view (car kv)) 'number)
+                   (not (string-empty-p (cdr kv)))
+                   (not (string-match-p "\\`-?[0-9]+\\(\\.[0-9]+\\)?\\'" (cdr kv))))
+          (user-error "%s must be a number" (car kv))))
       (with-current-buffer (find-file-noselect file)
         (org-with-wide-buffer
          (let (level insert-at)
@@ -2580,6 +2710,18 @@ Re-renders the add-record dialog to reflect the picked value."
   "Action triggered when the search box is submitted. Forces a re-render."
   (jetpacs-shell-push))
 
+(defun jetpacs-crud-action-view-search-set (args _payload)
+  "Set a validated view's search draft from a semantic card affordance."
+  (let* ((app (alist-get 'app args))
+         (name (alist-get 'view args))
+         (value (or (alist-get 'value args) ""))
+         (spec (or (jetpacs-crud--app app)
+                   (user-error "Unknown CRUD app: %S" app)))
+         (view (or (jetpacs-crud--view spec name)
+                   (user-error "Unknown view %S in app %s" name app))))
+    (jetpacs-ui-state-put (format "search_%s" (plist-get view :name)) value)
+    (jetpacs-shell-push)))
+
 (with-jetpacs-owner "jetpacs-crud"
   (jetpacs-defaction "crud.cell.edit"       #'jetpacs-crud-action-cell-edit)
   (jetpacs-defaction "crud.cell.toggle"     #'jetpacs-crud-action-cell-toggle)
@@ -2597,6 +2739,7 @@ Re-renders the add-record dialog to reflect the picked value."
   (jetpacs-defaction "crud.note.field.edit" #'jetpacs-crud-action-note-field-edit)
   (jetpacs-defaction "crud.note.menu"       #'jetpacs-crud-action-note-menu)
   (jetpacs-defaction "crud.view.search"     #'jetpacs-crud-action-view-search)
+  (jetpacs-defaction "crud.view.search-set" #'jetpacs-crud-action-view-search-set)
   (jetpacs-defaction "crud.field.state-sink" #'jetpacs-crud-action-field-state-sink)
   (jetpacs-defaction "crud.action.apply"    #'jetpacs-crud-action-apply)
   (jetpacs-defaction "crud.view.share"      #'jetpacs-crud-action-view-share)

@@ -44,7 +44,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.AppSpec
@@ -57,6 +56,7 @@ import com.calebc42.composer.preview.PreviewNotice
 import com.calebc42.composer.preview.PreviewNoticeSeverity
 import com.calebc42.composer.preview.PreviewProjection
 import com.calebc42.composer.preview.PreviewProvenance
+import com.calebc42.composer.preview.PreviewSampleGenerator
 import com.calebc42.composer.preview.PreviewView
 import com.calebc42.composer.preview.PreviewViewRoute
 
@@ -80,6 +80,8 @@ fun SemanticPreview(
     var route by remember { mutableStateOf<PreviewViewRoute?>(null) }
     var drawerOpen by remember { mutableStateOf(false) }
     var dataMode by remember { mutableStateOf(PreviewDataMode.AUTO) }
+    var detail by remember { mutableStateOf<PreviewDetailSelection?>(null) }
+    var previewOnlyMessage by remember { mutableStateOf<String?>(null) }
     val groupRoutes = remember { mutableStateMapOf<String, PreviewViewRoute>() }
 
     LaunchedEffect(app, selectedViewIndex) {
@@ -114,12 +116,33 @@ fun SemanticPreview(
             groupRoutes[destination.slug] = selected
         }
         drawerOpen = false
+        detail = null
         onSelectView(selected.index)
     }
 
     val selectedView = route?.let(app::view)
-    val dataset = remember(spec, selectedView?.route, dataMode) {
-        selectedView?.let { PreviewDataResolver.resolve(spec, it.route.index, dataMode) }
+    val samples = remember(spec) { PreviewSampleGenerator().generate(spec) }
+    val datasets = remember(spec, dataMode, samples) {
+        app.views.associate { view ->
+            view.route.slug to PreviewDataResolver.resolve(spec, view.route.index, dataMode, samples)
+        }
+    }
+    val sampleDatasets = remember(app, samples) {
+        app.views.associate { it.route.slug to samples.datasetFor(it.route.slug) }
+    }
+    val dataset = selectedView?.let { datasets[it.route.slug] }
+
+    LaunchedEffect(app, datasets) {
+        detail = detail?.let { previous ->
+            val nextView = app.views.firstOrNull { it.route.slug == previous.view.route.slug }
+                ?: return@let null
+            val nextDataset = datasets[nextView.route.slug] ?: sampleDatasets[nextView.route.slug]
+                ?: return@let null
+            val nextRecord = nextDataset.records.firstOrNull { it.id == previous.record.id }
+                ?: sampleDatasets[nextView.route.slug]?.records?.firstOrNull { it.id == previous.record.id }
+                ?: return@let null
+            PreviewDetailSelection(nextView, nextDataset, nextRecord)
+        }
     }
 
     Surface(
@@ -157,6 +180,10 @@ fun SemanticPreview(
                     app = app,
                     view = selectedView,
                     dataset = dataset,
+                    datasets = datasets,
+                    fallbackDatasets = sampleDatasets,
+                    onOpenDetail = { detail = it },
+                    onPreviewOnly = { previewOnlyMessage = it },
                     modifier = Modifier.weight(1f),
                 )
 
@@ -178,6 +205,20 @@ fun SemanticPreview(
                     onClose = { drawerOpen = false },
                     onSelect = ::select,
                 )
+            }
+            detail?.let { selection ->
+                PreviewDetailSheet(
+                    app = app,
+                    selection = selection,
+                    datasets = datasets,
+                    fallbackDatasets = sampleDatasets,
+                    onOpenDetail = { detail = it },
+                    onPreviewOnly = { previewOnlyMessage = it },
+                    onClose = { detail = null },
+                )
+            }
+            previewOnlyMessage?.let { message ->
+                PreviewOnlyNotice(message, onDismiss = { previewOnlyMessage = null })
             }
         }
     }
@@ -280,6 +321,10 @@ private fun PreviewBody(
     app: PreviewApp,
     view: PreviewView?,
     dataset: PreviewDataset?,
+    datasets: Map<String, PreviewDataset>,
+    fallbackDatasets: Map<String, PreviewDataset>,
+    onOpenDetail: (PreviewDetailSelection) -> Unit,
+    onPreviewOnly: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -333,33 +378,38 @@ private fun PreviewBody(
                 )
             }
         } else {
-            dataset.records.take(6).forEach { record ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(record.title.ifBlank { "Untitled" }, fontWeight = FontWeight.SemiBold)
-                        record.values.entries.take(3).forEach { (key, value) ->
-                            val label = view.fields.firstOrNull { it.key == key }?.label ?: key
-                            Text(
-                                "$label: ${value.ifBlank { "—" }}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-            if (dataset.records.size > 6) {
-                Text(
-                    "+ ${dataset.records.size - 6} more",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
+            PreviewCoreContent(
+                app = app,
+                view = view,
+                dataset = dataset,
+                datasets = datasets,
+                fallbackDatasets = fallbackDatasets,
+                onOpenDetail = onOpenDetail,
+                onPreviewOnly = onPreviewOnly,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PreviewOnlyNotice(message: String, onDismiss: () -> Unit) {
+    Surface(
+        Modifier.fillMaxWidth().padding(12.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shadowElevation = 8.dp,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 14.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                message,
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+            )
+            TextButton(onClick = onDismiss) { Text("OK") }
         }
     }
 }

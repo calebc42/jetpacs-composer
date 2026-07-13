@@ -1,10 +1,16 @@
 # Plan: live semantic preview
 
-**STATUS (2026-07-12): ready to implement.** This is a desktop-only preview
-track over the current FORMAT-2 `AppSpec`. It is intentionally separate from
+**STATUS (2026-07-12): paused after P2.** P0–P2 remain useful editor tooling,
+but specialized-view work is deferred while Composer improves the vocabulary
+and bundled Elisp that produce the real Jetpacs application. This is a
+desktop-only preview track over the current FORMAT-2 `AppSpec`. It is intentionally separate from
 the rejected pixel-identical device-runtime mirror: the preview explains the
 app's structure, content, navigation, and affordances while the user edits; it
-does not claim to reproduce Jetpacs rendering pixel for pixel.
+does not claim to reproduce Jetpacs rendering pixel for pixel. Jetpacs is not
+merely a visual reference: it is the application renderer and App Switcher
+runtime that loads Composer-generated apps. Glasspane is the direct-DSL
+reference application; Composer compiles its org vocabulary into the same
+public Jetpacs DSL.
 
 ## Outcome
 
@@ -214,6 +220,13 @@ Acceptance:
 - At narrow widths the editor remains usable through Editor/Preview switching.
 
 ### P2 — core data views and details
+
+**Landed:** table, checklist, records, and notes now have semantic renderers
+instead of summary cards. They share typed value formatting, deterministic
+cross-view reference resolution, preview-local record detail sheets, and inert
+action affordances that explicitly explain that no org or device state changed.
+Inline table/checklist content remains exact; sample and empty provenance stays
+visible in the shell.
 
 - Implement table, checklist, records, notes, typed values, refs, actions,
   empty states, and full-record details.
