@@ -35,7 +35,7 @@ object OrgCodec : OrgAppCodec {
     // ─── Parsing ─────────────────────────────────────────────────────────
 
     private val KEYWORD_RE =
-        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|JETPACS_INBOX|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
+        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|JETPACS_INBOX|JETPACS_DEPENDS|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
               RegexOption.IGNORE_CASE)
     private val HEADING_RE = Regex("""^\* +(.*?)\s*$""")
     private val DRAWER_START_RE = Regex("""^\s*:PROPERTIES:\s*$""", RegexOption.IGNORE_CASE)
@@ -72,6 +72,9 @@ object OrgCodec : OrgAppCodec {
         val tags = keywords["TAGS"]?.let { raw ->
             raw.split(Regex("\\s+")).filter { it.isNotEmpty() }
         } ?: emptyList()
+        val depends = keywords["JETPACS_DEPENDS"]?.let { raw ->
+            raw.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        } ?: emptyList()
 
         val views = mutableListOf<ViewSpec>()
         var i = 0
@@ -101,6 +104,7 @@ object OrgCodec : OrgAppCodec {
             todoSequence = todoSequence,
             tags = tags,
             inbox = keywords["JETPACS_INBOX"]?.trim()?.ifEmpty { null },
+            depends = depends,
             views = views,
         )
     }
@@ -393,6 +397,8 @@ object OrgCodec : OrgAppCodec {
         spec.icon?.let { appendLine("#+JETPACS_ICON: $it") }
         spec.order?.let { appendLine("#+JETPACS_ORDER: $it") }
         spec.inbox?.let { appendLine("#+JETPACS_INBOX: $it") }
+        if (spec.depends.isNotEmpty())
+            appendLine("#+JETPACS_DEPENDS: ${spec.depends.joinToString(" ")}")
         if (spec.todoSequence.isNotEmpty()) {
             val active = spec.todoSequence.filter { !it.isDone }.joinToString(" ") { it.keyword }
             val done = spec.todoSequence.filter { it.isDone }.joinToString(" ") { it.keyword }

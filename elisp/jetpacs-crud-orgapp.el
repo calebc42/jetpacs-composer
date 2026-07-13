@@ -21,7 +21,7 @@
 ;; ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 (defconst jetpacs-crud-orgapp--keyword-re
-  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|JETPACS_INBOX\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
+  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|JETPACS_INBOX\\|JETPACS_DEPENDS\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
   "File-level keywords of the format (docs/FORMAT.md), case-insensitive.")
 
 (defun jetpacs-crud-orgapp--keywords ()
@@ -151,6 +151,21 @@ Known tokens mirror `ActionDef'; unknown future tokens warn and are preserved."
                (list 'unknown token)))
           (setq pos end))))
     (string-trim value)))
+
+(defun jetpacs-crud-orgapp--parse-depends (value file)
+  "Parse a `#+JETPACS_DEPENDS:' VALUE into a list of package-name strings.
+Names are whitespace-separated and each must match [a-z][a-z0-9-]*.  This
+is deployment metadata — the composer reads it to install the named
+packages on the device (see docs/FORMAT.md); the runtime records it but
+never acts on it, so an unfamiliar name here never blocks an app from
+loading."
+  (let ((names (split-string (or value "") "[ \t]+" t))
+        (case-fold-search nil))     ; [a-z] must stay case-sensitive in batch
+    (dolist (name names)
+      (unless (string-match-p "\\`[a-z][a-z0-9-]*\\'" name)
+        (user-error "%s: JETPACS_DEPENDS name must match [a-z][a-z0-9-]*, got %S"
+                    file name)))
+    names))
 
 (defun jetpacs-crud-orgapp--parse-metrics (value file)
   "Parse closed dashboard metric VALUE into (OP FIELD?) entries."
@@ -363,6 +378,8 @@ Signals `user-error' with FILE and a reason on any format violation."
                          (when (string-suffix-p "/" path)
                            (user-error "%s: JETPACS_INBOX must name an org file" file))
                          (expand-file-name path (file-name-directory file)))))
+            :depends (when-let ((raw (cdr (assoc "JETPACS_DEPENDS" keywords))))
+                       (jetpacs-crud-orgapp--parse-depends raw file))
             :file file
             :views views))))
 

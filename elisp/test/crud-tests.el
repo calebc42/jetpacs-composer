@@ -273,6 +273,27 @@ as an `unknown' marker (rendered as text) instead of erroring."
     (should (equal (plist-get view :coltypes)
                    '(text (ref "Customers" "NAME"))))))
 
+(ert-deftest jetpacs-crud-parse-depends ()
+  "A valid `#+JETPACS_DEPENDS:' parses to the :depends package list."
+  (let ((file (make-temp-file
+               "crud-depends" nil ".org"
+               "#+JETPACS_APP: contacts\n#+JETPACS_DEPENDS: vulpea org-ql\n\
+* People\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM\n:END:\n")))
+    (unwind-protect
+        (should (equal (plist-get (jetpacs-crud-parse-app file) :depends)
+                       '("vulpea" "org-ql")))
+      (delete-file file))))
+
+(ert-deftest jetpacs-crud-parse-depends-rejects-bad-name ()
+  "A JETPACS_DEPENDS name outside [a-z][a-z0-9-]* is a format error."
+  (let ((file (make-temp-file
+               "crud-depends-bad" nil ".org"
+               "#+JETPACS_APP: contacts\n#+JETPACS_DEPENDS: vulpea Org-QL\n\
+* People\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM\n:END:\n")))
+    (unwind-protect
+        (should-error (jetpacs-crud-parse-app file) :type 'user-error)
+      (delete-file file))))
+
 (ert-deftest jetpacs-crud-parse-date-reminder-rule ()
   (let ((file (make-temp-file
                "crud-reminder" nil ".org"

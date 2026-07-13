@@ -133,6 +133,40 @@ class OrgCodecTest {
     }
 
     @Test
+    fun dependsRoundTrips() {
+        val text = """
+            #+JETPACS_APP: contacts
+            #+JETPACS_APP_FORMAT: 3
+            #+JETPACS_DEPENDS: vulpea org-ql
+
+            * People
+            :PROPERTIES:
+            :KIND: notes
+            :SOURCE: contacts/
+            :SCHEMA: %ITEM
+            :END:
+        """.trimIndent()
+        val spec = OrgCodec.parse(text)
+        assertEquals(listOf("vulpea", "org-ql"), spec.depends)
+        assertEquals(spec, OrgCodec.parse(OrgCodec.write(spec)))
+    }
+
+    @Test
+    fun rejectsMalformedDependName() {
+        val text = """
+            #+JETPACS_APP: contacts
+            #+JETPACS_DEPENDS: vulpea Org-QL
+
+            * People
+            :PROPERTIES:
+            :KIND: records
+            :SCHEMA: %ITEM
+            :END:
+        """.trimIndent()
+        assertFailsWith<IllegalArgumentException> { OrgCodec.parse(text) }
+    }
+
+    @Test
     fun dashboardMetricsRoundTrip() {
         val text = """
             #+JETPACS_APP: dashboard

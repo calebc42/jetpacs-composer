@@ -23,8 +23,37 @@ Case-insensitive, like all org keywords.
 | `#+JETPACS_ORDER:` | no | Integer sort key for the launcher home (default 100). |
 | `#+JETPACS_APP_FORMAT:` | no | Format version; default and valid values are up to `3`. The canonical writer always emits it. |
 | `#+JETPACS_INBOX:` | no | App-scoped quick-capture destination; relative paths resolve beside the app document. |
+| `#+JETPACS_DEPENDS:` | no | Space-separated Emacs packages the device installs for this app (each a slug matching `[a-z][a-z0-9-]*`), e.g. `vulpea org-ql`. Deployment metadata — see below. |
 | `#+TODO:` | no | Org TODO keyword sequence used by TODO fields and actions. |
 | `#+TAGS:` | no | File tag vocabulary offered by the composer. |
+
+### `#+JETPACS_DEPENDS:` — engines the device installs
+
+Some datasource kinds lean on Emacs packages that are not part of the
+jetpacs core: **vulpea** (the note index behind the records/notes/board/
+calendar/gallery/tree/dashboard/gantt kinds) and **org-ql** (rich
+`:FILTER:` queries beyond the built-in subset). `#+JETPACS_DEPENDS:`
+records which ones an app needs; the composer emits it automatically for
+apps that use those kinds.
+
+It is **deployment metadata, not a runtime requirement**. The composer's
+device-setup snippet (see below) installs the named packages from MELPA,
+and the runtime *records* the list but never acts on it — an app whose
+device is missing a dependency still loads and simply degrades the
+affected views (see per-kind notes). This keeps old bundles, and bundles
+on a bare core, valid.
+
+### Device setup — what installs the engines
+
+The composer provisions a device once, either by pasting its **install
+snippet** into `~/.emacs.d/init.el` (after `(require 'jetpacs-core)`) or
+by running **Setup device** against a live Termux Emacs. Both run the
+same forms: install `org-ql` and `vulpea` from MELPA (retried each launch
+until they succeed; an offline launch never breaks startup), then enable
+`vulpea-db-autosync-mode` over the org vault and the installed-apps
+directory so the index tracks the vault — including external edits from
+git or Syncthing. A first-run marker triggers one full scan so an
+existing vault is indexed before the first query.
 
 ## Views
 
@@ -339,9 +368,11 @@ list without opening every file, and a record keeps a stable `:ID:`
 across external edits (Syncthing, git) — so a tapped card still resolves
 to the right note after the vault has been re-sorted underneath it. The
 runtime only ever *reads* from vulpea and asks it to re-index a file it
-just wrote; the writes themselves go through org and `org-id`. On the
-device, install vulpea and enable `vulpea-db-autosync-mode` (the starter
-init does this) so the index tracks the vault.
+just wrote; the writes themselves go through org and `org-id`. The
+composer's device setup installs vulpea and enables
+`vulpea-db-autosync-mode` (see [Device setup](#device-setup--what-installs-the-engines)),
+so the index tracks the vault; declare the dependency with
+`#+JETPACS_DEPENDS: vulpea`.
 
 The wire adds `crud.note.add`, `crud.note.field.edit`, and
 `crud.note.menu` for these views; the record's `:ID:` travels on the

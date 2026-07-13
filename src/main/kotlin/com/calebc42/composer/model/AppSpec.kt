@@ -21,14 +21,27 @@ data class AppSpec(
     val tags: List<String> = emptyList(),
     /** Append-only quick-capture destination (`#+JETPACS_INBOX:`). */
     val inbox: String? = null,
+    /**
+     * Emacs packages the device must install for this app (`#+JETPACS_DEPENDS:`).
+     * Deployment metadata: the composer installs these on the device (see
+     * [com.calebc42.composer.device.Deployer]); the runtime ignores them. Each
+     * name must match [DEPEND_RE].
+     */
+    val depends: List<String> = emptyList(),
     val views: List<ViewSpec> = emptyList(),
 ) {
     init {
         require(ID_RE.matches(id)) { "app id must match [a-z][a-z0-9-]*, got \"$id\"" }
+        depends.forEach {
+            require(DEPEND_RE.matches(it)) {
+                "JETPACS_DEPENDS name must match [a-z][a-z0-9-]*, got \"$it\""
+            }
+        }
     }
 
     companion object {
         val ID_RE = Regex("[a-z][a-z0-9-]*")
+        val DEPEND_RE = Regex("[a-z][a-z0-9-]*")
     }
 }
 
