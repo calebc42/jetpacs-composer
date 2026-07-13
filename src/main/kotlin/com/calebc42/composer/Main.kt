@@ -44,7 +44,7 @@ fun main() {
             },
             title = "jetpacs-composer",
             icon = painterResource("icons/jetpacs-composer-icon-forground.svg"),
-            state = WindowState(width = 1100.dp, height = 760.dp),
+            state = WindowState(width = 1400.dp, height = 820.dp),
         ) {
             val isDark = when (appConfig.theme) {
                 ThemePreference.DARK -> true

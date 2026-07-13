@@ -1,5 +1,10 @@
 # jetpacs-composer
 
+The desktop editor includes a live semantic preview: a resizable phone-like
+pane that follows the current `AppSpec`, navigates tabs/drawer/groups, and
+clearly distinguishes inline, sample, and empty data. It is intentionally not a
+pixel-identical Android device mirror and never executes runtime mutations.
+
 **A desktop builder for no-code CRUD apps on the [Jetpacs](https://github.com/calebc42/jetpacs) framework.**
 
 The AppSheet model, org-native: where AppSheet builds apps around a

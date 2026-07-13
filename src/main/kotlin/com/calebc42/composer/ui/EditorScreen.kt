@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +51,9 @@ import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.model.ViewKind
 import com.calebc42.composer.project.ComposerConfig
+import com.calebc42.composer.ui.preview.PreviewSplitPane
+import com.calebc42.composer.ui.preview.PreviewSplitPaneState
+import com.calebc42.composer.ui.preview.SemanticPreview
 import java.io.File
 
 /** What the detail pane is editing. */
@@ -63,6 +67,8 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
                  onSettings: () -> Unit, onClose: () -> Unit) {
     var selection by remember { mutableStateOf<Selection>(Selection.App) }
     var sourcePreviewDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var previewVisible by remember(session) { mutableStateOf(true) }
+    val previewPaneState = remember(session) { PreviewSplitPaneState() }
     var deploying by remember { mutableStateOf(false) }
     var browsingFiles by remember { mutableStateOf(false) }
 
@@ -82,6 +88,13 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
     }
     fun undo() = moveHistory(session::undo)
     fun redo() = moveHistory(session::redo)
+
+    LaunchedEffect(session.spec.views.size, selection) {
+        val selected = selection as? Selection.View
+        if (selected != null && selected.index !in session.spec.views.indices) {
+            selection = Selection.App
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().onPreviewKeyEvent { event ->
@@ -106,6 +119,9 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
             )
             OutlinedButton(onClick = ::undo, enabled = session.canUndo) { Text("Undo") }
             OutlinedButton(onClick = ::redo, enabled = session.canRedo) { Text("Redo") }
+            OutlinedButton(onClick = { previewVisible = !previewVisible }) {
+                Text(if (previewVisible) "Hide preview" else "Preview")
+            }
             Spacer(Modifier.weight(1f))
             androidx.compose.material3.IconButton(onClick = onSettings) {
                 androidx.compose.material3.Icon(
@@ -139,23 +155,38 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
         }
         HorizontalDivider()
 
-        // ── Outline | Detail ─────────────────────────────────────────────
-        Row(Modifier.weight(1f)) {
-            OutlinePane(session, selection, onSelect = { selection = it })
-            VerticalDivider()
-            Column(
-                Modifier.weight(1f).fillMaxHeight()
-                    .verticalScroll(rememberScrollState()).padding(16.dp),
-            ) {
-                when (val sel = selection) {
-                    is Selection.App -> AppForm(session)
-                    is Selection.View ->
-                        if (sel.index in session.spec.views.indices)
-                            ViewForm(session, sel.index)
-                        else selection = Selection.App
+        // ── Outline | Form | Semantic preview ────────────────────────────
+        PreviewSplitPane(
+            previewVisible = previewVisible,
+            state = previewPaneState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            editorContent = {
+                Row(Modifier.fillMaxSize()) {
+                    OutlinePane(session, selection, onSelect = { selection = it })
+                    VerticalDivider()
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight()
+                            .verticalScroll(rememberScrollState()).padding(16.dp),
+                    ) {
+                        when (val sel = selection) {
+                            is Selection.App -> AppForm(session)
+                            is Selection.View ->
+                                if (sel.index in session.spec.views.indices)
+                                    ViewForm(session, sel.index)
+                                else AppForm(session)
+                        }
+                    }
                 }
-            }
-        }
+            },
+            previewContent = {
+                SemanticPreview(
+                    spec = session.spec,
+                    selectedViewIndex = (selection as? Selection.View)?.index,
+                    onSelectView = { selection = Selection.View(it) },
+                    modifier = Modifier.fillMaxSize().padding(12.dp),
+                )
+            },
+        )
 
         // ── Problems strip ───────────────────────────────────────────────
         val error = session.lastError

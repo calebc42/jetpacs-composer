@@ -195,6 +195,12 @@ Acceptance:
 
 ### P1 — live split pane and phone shell
 
+**Landed:** the editor now hosts a live phone-like preview by default with a
+toolbar visibility toggle, bounded mouse/keyboard-accessible resizing, compact
+Editor/Preview switching, app chrome, tabs, drawer destinations, grouped member
+navigation, two-way form selection, provenance/notices, and Auto/Sample/Empty
+data modes. View bodies intentionally remain summary cards until P2 renderers.
+
 - Add Preview toggle, resizable pane, compact phone frame, top bar, bottom tabs,
   drawer, groups, and selection synchronization.
 - Render provenance and validation/capability badges.
