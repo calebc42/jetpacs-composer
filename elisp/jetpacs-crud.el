@@ -478,60 +478,17 @@ STATE is the checkbox character; POS the item's line start."
     (or (and idx (nth idx (plist-get view :coltypes))) 'text)))
 
 (defun jetpacs-crud--scan-records-impl (spec view)
-  "VIEW's records: a list of plists (:pos POS :fields ALIST).
-Records are the direct children of the source heading (level-1
-headings of the file when the source names none), kept when they
-match the view's `:FILTER:' (see the FILTER query engine above).
-Fields are read via `org-entry-get', so special properties come from
-org itself."
-  (let* ((source (jetpacs-crud--view-source spec view))
-         (file (car source))
-         (heading (cdr source))
-         (props (mapcar #'car (jetpacs-crud--schema-props view)))
-         (search-id (format "search_%s" (plist-get view :name)))
-         (search (jetpacs-ui-state search-id))
-         (static-tree (jetpacs-org-parse-query (plist-get view :filter)))
-         (tree (if (and search (not (string-empty-p search)))
-                   (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
-                     (if static-tree (list 'and static-tree q) q))
-                 static-tree))
-         ;; A term past the interpreter's subset falls to org-ql when present.
-         (use-org-ql (and tree
-                          (not (jetpacs-crud--query-supported-p tree))
-                          (jetpacs-crud--org-ql-p))))
-    (when (file-readable-p file)
-      (jetpacs-crud--with-source file
-        (save-restriction
-          (let ((base 0))
-            (when heading
-              (unless (jetpacs-crud--goto-heading heading)
-                (user-error "Heading %s not found in %s" heading file))
-              (setq base (org-outline-level))
-              (org-narrow-to-subtree))
-            (let ((target (1+ base))
-                  (records nil)
-                  (matchset (and use-org-ql
-                                 (jetpacs-crud--org-ql-positions tree))))
-              ;; MATCH is nil — we walk every entry in scope and gate on the
-              ;; parsed FILTER ourselves, so the query grammar is org-ql's,
-              ;; not org's tags/property MATCH syntax.
-              (org-map-entries
-               (lambda ()
-                 (when (and (= (org-outline-level) target)
-                            (or (null tree)
-                                (if use-org-ql
-                                    (gethash (point) matchset)
-                                  (jetpacs-org-entry-matches-p tree))))
-                   (push (list :pos (point)
-                               :done (and (org-entry-is-done-p) t)
-                               :fields (mapcar
-                                        (lambda (p)
-                                          (cons p (or (org-entry-get (point) p)
-                                                      "")))
-                                        props))
-                         records)))
-               nil)
-              (nreverse records))))))))
+  "VIEW's records: a list of plists (:pos POS :fields ALIST :done BOOL).
+Read from the vulpea index via the shared `jetpacs-crud--view-notes-records'
+— the records are the id-adopted direct children of the source heading
+(the file's level-1 headings when the source names none), kept when they
+match the view's `:FILTER:'.  The `:id' is dropped here so the record
+binding keeps addressing by `:pos' (the note's indexed heading position);
+callers gate on `jetpacs-crud--vulpea-p' and degrade when it is absent."
+  (mapcar (lambda (r) (list :pos (plist-get r :pos)
+                            :done (plist-get r :done)
+                            :fields (plist-get r :fields)))
+          (jetpacs-crud--view-notes-records spec view)))
 
 (defun jetpacs-crud--action-tokens (raw)
   "Parse RAW actions string into a list of (token . options)."
@@ -751,37 +708,38 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                             :caption "Tap + to add a record")))))))
 
 (defun jetpacs-crud--scan-tree (spec view)
-  "Walk the SOURCE subtree at all depths, returning `jetpacs-reorderable-list' items."
-  (let* ((source (jetpacs-crud--view-source spec view))
+  "Tree items for VIEW from the vulpea index: all id'd descendants in order.
+Reads every id'd heading under the SOURCE (the whole file when it names no
+heading) off the index — `:level' is its outline depth beneath the scope,
+`:pos' its indexed position.  Self-guards on vulpea's presence: nil without
+it, so the tree body's caller degrades cleanly."
+  (when (jetpacs-crud--vulpea-p)
+   (let* ((source (jetpacs-crud--view-source spec view))
          (file (car source))
-         (heading (cdr source)))
-    (when (file-readable-p file)
-      (jetpacs-crud--with-source file
-        (save-restriction
-          (let ((base 0))
-            (when heading
-              (unless (jetpacs-crud--goto-heading heading)
-                (user-error "Heading %s not found in %s" heading file))
-              (setq base (org-outline-level))
-              (org-narrow-to-subtree))
-            (let ((items nil)
-                  (app-id (plist-get spec :id))
-                  (view-name (plist-get view :name)))
-              (org-map-entries
-               (lambda ()
-                 (let ((lvl (- (org-outline-level) base)))
-                   (when (> lvl 0)
-                     (push `((label . ,(org-get-heading t t t t))
-                             (level . ,(1- lvl))
-                             (pos . ,(point))
-                             (file . ,file)
-                             (on_tap . ,(jetpacs-action "crud.record.detail"
-                                                        :args `((app . ,app-id)
-                                                                (view . ,view-name)
-                                                                (pos . ,(point))))))
-                           items))))
-               nil)
-              (nreverse items))))))))
+         (heading (cdr source))
+         (app-id (plist-get spec :id))
+         (view-name (plist-get view :name))
+         (base-len (if heading 1 0))
+         (notes (vulpea-db-query
+                 (lambda (n)
+                   (and (equal (expand-file-name (vulpea-note-path n))
+                               (expand-file-name file))
+                        (> (vulpea-note-level n) 0)
+                        (if heading
+                            (equal (car (vulpea-note-outline-path n)) heading)
+                          t))))))
+    (mapcar
+     (lambda (n)
+       (let ((pos (vulpea-note-pos n)))
+         `((label . ,(vulpea-note-title n))
+           (level . ,(max 0 (- (length (vulpea-note-outline-path n)) base-len)))
+           (pos . ,pos)
+           (file . ,file)
+           (on_tap . ,(jetpacs-action "crud.record.detail"
+                                      :args `((app . ,app-id)
+                                              (view . ,view-name)
+                                              (pos . ,pos)))))))
+     (sort notes (lambda (a b) (< (vulpea-note-pos a) (vulpea-note-pos b))))))))
 
 (defun jetpacs-crud--tree-body (spec view)
   "The body node for tree VIEW of SPEC."
@@ -1136,24 +1094,66 @@ See FORMAT.md \"What the runtime does to your files\"."
     ;; match the schema prop case-insensitively.
     (_ (or (cdr (assoc-string prop (vulpea-note-properties note) t)) ""))))
 
-(defun jetpacs-crud--notes-query (view)
-  "The `vulpea-note' records for VIEW's SOURCE.
-A directory SOURCE returns its file-level notes; a `file::*Heading'
-SOURCE returns the id'd headings directly under that heading."
-  (let* ((source (plist-get view :source))
-         (dir (plist-get source :dir)))
+(defun jetpacs-crud--query-view-notes (spec view)
+  "The `vulpea-note' records backing heading-family VIEW of SPEC.
+The one index scan every heading kind shares.  SOURCE dispatch:
+ - a `dir/' vault  -> its file-level notes (one note file per record);
+ - `file::*Heading' -> the id'd headings directly under that heading;
+ - a bare file / an inline source (the app document, scoped to the
+   view's own heading) -> the id'd level-1 headings of that scope.
+Records must be id-adopted first (`jetpacs-crud-vulpea-ensure-source')
+for the index to see them."
+  (let ((dir (plist-get (plist-get view :source) :dir)))
     (if dir
         (vulpea-db-query-by-directory (directory-file-name dir) 0)
-      (let ((file (plist-get source :file))
-            (heading (plist-get source :heading)))
+      (let* ((fh (jetpacs-crud--view-source spec view))
+             (file (car fh))
+             (heading (cdr fh)))
         (vulpea-db-query
          (lambda (n)
            (and (equal (expand-file-name (vulpea-note-path n))
                        (expand-file-name file))
-                (> (vulpea-note-level n) 0)
                 (if heading
                     (equal (vulpea-note-outline-path n) (list heading))
-                  t))))))))
+                  (= (vulpea-note-level n) 1)))))))))
+
+(defun jetpacs-crud--view-notes-records (spec view)
+  "Unified records for heading-family VIEW: plists (:id :pos :fields :done).
+Reads VIEW's notes from the vulpea index (`jetpacs-crud--query-view-notes'),
+applies the compiled `:FILTER:' plus any live search overlay, and reads
+each field off the `vulpea-note' struct — no file visit.  `:pos' is the
+note's indexed heading position (a mutation hint; the id is authoritative).
+
+Self-guards on `jetpacs-crud--vulpea-p': without vulpea it returns nil, so
+every caller (bodies, export, reminders, ref resolution) degrades to \"no
+records\" rather than calling into an absent index."
+  (when (jetpacs-crud--vulpea-p)
+   (let* ((props (mapcar #'car (jetpacs-crud--schema-props view)))
+         (search-id (format "search_%s" (plist-get view :name)))
+         (search (jetpacs-ui-state search-id))
+         (static-tree (jetpacs-org-parse-query (plist-get view :filter)))
+         (tree (if (and search (not (string-empty-p search)))
+                   (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
+                     (if static-tree (list 'and static-tree q) q))
+                 static-tree))
+         (notes (jetpacs-crud--query-view-notes spec view))
+         (compiled (jetpacs-crud--compile-filter tree))
+         (keep (pcase compiled
+                 (`(:pred ,pred) pred)
+                 (`(:org-ql ,ql)
+                  (let ((set (jetpacs-crud--notes-org-ql-ids notes ql)))
+                    (lambda (n) (gethash (vulpea-note-id n) set)))))))
+    (delq nil
+          (mapcar
+           (lambda (n)
+             (when (funcall keep n)
+               (list :id (vulpea-note-id n)
+                     :pos (vulpea-note-pos n)
+                     :done (jetpacs-crud--note-done-p n)
+                     :fields (mapcar (lambda (p)
+                                       (cons p (jetpacs-crud--note-field n p)))
+                                     props))))
+           notes)))))
 
 (defun jetpacs-crud--note-done-p (note)
   "Non-nil when vulpea NOTE is in a done state, judged off the index.
@@ -1296,34 +1296,10 @@ visit, so an org-ql-only FILTER does not select them — narrow the SOURCE."
 
 (defun jetpacs-crud--scan-notes-impl (spec view)
   "VIEW's note records: plists (:id ID :fields ALIST), FILTER-matched.
-The FILTER is compiled once (`jetpacs-crud--compile-filter'): the
-index-evaluable subset runs as a `vulpea-note' predicate off the index;
-a term beyond it is handed to org-ql over the source files."
-  (ignore spec)
-  (let* ((props (mapcar #'car (jetpacs-crud--schema-props view)))
-         (search-id (format "search_%s" (plist-get view :name)))
-         (search (jetpacs-ui-state search-id))
-         (static-tree (jetpacs-org-parse-query (plist-get view :filter)))
-         (tree (if (and search (not (string-empty-p search)))
-                   (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
-                     (if static-tree (list 'and static-tree q) q))
-                 static-tree))
-         (notes (jetpacs-crud--notes-query view))
-         (compiled (jetpacs-crud--compile-filter tree))
-         (keep (pcase compiled
-                 (`(:pred ,pred) pred)
-                 (`(:org-ql ,ql)
-                  (let ((set (jetpacs-crud--notes-org-ql-ids notes ql)))
-                    (lambda (n) (gethash (vulpea-note-id n) set)))))))
-    (delq nil
-          (mapcar
-           (lambda (n)
-             (when (funcall keep n)
-               (list :id (vulpea-note-id n)
-                     :fields (mapcar (lambda (p)
-                                       (cons p (jetpacs-crud--note-field n p)))
-                                     props))))
-           notes))))
+A thin projection of the shared `jetpacs-crud--view-notes-records' — notes
+address by their stable `:ID:', so `:pos'/`:done' are dropped here."
+  (mapcar (lambda (r) (list :id (plist-get r :id) :fields (plist-get r :fields)))
+          (jetpacs-crud--view-notes-records spec view)))
 
 ;; ─── Source Binding Definitions ──────────────────────────────────────────────
 
@@ -1699,6 +1675,31 @@ action string the add-FAB fires.")
                         :args `((app . ,(plist-get spec :id))))
            :content-description "Quick capture"))))
 
+(defconst jetpacs-crud--vulpea-kinds
+  '(records notes board calendar gallery tree dashboard gantt)
+  "Heading-family kinds whose datasource is the vulpea index.
+They degrade to a placeholder when vulpea is absent; `table' and
+`checklist' still read org directly (until the Phase 3 extractor).")
+
+(defun jetpacs-crud--needs-vulpea-body (&optional what)
+  "A lazy-column placeholder shown when a heading-family view needs vulpea.
+WHAT names the view in the title."
+  (jetpacs-lazy-column
+   (jetpacs-empty-state
+    :icon "extension_off"
+    :title (format "%s needs vulpea" (or what "This view"))
+    :caption "Install the vulpea package on this device to use this view.")))
+
+(defun jetpacs-crud--build-body (spec view)
+  "Build VIEW's body node, gating vulpea-backed kinds on vulpea's presence.
+A vulpea-backed kind on a device without vulpea renders the placeholder
+rather than calling into an absent index — the bundle still loads and
+lints clean on bare jetpacs-core."
+  (if (and (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
+           (not (jetpacs-crud--vulpea-p)))
+      (jetpacs-crud--needs-vulpea-body (plist-get view :title))
+    (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view)))
+
 (defun jetpacs-crud--build-view (id name snackbar)
   "Build the full scaffold view for app ID's view NAME."
   (let* ((spec (or (jetpacs-crud--app id)
@@ -1707,7 +1708,7 @@ action string the add-FAB fires.")
                    (error "CRUD app %s has no view %s" id name))))
     (jetpacs-shell-tab-view
      (format "%s.%s" id name)
-     (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view)
+     (jetpacs-crud--build-body spec view)
      :top-bar (jetpacs-shell-default-top-bar
                (plist-get view :title)
                :extra-actions (append (jetpacs-crud--capture-actions spec)
@@ -1727,9 +1728,7 @@ the first member's (all four of hello-world's Tasks members add records)."
                           (jetpacs-tab-item (plist-get m :title)
                                             :icon (plist-get m :icon)))
                         members))
-         (pages (mapcar (lambda (m)
-                          (funcall (plist-get (jetpacs-crud--kind-plist m) :body)
-                                   spec m))
+         (pages (mapcar (lambda (m) (jetpacs-crud--build-body spec m))
                         members))
          (view-name (format "%s.%s" id gslug)))
     (jetpacs-shell-tab-view
@@ -1839,7 +1838,12 @@ The default is one bottom tab per view.  Returns the app id."
     (when (jetpacs-crud--app id)
       (jetpacs-crud-unregister id))
     (dolist (view (plist-get spec :views))
-      (jetpacs-crud--scaffold-source spec view))
+      (jetpacs-crud--scaffold-source spec view)
+      ;; Vulpea-backed kinds read from the index, which only sees id'd
+      ;; headings — adopt ids on the source now (a no-op without vulpea or
+      ;; once ids exist).  See FORMAT.md "What the runtime does to your files".
+      (when (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
+        (jetpacs-crud-vulpea-ensure-source spec view)))
     (setf (alist-get id jetpacs-crud--apps nil nil #'equal) spec)
     (with-jetpacs-owner id
       (let ((registered nil))
@@ -2240,7 +2244,9 @@ PAYLOAD contains `from_pos', `after_pos', and `new_level'."
 ;; ─── Record actions ──────────────────────────────────────────────────────────
 
 (defun jetpacs-crud--record-mutate (file pos fn)
-  "Run FN with point at the record heading at POS in FILE; save, push."
+  "Run FN with point at the record heading at POS in FILE; save, reindex, push.
+Records read from the vulpea index, so a write must re-index FILE before
+the re-render re-scans it — otherwise the push would show stale rows."
   (with-current-buffer (find-file-noselect file)
     (org-with-wide-buffer
      (goto-char pos)
@@ -2249,6 +2255,8 @@ PAYLOAD contains `from_pos', `after_pos', and `new_level'."
      (funcall fn))
     (let ((save-silently t))
       (save-buffer)))
+  (when (jetpacs-crud--vulpea-p)
+    (vulpea-db-update-file (expand-file-name file)))
   (jetpacs-shell-push))
 
 (defun jetpacs-crud--current-date (value)
@@ -2659,9 +2667,16 @@ Opens a dedicated typed detail composition inside a full bottom sheet."
            (forward-line -1)
            (dolist (kv values)
              (unless (string-empty-p (cdr kv))
-               (org-entry-put (point) (car kv) (cdr kv))))))
+               (org-entry-put (point) (car kv) (cdr kv))))
+           ;; The new record must carry an :ID: so vulpea indexes it —
+           ;; records read from the index.
+           (org-back-to-heading t)
+           (require 'org-id)
+           (org-id-get-create)))
         (let ((save-silently t))
           (save-buffer)))
+      (when (jetpacs-crud--vulpea-p)
+        (vulpea-db-update-file (expand-file-name file)))
       (jetpacs-ui-state-clear "add_")
       (jetpacs-dismiss-dialog)
       (jetpacs-shell-push))))

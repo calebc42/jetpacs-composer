@@ -386,12 +386,29 @@ cost of the abstraction is that **the runtime must own the layout of
 the records it manages**. Mutations go through org-mode's own
 commands, which normalize what they touch:
 
+- **Adopting IDs on install.** The heading-family kinds (records,
+  board, calendar, gallery, tree, dashboard, gantt, and notes) read
+  their records from the **vulpea index**, which only sees headings
+  that carry an org `:ID:`. So when such a view is registered the
+  runtime silently gives its source file a file-level `:ID:`, an `:ID:`
+  on the source heading, and one on each record heading, then asks
+  vulpea to re-index. This is idempotent (a file that already has the
+  ids is untouched and not re-saved), touches only the view's own
+  declared source, and no-ops entirely when vulpea is absent. IDs are
+  the same infrastructure org-roam/vulpea workflows already rely on.
 - Editing a field creates or reindents the record's property drawer
   and rewrites the affected property/planning line.
 - Deleting a record deletes its **entire subtree** — body text
   included. The confirmation dialog is the only guard.
-- Adding a record appends a normalized heading at the end of the
-  source subtree.
+- Adding a record appends a normalized heading (with an `:ID:`) at the
+  end of the source subtree.
+
+Every record write is followed by a vulpea re-index of the file, so the
+view refreshes against the current contents. A device **without vulpea**
+renders these kinds as a "needs vulpea" placeholder rather than reading
+them — install the dependency (`#+JETPACS_DEPENDS: vulpea`, see
+[Device setup](#device-setup--what-installs-the-engines)). Table and
+checklist kinds still read org directly and work without vulpea.
 
 Text *outside* managed records (prose, other headings, the source
 heading's own body) is never touched, and record body text survives

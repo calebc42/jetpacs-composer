@@ -417,10 +417,20 @@ Replaces any prior registration of the same id (live reload)."
     (buffer-string)))
 
 (defun jetpacs-crud-orgapp--write (file text)
-  "Write TEXT to FILE as UTF-8, creating its directory."
+  "Write TEXT to FILE as UTF-8, creating its directory.
+Keeps any buffer visiting FILE coherent with the new contents: the
+runtime's scanners and `jetpacs-crud-vulpea-ensure-source' visit sources
+via `find-file-noselect' and leave them open, so a later disk write here
+would otherwise strand a stale buffer and trip a supersession conflict on
+the next edit (fatal in batch).  An unmodified visiting buffer is
+reverted; a modified one is left for the caller to reconcile."
   (make-directory (file-name-directory file) t)
   (let ((coding-system-for-write 'utf-8))
-    (with-temp-file file (insert text))))
+    (with-temp-file file (insert text)))
+  (when-let ((buf (find-buffer-visiting file)))
+    (with-current-buffer buf
+      (unless (buffer-modified-p)
+        (revert-buffer t t t)))))
 
 (defun jetpacs-crud-orgapp--drawer-end ()
   "From point on a heading line, the position where the entry's body begins.

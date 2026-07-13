@@ -38,6 +38,16 @@
 (require 'jetpacs-crud)
 (require 'jetpacs-crud-orgapp)
 
+;; Isolate the vulpea index for the whole run.  Registration now adopts
+;; ids on source files and re-indexes them (`jetpacs-crud-vulpea-ensure-source'),
+;; so without a private db location the suite would write the developer's
+;; real note database.  Tests that need a fresh index still bind
+;; `vulpea-db-location' (and reset the connection) locally; this only moves
+;; the default away from ~/.emacs.d.
+(setq vulpea-db-location
+      (expand-file-name (format "jetpacs-crud-tests-%d.db" (emacs-pid))
+                        temporary-file-directory))
+
 ;; Batch shells (CI, wsl.exe) often run under a C locale; the corpus and
 ;; the goldens are UTF-8 (unicode fixtures, the ☑/☐ cell glyphs).
 (prefer-coding-system 'utf-8)
