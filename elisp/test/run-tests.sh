@@ -8,6 +8,13 @@
 set -e
 cd "$(dirname "$0")/../.." || exit 1
 
+# The vulpea-backed suites need a reachable checkout; without one they
+# skip, which silently shrinks coverage.  Say so loudly up front.
+if [ -z "$VULPEA_DIR" ] || [ ! -d "$VULPEA_DIR" ]; then
+  echo "WARNING: vulpea not reachable (VULPEA_DIR unset or missing) —" >&2
+  echo "         vulpea-backed suites will SKIP.  See install-test-deps.sh." >&2
+fi
+
 # The ERT suite.
 emacs -Q --batch -l elisp/test/crud-tests.el -f ert-run-tests-batch-and-exit
 
@@ -49,7 +56,7 @@ smoke () { # smoke APP-ID EXPECTED-VIEW-COUNT
 }
 rc=0
 smoke pantry 2 || rc=1
-smoke hello-world 6 || rc=1
+smoke hello-world 8 || rc=1
 rm -rf "$TMP"
 [ "$rc" -eq 0 ] || { echo "bundle smoke FAILED"; exit 1; }
 echo "All suites passed."

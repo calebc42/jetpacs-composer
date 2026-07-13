@@ -23,6 +23,8 @@
 
 (require 'cl-lib)
 (require 'org)
+(require 'jetpacs-org)
+(require 'jetpacs-source)
 (require 'org-table)
 (require 'org-element)
 (require 'jetpacs-widgets)
@@ -107,170 +109,14 @@ phone (the minibuffer bridge).  Signals `user-error' on invalid input."
                     "\\`[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}\\'" input))
          (user-error "Not a date (YYYY-MM-DD): %s" input))
        input))
+    ('checkbox
+     (completing-read (format "%s: " label) '("[ ]" "[X]")
+                      nil t nil nil
+                      (if (string-match-p "\\`\\[[xX]\\]\\'" (or current ""))
+                          "[X]" "[ ]")))
     (_ (read-string (format "%s: " label) current))))
 
 ;; ─── The FILTER query engine ─────────────────────────────────────────────────
-;;
-;; A view's `:FILTER:' is a query over its records.  We reuse org-ql's sexp
-;; language as the grammar — the same shape Glasspane's search speaks — and
-;; carry a built-in interpreter (`jetpacs-crud--entry-matches-p') that covers
-;; the common subset.  When the org-ql package is installed, a FILTER that
-;; reaches beyond that subset (on records / heading scopes) is handed to org-ql
-;; wholesale — its full query language becomes available, evaluated over the
-;; same narrowed buffer.  Without org-ql such a term signals, so "install
-;; org-ql" is an honest instruction.  Notes match against the vulpea index
-;; instead (`jetpacs-crud--note-matches-p'), which carries its own subset.
-;;
-;; Three input shapes, one grammar (`jetpacs-crud--parse-query'):
-;;   - an org-ql sexp:        (and (todo "NEXT") (tags "work"))
-;;   - filter tokens:         todo:NEXT tags:work,home priority:A
-;;   - free text:             substring match on heading + body
-;; Empty FILTER means "every record"; a malformed one signals, so an empty
-;; result always means "nothing matched", never "the query didn't parse".
-
-(defconst jetpacs-crud--ql-literals '(today nil t < <= > >= =)
-  "Symbols that carry meaning to org-ql; normalization leaves them alone.")
-
-(defun jetpacs-crud--normalize-ql-arg (arg)
-  "Rewrite one query ARG into org-ql's string-argument shape."
-  (cond
-   ((and (consp arg) (eq (car arg) 'quote))
-    (jetpacs-crud--normalize-ql-arg (cadr arg)))
-   ((consp arg) (jetpacs-crud--normalize-ql arg))
-   ((keywordp arg) arg)
-   ((memq arg jetpacs-crud--ql-literals) arg)
-   ((symbolp arg) (symbol-name arg))
-   (t arg)))
-
-(defun jetpacs-crud--normalize-ql (form)
-  "Rewrite query FORM into org-ql's string-argument shape.
-Users may type `(todo NEXT)' with a bare symbol; org-ql wants
-`(todo \"NEXT\")'.  Non-literal symbols in argument position are
-stringified; quotes are unwrapped."
-  (cond
-   ((not (consp form)) form)
-   ((eq (car form) 'quote) (jetpacs-crud--normalize-ql (cadr form)))
-   (t (cons (car form)
-            (mapcar #'jetpacs-crud--normalize-ql-arg (cdr form))))))
-
-(defun jetpacs-crud--query-tokens (query)
-  "Split QUERY into whitespace tokens, keeping \"quoted phrases\" whole."
-  (let ((tokens nil) (start 0))
-    (while (string-match "\"\\([^\"]*\\)\"\\|\\S-+" query start)
-      (push (or (match-string 1 query) (match-string 0 query)) tokens)
-      (setq start (match-end 0)))
-    (nreverse tokens)))
-
-(defun jetpacs-crud--parse-query (query)
-  "Parse a FILTER string QUERY into an org-ql sexp, or nil when empty.
-See the section header for the three accepted shapes.  Signals
-`user-error' on a malformed sexp."
-  (let ((q (string-trim (or query ""))))
-    (cond
-     ((string-empty-p q) nil)
-     ((string-match-p "\\`'?(" q)
-      (condition-case _
-          (jetpacs-crud--normalize-ql (car (read-from-string q)))
-        (error (user-error "Malformed FILTER query: %s" q))))
-     (t
-      (let (clauses)
-        (dolist (tok (jetpacs-crud--query-tokens q))
-          (push
-           (cond
-            ((string-prefix-p "todo:" tok)
-             (cons 'todo (split-string (substring tok 5) "," t)))
-            ((string-prefix-p "tags:" tok)
-             (cons 'tags (split-string (substring tok 5) "," t)))
-            ((string-prefix-p "priority:" tok)
-             (cons 'priority (split-string (substring tok 9) "," t)))
-            (t (list 'regexp (regexp-quote tok))))
-           clauses))
-        (setq clauses (nreverse clauses))
-        (if (cdr clauses) (cons 'and clauses) (car clauses)))))))
-
-(defun jetpacs-crud--entry-priority ()
-  "The priority character of the heading at point, or nil."
-  (save-excursion (org-back-to-heading t) (nth 3 (org-heading-components))))
-
-(defun jetpacs-crud--planning-day (spec)
-  "Resolve a planning SPEC to an absolute day number.
-SPEC is `today', an integer day offset, or a YYYY-MM-DD string."
-  (pcase spec
-    ('today (time-to-days (current-time)))
-    ((pred integerp) (+ (time-to-days (current-time)) spec))
-    ((pred stringp) (time-to-days (org-time-string-to-time spec)))
-    (_ nil)))
-
-(defun jetpacs-crud--planning-match-p (which args)
-  "Match the entry's WHICH planning stamp against org-ql-style ARGS.
-WHICH is `scheduled' or `deadline'.  ARGS is a plist of
-:on / :from / :to day-specs; empty ARGS means mere presence."
-  (let* ((prop (if (eq which 'deadline) "DEADLINE" "SCHEDULED"))
-         (stamp (org-entry-get (point) prop)))
-    (and stamp
-         (let ((day (time-to-days (org-time-string-to-time stamp)))
-               (on (plist-get args :on))
-               (from (plist-get args :from))
-               (to (plist-get args :to)))
-           (and (or (not on) (equal day (jetpacs-crud--planning-day on)))
-                (or (not from) (>= day (jetpacs-crud--planning-day from)))
-                (or (not to) (<= day (jetpacs-crud--planning-day to))))))))
-
-(defun jetpacs-crud--entry-matches-p (tree)
-  "Non-nil when the org entry at point matches org-ql sexp TREE.
-Point must be on a heading.  Implements the common org-ql subset;
-an unsupported term signals `user-error' naming org-ql — that term
-needs the org-ql package, which extends this interpreter when present."
-  (pcase tree
-    (`(and . ,cs) (cl-every #'jetpacs-crud--entry-matches-p cs))
-    (`(or . ,cs) (cl-some #'jetpacs-crud--entry-matches-p cs))
-    (`(not ,c) (not (jetpacs-crud--entry-matches-p c)))
-    (`(todo . ,kws)
-     (let ((state (org-get-todo-state)))
-       (if kws (and state (member state kws) t)
-         (and state (not (member state org-done-keywords)) t))))
-    (`(done) (and (member (org-get-todo-state) org-done-keywords) t))
-    (`(tags . ,tgs)
-     (let ((have (org-get-tags nil t)))
-       (if tgs (and (cl-some (lambda (tg) (member tg have)) tgs) t)
-         (and have t))))
-    (`(priority ,op ,val)
-     (let ((p (jetpacs-crud--entry-priority))
-           (v (if (stringp val) (aref val 0) val)))
-       ;; org urgency runs A > B > C, i.e. the higher priority is the
-       ;; smaller character, so the comparator flips against the chars.
-       (and p (pcase op
-                ('< (> p v)) ('<= (>= p v))
-                ('> (< p v)) ('>= (<= p v)) ('= (= p v))
-                (_ (user-error "Bad priority comparator %S" op))))))
-    (`(priority . ,ps)
-     (let ((p (jetpacs-crud--entry-priority)))
-       (and p (member (char-to-string p) ps) t)))
-    (`(heading . ,texts)
-     (let ((h (or (org-get-heading t t t t) ""))
-           (case-fold-search t))
-       (cl-every (lambda (s) (string-match-p (regexp-quote s) h)) texts)))
-    (`(regexp . ,res)
-     (let ((end (save-excursion (outline-next-heading) (point)))
-           (case-fold-search t))
-       (cl-every (lambda (re)
-                   (save-excursion
-                     (org-back-to-heading t)
-                     (re-search-forward re end t)))
-                 res)))
-    (`(property ,name . ,val)
-     (let ((got (org-entry-get (point) name)))
-       (if val (equal got (car val)) (and got t))))
-    (`(level ,n) (= (org-current-level) n))
-    (`(level ,lo ,hi) (<= lo (org-current-level) hi))
-    (`(scheduled . ,args) (jetpacs-crud--planning-match-p 'scheduled args))
-    (`(deadline . ,args) (jetpacs-crud--planning-match-p 'deadline args))
-    (_ (user-error "Query term %S needs the org-ql package installed" tree))))
-
-;; org-ql handoff: when a FILTER reaches past the interpreter's subset and the
-;; package is installed, org-ql evaluates the whole query over the scan buffer.
-
-(declare-function org-ql-select "org-ql" (buffers-or-files query &rest args))
 
 (defvar jetpacs-crud--org-ql 'unknown
   "Cached org-ql availability: `unknown' re-probes, else t / nil.
@@ -631,7 +477,7 @@ STATE is the checkbox character; POS the item's line start."
                           :key #'car :test #'equal)))
     (or (and idx (nth idx (plist-get view :coltypes))) 'text)))
 
-(defun jetpacs-crud--scan-records (spec view)
+(defun jetpacs-crud--scan-records-impl (spec view)
   "VIEW's records: a list of plists (:pos POS :fields ALIST).
 Records are the direct children of the source heading (level-1
 headings of the file when the source names none), kept when they
@@ -644,7 +490,7 @@ org itself."
          (props (mapcar #'car (jetpacs-crud--schema-props view)))
          (search-id (format "search_%s" (plist-get view :name)))
          (search (jetpacs-ui-state search-id))
-         (static-tree (jetpacs-crud--parse-query (plist-get view :filter)))
+         (static-tree (jetpacs-org-parse-query (plist-get view :filter)))
          (tree (if (and search (not (string-empty-p search)))
                    (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
                      (if static-tree (list 'and static-tree q) q))
@@ -675,7 +521,7 @@ org itself."
                             (or (null tree)
                                 (if use-org-ql
                                     (gethash (point) matchset)
-                                  (jetpacs-crud--entry-matches-p tree))))
+                                  (jetpacs-org-entry-matches-p tree))))
                    (push (list :pos (point)
                                :done (and (org-entry-is-done-p) t)
                                :fields (mapcar
@@ -691,7 +537,7 @@ org itself."
   "Parse RAW actions string into a list of (token . options)."
   (let ((tokens nil) (pos 0))
     (when raw
-      (while (string-match "[ \t]*\\([a-z]+\\)\\((\\([^)]*\\))\\)?" raw pos)
+      (while (string-match "[ \t]*\\([a-z][a-z0-9:/_.-]*\\)\\((\\([^)]*\\))\\)?" raw pos)
         (push (cons (match-string 1 raw) (match-string 3 raw)) tokens)
         (setq pos (match-end 0))))
     (nreverse tokens)))
@@ -711,7 +557,17 @@ org itself."
       ("tags" (list "Tags" "sell" "secondary" action-node))
       ("priority" (list "Priority" "priority_high" "error" action-node))
       ("refile" (list "Refile" "drive_file_move" "secondary" action-node))
-      ("archive" (list "Archive" "archive" "surfaceVariant" action-node)))))
+      ("archive" (list "Archive" "archive" "surfaceVariant" action-node))
+      (pack-action
+       (if (string-prefix-p "pack:" token)
+           (let* ((slash (string-search "/" token))
+                  (action (substring token (1+ slash)))
+                  (action-id (replace-regexp-in-string "[^a-z0-9_]" "_" action)))
+             (list action "extension" "primary"
+                   (jetpacs-action "crud.pack.action"
+                                   :args (append args `((token . ,token)
+                                                        (options . ,options))))))
+         (list token "help" "error" action-node))))))
 
 (defun jetpacs-crud--action-swipe (token-cons args-for)
   (when token-cons
@@ -870,7 +726,15 @@ If FOOTER is provided, it is appended as the last child of the card's column."
 
 (defun jetpacs-crud--records-body (spec view)
   "The body node for records VIEW of SPEC."
-  (let* ((records (jetpacs-crud--scan-records spec view))
+  (let* ((items (jetpacs-source-query "crud.records"
+                                      `((app . ,(plist-get spec :id))
+                                        (view . ,(plist-get view :name)))))
+         (records (mapcar (lambda (item)
+                            (let* ((id-str (alist-get "id" item nil nil #'equal))
+                                   (pos (and id-str (string-to-number id-str))))
+                              (list :pos pos
+                                    :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item))))
+                          items))
          (search-id (format "search_%s" (plist-get view :name)))
          (search-input (jetpacs-text-input search-id
                                            :hint "Search..."
@@ -1269,13 +1133,13 @@ match `and'/`or'/`not', `todo', `tags', `property', `regexp', `level'."
     (_ (user-error "FILTER term %S isn't supported over the notes index; \
 use a supported term (todo/tags/property/regexp/level)" tree))))
 
-(defun jetpacs-crud--scan-notes (spec view)
+(defun jetpacs-crud--scan-notes-impl (spec view)
   "VIEW's note records: plists (:id ID :fields ALIST), FILTER-matched."
   (ignore spec)
   (let* ((props (mapcar #'car (jetpacs-crud--schema-props view)))
          (search-id (format "search_%s" (plist-get view :name)))
          (search (jetpacs-ui-state search-id))
-         (static-tree (jetpacs-crud--parse-query (plist-get view :filter)))
+         (static-tree (jetpacs-org-parse-query (plist-get view :filter)))
          (tree (if (and search (not (string-empty-p search)))
                    (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
                      (if static-tree (list 'and static-tree q) q))
@@ -1289,6 +1153,60 @@ use a supported term (todo/tags/property/regexp/level)" tree))))
                                        (cons p (jetpacs-crud--note-field n p)))
                                      props))))
            (jetpacs-crud--notes-query view)))))
+
+;; ─── Source Binding Definitions ──────────────────────────────────────────────
+
+(jetpacs-defsource "crud.records"
+  :params '((:name app :type "text" :required t)
+            (:name view :type "text" :required t))
+  :fields nil
+  :query (lambda (params)
+           (let* ((spec (jetpacs-crud--app (alist-get 'app params)))
+                  (view (jetpacs-crud--view spec (alist-get 'view params))))
+             (mapcar (lambda (record)
+                       (let ((alist nil))
+                         (push (cons "id" (or (plist-get record :id) (number-to-string (plist-get record :pos)))) alist)
+                         (dolist (f (plist-get record :fields))
+                           (push (cons (car f) (cdr f)) alist))
+                         alist))
+                     (jetpacs-crud--scan-records-impl spec view)))))
+
+(defun jetpacs-crud--scan-records (spec view)
+  "VIEW's records via the core binding layer."
+  (let ((items (jetpacs-source-query "crud.records"
+                                     `((app . ,(plist-get spec :id))
+                                       (view . ,(plist-get view :name))))))
+    (mapcar (lambda (item)
+              (let* ((id-str (alist-get "id" item nil nil #'equal))
+                     (pos (and id-str (string-to-number id-str))))
+                (list :pos pos
+                      :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item))))
+            items)))
+
+(jetpacs-defsource "crud.notes"
+  :params '((:name app :type "text" :required t)
+            (:name view :type "text" :required t))
+  :fields nil
+  :query (lambda (params)
+           (let* ((spec (jetpacs-crud--app (alist-get 'app params)))
+                  (view (jetpacs-crud--view spec (alist-get 'view params))))
+             (mapcar (lambda (record)
+                       (let ((alist nil))
+                         (push (cons "id" (plist-get record :id)) alist)
+                         (dolist (f (plist-get record :fields))
+                           (push (cons (car f) (cdr f)) alist))
+                         alist))
+                     (jetpacs-crud--scan-notes-impl spec view)))))
+
+(defun jetpacs-crud--scan-notes (spec view)
+  "VIEW's notes via the core binding layer."
+  (let ((items (jetpacs-source-query "crud.notes"
+                                     `((app . ,(plist-get spec :id))
+                                       (view . ,(plist-get view :name))))))
+    (mapcar (lambda (item)
+              (list :id (alist-get "id" item nil nil #'equal)
+                    :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item)))
+            items)))
 
 (defun jetpacs-crud--note-card (spec view record &optional footer detailp)
   "The card node for note RECORD (:id :fields) of VIEW in SPEC.
@@ -1372,7 +1290,13 @@ fire the `crud.note.*' actions."
         :icon "extension_off"
         :title "Notes need vulpea"
         :caption "Install the vulpea package on this device to use this view."))
-    (let ((records (jetpacs-crud--scan-notes spec view)))
+    (let* ((items (jetpacs-source-query "crud.notes"
+                                        `((app . ,(plist-get spec :id))
+                                          (view . ,(plist-get view :name)))))
+           (records (mapcar (lambda (item)
+                              (list :id (alist-get "id" item nil nil #'equal)
+                                    :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item)))
+                            items)))
       (apply #'jetpacs-lazy-column
              (or (mapcar (lambda (r) (jetpacs-crud--note-card spec view r)) records)
                  (list (jetpacs-empty-state
@@ -1395,9 +1319,12 @@ fire the `crud.note.*' actions."
 PLIST keys: :body, a (SPEC VIEW) -> node builder; :fab, the crud.*
 action string the add-FAB fires.")
 
-(cl-defun jetpacs-crud--define-kind (kind &key body fab)
+(cl-defun jetpacs-crud--define-kind (kind &key body fab source group-by template layout fallback-capabilities)
   "Register datasource KIND with its :body builder and :fab action string."
-  (setf (alist-get kind jetpacs-crud--kinds) (list :body body :fab fab)))
+  (setf (alist-get kind jetpacs-crud--kinds)
+        (list :body body :fab fab :source source :group-by group-by
+              :template template :layout layout
+              :fallback-capabilities fallback-capabilities)))
 
 (defun jetpacs-crud--kind-plist (view)
   "The behaviour plist for VIEW's kind, defaulting to `table'."
@@ -1444,14 +1371,18 @@ action string the add-FAB fires.")
                                props))
                      (jetpacs-crud--scan-records spec view)))))
     ('notes
-     (let ((props (mapcar #'car (jetpacs-crud--schema-props view))))
-       (cons props
-             (mapcar (lambda (record)
-                       (mapcar (lambda (prop)
-                                 (or (alist-get prop (plist-get record :fields)
-                                                nil nil #'equal) ""))
-                               props))
-                     (jetpacs-crud--scan-notes spec view)))))
+     ;; The notes scan reads the vulpea index; on bare core there is no matrix
+     ;; to export, and `jetpacs-crud--export-actions' then drops the CSV/
+     ;; org-table/share buttons — matching the placeholder body's degradation.
+     (when (jetpacs-crud--vulpea-p)
+       (let ((props (mapcar #'car (jetpacs-crud--schema-props view))))
+         (cons props
+               (mapcar (lambda (record)
+                         (mapcar (lambda (prop)
+                                   (or (alist-get prop (plist-get record :fields)
+                                                  nil nil #'equal) ""))
+                                 props))
+                       (jetpacs-crud--scan-notes spec view))))))
     (_ nil)))
 
 (defun jetpacs-crud--csv-cell (value)
@@ -1548,7 +1479,7 @@ action string the add-FAB fires.")
                    (concat "| "
                            (mapconcat
                             (lambda (cell)
-                              (replace-regexp-in-string "|" "\\\\vert{}" (or cell "") t t))
+                              (replace-regexp-in-string "|" "\\vert{}" (or cell "") t t))
                             row " | ")
                            " |"))
                  matrix)))
@@ -2254,12 +2185,145 @@ declares them, else from the declared column type."
       (org-end-of-meta-data t)
       (string-trim (buffer-substring-no-properties (point) end)))))
 
-(defun jetpacs-crud--detail-footer (prose)
-  "A detail-sheet footer node for PROSE, or nil when empty."
-  (unless (string-empty-p prose)
-    (jetpacs-column
-     (jetpacs-text "Notes" 'title)
-     (jetpacs-text prose 'body))))
+(defun jetpacs-crud--detail-tags-node (spec view raw)
+  "A tappable native tag rail for RAW in VIEW of SPEC."
+  (let ((tags (jetpacs-crud--tag-values raw)))
+    (if tags
+        (apply #'jetpacs-flow-row
+               (mapcar
+                (lambda (tag)
+                  (jetpacs-assist-chip
+                   (concat "#" tag)
+                   :on-tap
+                   (jetpacs-action
+                    "crud.view.search-set"
+                    :args `((app . ,(plist-get spec :id))
+                            (view . ,(plist-get view :name))
+                            (value . ,tag)))))
+                tags))
+      (jetpacs-text "—" 'body))))
+
+(defun jetpacs-crud--detail-value-node (spec view prop value type)
+  "Typed, read-oriented detail node for one schema VALUE."
+  (let ((value (or value "")))
+    (cond
+     ((equal prop "TAGS")
+      (jetpacs-crud--detail-tags-node spec view value))
+     ((eq type 'checkbox)
+      (let ((checked (string-match-p "\\`\\[[xX]\\]\\'" value)))
+        (jetpacs-chip (if checked "Checked" "Not checked")
+                      :selected checked
+                      :icon (if checked "check_box" "check_box_outline_blank"))))
+     ((or (member prop '("SCHEDULED" "DEADLINE")) (eq type 'date))
+      (if-let ((date (jetpacs-crud--current-date value)))
+          (jetpacs-date-stamp :date date)
+        (jetpacs-text "—" 'body)))
+     ((and (consp type) (eq (car type) 'enum))
+      (if (string-empty-p value)
+          (jetpacs-text "—" 'body)
+        (jetpacs-chip value :selected t)))
+     ((member prop '("TODO" "PRIORITY"))
+      (if (string-empty-p value)
+          (jetpacs-text "—" 'body)
+        (jetpacs-chip value :selected t)))
+     ((and (consp type) (eq (car type) 'ref))
+      (if (string-empty-p value)
+          (jetpacs-text "—" 'body)
+        (jetpacs-button
+         (jetpacs-crud--ref-resolve spec (cadr type) value (caddr type))
+         (jetpacs-crud--ref-action spec type value)
+         :icon "open_in_new" :variant "text")))
+     (t
+      (jetpacs-text (if (string-empty-p value) "—" value)
+                    'body nil nil t)))))
+
+(defun jetpacs-crud--detail-field-node
+    (spec view prop label value args-for edit-action-name)
+  "One labeled, typed, explicitly editable detail field."
+  (let ((type (jetpacs-crud--field-type view prop)))
+    (jetpacs-card
+     (list
+      (jetpacs-row
+       (jetpacs-box
+        (list
+         (jetpacs-column
+          (jetpacs-text (or label prop) 'label)
+          (jetpacs-crud--detail-value-node spec view prop value type)))
+        :weight 1)
+       (jetpacs-icon-button
+        "edit"
+        (jetpacs-action edit-action-name :args (funcall args-for prop))
+        :content-description (format "Edit %s" (or label prop)))))
+     :padding 8)))
+
+(defun jetpacs-crud--detail-action-nodes (view args-for notep)
+  "Declared and record-lifecycle buttons for a detail sheet."
+  (append
+   (mapcar
+    (lambda (token-cons)
+      (pcase-let ((`(,label ,icon ,_color ,action)
+                   (jetpacs-crud--action-spec token-cons args-for)))
+        (jetpacs-button label action :icon icon :variant "outlined")))
+    (jetpacs-crud--action-tokens (plist-get view :actions)))
+   (unless notep
+     (list
+      (jetpacs-button
+       "Duplicate record"
+       (jetpacs-action "crud.record.duplicate" :args (funcall args-for nil))
+       :icon "content_copy" :variant "outlined")))
+   (list
+    (jetpacs-button
+     (if notep "Delete note" "Delete record")
+     (jetpacs-action (if notep "crud.note.menu" "crud.record.menu")
+                     :args (funcall args-for nil))
+     :icon "delete" :variant "outlined"))))
+
+(defun jetpacs-crud--record-detail-node (spec view record prose &optional notep)
+  "Dedicated typed detail sheet body for RECORD; NOTEP selects note actions."
+  (let* ((fields (plist-get record :fields))
+         (schema (jetpacs-crud--schema-props view))
+         (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
+                  (if (and item (not (string-empty-p item))) item "Untitled")))
+         (edit-action-name (if notep "crud.note.field.edit" "crud.field.edit"))
+         (args-for
+          (lambda (prop)
+            `((app . ,(plist-get spec :id))
+              (view . ,(plist-get view :name))
+              ,(if notep
+                   `(id . ,(plist-get record :id))
+                 `(pos . ,(plist-get record :pos)))
+              ,@(when prop `((prop . ,prop)))))))
+    (apply
+     #'jetpacs-lazy-column
+     (append
+      (list
+       (jetpacs-section-header (plist-get view :title) :padding 16)
+       (jetpacs-card
+        (list
+         (jetpacs-row
+          (jetpacs-box
+           (list (jetpacs-crud--record-title-node record fields title))
+           :weight 1)
+          (jetpacs-icon-button
+           "edit"
+           (jetpacs-action edit-action-name :args (funcall args-for "ITEM"))
+           :content-description "Edit title")))
+        :padding 12))
+      (cl-loop for (prop . label) in schema
+               unless (equal prop "ITEM")
+               collect
+               (jetpacs-crud--detail-field-node
+                spec view prop label
+                (alist-get prop fields nil nil #'equal)
+                args-for edit-action-name))
+      (when (and prose (not (string-empty-p prose)))
+        (list
+         (jetpacs-divider)
+         (jetpacs-section-header "Body" :padding 16)
+         (jetpacs-markup prose :syntax "org" :style 'body :padding 16)))
+      (list (jetpacs-divider)
+            (jetpacs-section-header "Actions" :padding 16))
+      (jetpacs-crud--detail-action-nodes view args-for notep)))))
 
 (defun jetpacs-crud--draft-value (type value)
   "Normalize companion widget VALUE for org storage according to TYPE.
@@ -2317,7 +2381,7 @@ VALUE is its current preview-local draft, ALLOWED is org's optional
 
 (defun jetpacs-crud-action-record-detail (args _payload)
   "Show the detail view for a record.
-Opens the full record card inside a bottom sheet dialog."
+Opens a dedicated typed detail composition inside a full bottom sheet."
   (let* ((app (alist-get 'app args))
          (view-name (alist-get 'view args))
          (pos (alist-get 'pos args))
@@ -2334,10 +2398,9 @@ Opens the full record card inside a bottom sheet dialog."
                                       :test #'equal)))
           (unless record (user-error "Record not found"))
           (jetpacs-send-dialog
-           (jetpacs-crud--note-card
+           (jetpacs-crud--record-detail-node
             spec view record
-            (jetpacs-crud--detail-footer
-             (jetpacs-crud--entry-prose file nil (vulpea-note-id note)))
+            (jetpacs-crud--entry-prose file nil (vulpea-note-id note))
             t)
            "sheet_full"))
       (let* ((records (jetpacs-crud--scan-records spec view))
@@ -2352,10 +2415,9 @@ Opens the full record card inside a bottom sheet dialog."
         (let* ((record-pos (plist-get record :pos))
                (file (car (jetpacs-crud--view-source spec view))))
           (jetpacs-send-dialog
-           (jetpacs-crud--record-card
+           (jetpacs-crud--record-detail-node
             spec view record
-            (jetpacs-crud--detail-footer
-             (jetpacs-crud--entry-prose file record-pos)))
+            (jetpacs-crud--entry-prose file record-pos))
            "sheet_full"))))))
 
 (defun jetpacs-crud-action-record-add (args _payload)

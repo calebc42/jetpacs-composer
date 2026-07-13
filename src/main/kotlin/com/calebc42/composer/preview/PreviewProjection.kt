@@ -224,11 +224,9 @@ object PreviewProjection {
             action.toToken(),
             action.priority?.let { "Set priority $it" } ?: "Set priority",
         )
-        is ActionDef.Refile -> PreviewAction(
-            action.toToken(),
-            action.target?.let { "Refile to $it" } ?: "Refile",
-        )
+        is ActionDef.Refile -> PreviewAction(action.toToken(), "Refile")
         is ActionDef.Archive -> PreviewAction(action.toToken(), "Archive")
+        is ActionDef.PackAction -> PreviewAction(action.toToken(), "${action.packId}/${action.action}")
         is ActionDef.Unknown -> PreviewAction(
             token = action.token,
             label = action.token.ifBlank { "Unknown action" },

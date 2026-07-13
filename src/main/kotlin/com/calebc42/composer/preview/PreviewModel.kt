@@ -140,12 +140,14 @@ sealed interface PreviewSource {
     data object Inline : PreviewSource
     data class File(val file: String, val heading: String?) : PreviewSource
     data class Directory(val directory: String) : PreviewSource
+    data class Pack(val packId: String, val source: String) : PreviewSource
 
     companion object {
         fun from(source: SourceRef?): PreviewSource = when (source) {
             null -> Inline
             is SourceRef.File -> File(source.file, source.heading)
             is SourceRef.Dir -> Directory(source.dir)
+            is SourceRef.Pack -> Pack(source.packId, source.source)
         }
     }
 }

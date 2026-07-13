@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.calebc42.composer.ui.preview
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -112,45 +116,57 @@ fun PreviewSplitPane(
     require(minEditorWidth > 0.dp) { "minEditorWidth must be positive" }
 
     BoxWithConstraints(modifier) {
-        if (!previewVisible) {
-            Box(Modifier.fillMaxSize(), content = editorContent)
-            return@BoxWithConstraints
+        // Hysteresis: only switch modes if we cross the threshold by a margin
+        val threshold = minEditorWidth + minPreviewWidth + ResizeHandleWidth
+        var isSplitMode by remember { mutableStateOf(maxWidth >= threshold) }
+        val margin = 24.dp
+        
+        if (isSplitMode && maxWidth < threshold - margin) {
+            isSplitMode = false
+        } else if (!isSplitMode && maxWidth > threshold + margin) {
+            isSplitMode = true
         }
 
-        val canSplit = maxWidth >= minEditorWidth + minPreviewWidth + ResizeHandleWidth
-        if (!canSplit) {
-            CompactPaneLayout(
-                selectedPane = state.compactPane,
-                onSelectPane = state::showCompactPane,
-                editorLabel = editorLabel,
-                previewLabel = previewLabel,
-                editorContent = editorContent,
-                previewContent = previewContent,
-            )
-            return@BoxWithConstraints
-        }
+        AnimatedContent(
+            targetState = previewVisible to isSplitMode,
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "PreviewSplitPaneTransition"
+        ) { (visible, split) ->
+            if (!visible) {
+                Box(Modifier.fillMaxSize(), content = editorContent)
+            } else if (!split) {
+                CompactPaneLayout(
+                    selectedPane = state.compactPane,
+                    onSelectPane = state::showCompactPane,
+                    editorLabel = editorLabel,
+                    previewLabel = previewLabel,
+                    editorContent = editorContent,
+                    previewContent = previewContent,
+                )
+            } else {
+                val effectiveMaxPreviewWidth = minOf(
+                    maxPreviewWidth,
+                    maxWidth - minEditorWidth - ResizeHandleWidth,
+                )
+                val renderedPreviewWidth = state.previewWidth.coerceIn(
+                    minPreviewWidth,
+                    effectiveMaxPreviewWidth,
+                )
 
-        val effectiveMaxPreviewWidth = minOf(
-            maxPreviewWidth,
-            maxWidth - minEditorWidth - ResizeHandleWidth,
-        )
-        val renderedPreviewWidth = state.previewWidth.coerceIn(
-            minPreviewWidth,
-            effectiveMaxPreviewWidth,
-        )
-
-        Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight(), content = editorContent)
-            PreviewResizeHandle(
-                previewWidth = renderedPreviewWidth,
-                minPreviewWidth = minPreviewWidth,
-                maxPreviewWidth = effectiveMaxPreviewWidth,
-                onPreviewWidthChange = state::updatePreviewWidth,
-            )
-            Box(
-                Modifier.width(renderedPreviewWidth).fillMaxHeight(),
-                content = previewContent,
-            )
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight(), content = editorContent)
+                    PreviewResizeHandle(
+                        previewWidth = renderedPreviewWidth,
+                        minPreviewWidth = minPreviewWidth,
+                        maxPreviewWidth = effectiveMaxPreviewWidth,
+                        onPreviewWidthChange = state::updatePreviewWidth,
+                    )
+                    Box(
+                        Modifier.width(renderedPreviewWidth).fillMaxHeight(),
+                        content = previewContent,
+                    )
+                }
+            }
         }
     }
 }
@@ -239,11 +255,19 @@ private fun PreviewResizeHandle(
         return true
     }
 
+    // Hit area is wider (16dp) than the visual divider (2dp) for better UX
     Box(
         Modifier
-            .width(ResizeHandleWidth)
+            .width(16.dp)
             .fillMaxHeight()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
+            .pointerInput(previewWidth, minPreviewWidth, maxPreviewWidth) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    val delta = with(density) { (-dragAmount.x).toDp() }
+                    resizeBy(delta)
+                }
+            }
             .semantics {
                 contentDescription = "Resize preview pane"
                 stateDescription = "Preview width ${previewWidth.value.roundToInt()} dp"
@@ -265,20 +289,12 @@ private fun PreviewResizeHandle(
                     else -> false
                 }
             }
-            .focusable()
-            .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
-            .pointerInput(previewWidth, minPreviewWidth, maxPreviewWidth) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    val delta = with(density) { (-dragAmount.x).toDp() }
-                    resizeBy(delta)
-                }
-            },
+            .focusable(),
         contentAlignment = Alignment.Center,
     ) {
         VerticalDivider(
             modifier = Modifier.fillMaxHeight().width(2.dp),
-            color = MaterialTheme.colorScheme.outline,
+            color = MaterialTheme.colorScheme.outlineVariant,
         )
     }
 }

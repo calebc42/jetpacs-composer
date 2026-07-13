@@ -15,7 +15,7 @@
 (require 'org)
 (require 'jetpacs-crud)
 
-(defconst jetpacs-crud-orgapp-format-version "2"
+(defconst jetpacs-crud-orgapp-format-version "3"
   "The only app.org format version accepted by this runtime.")
 
 ;; ─── Parsing helpers ─────────────────────────────────────────────────────────
@@ -175,7 +175,12 @@ views — one note file per record); else (:file F :heading H).  Relative
 paths resolve against APP-FILE's directory."
   (let ((value (string-trim value)))
     (unless (string-equal-ignore-case value "inline")
-      (if (string-suffix-p "/" value)
+      (if (string-prefix-p "pack:" value t)
+          (let* ((slash (string-search "/" value))
+                 (packId (substring value 5 slash))
+                 (source (substring value (1+ slash))))
+            (list :pack packId :source source))
+        (if (string-suffix-p "/" value)
           (list :dir (file-name-as-directory
                       (expand-file-name value (file-name-directory app-file))))
         (let* ((split (split-string value "::" t "[ \t]+"))
@@ -187,7 +192,7 @@ paths resolve against APP-FILE's directory."
                                         app-file target))
                           (string-trim (substring target 1)))))
           (list :file (expand-file-name path (file-name-directory app-file))
-                :heading heading))))))
+                :heading heading)))))))
 
 (defun jetpacs-crud-orgapp--parse-view (app-file index)
   "Parse the view at the level-1 heading at point (0-based INDEX).
@@ -327,8 +332,8 @@ Signals `user-error' with FILE and a reason on any format violation."
       (unless (string-match-p "\\`[a-z][a-z0-9-]*\\'" id)
         (user-error "%s: app id must match [a-z][a-z0-9-]*, got %S" file id))
       (when (and format-v
-                 (not (equal (string-trim format-v)
-                             jetpacs-crud-orgapp-format-version)))
+                 (> (string-to-number (string-trim format-v))
+                    (string-to-number jetpacs-crud-orgapp-format-version)))
         (user-error "%s: unsupported JETPACS_APP_FORMAT %S" file format-v))
       (save-excursion
         (goto-char (point-min))

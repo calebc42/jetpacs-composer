@@ -6,14 +6,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -48,149 +56,174 @@ import com.calebc42.composer.model.ViewSpec
 private typealias ViewEdit = ((ViewSpec) -> ViewSpec) -> Unit
 private typealias ViewTextEdit = (String, (ViewSpec) -> ViewSpec) -> Unit
 
+@Composable
+private fun FormSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(12.dp))
+            content()
+        }
+    }
+}
+
 // ─── App form ────────────────────────────────────────────────────────────────
 
 @Composable
 fun AppForm(session: EditorSession) {
     val spec = session.spec
-    Text("App", style = MaterialTheme.typography.titleLarge)
+    Text("App Configuration", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(12.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            spec.id, { v -> session.update("app.id") { it.copy(id = v.lowercase()) } },
-            label = { Text("id (slug)") }, singleLine = true,
-            isError = !com.calebc42.composer.model.AppSpec.ID_RE.matches(spec.id),
-            modifier = Modifier.width(200.dp),
-        )
-        OutlinedTextField(
-            spec.label.orEmpty(),
-            { v -> session.update("app.label") { it.copy(label = v.ifBlank { null }) } },
-            label = { Text("launcher label") }, singleLine = true,
-            modifier = Modifier.width(220.dp),
+
+    FormSection("Identity & Launcher") {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedTextField(
+                spec.id, { v -> session.update("app.id") { it.copy(id = v.lowercase()) } },
+                label = { Text("id (slug)") }, singleLine = true,
+                isError = !com.calebc42.composer.model.AppSpec.ID_RE.matches(spec.id),
+                modifier = Modifier.width(200.dp),
+            )
+            OutlinedTextField(
+                spec.label.orEmpty(),
+                { v -> session.update("app.label") { it.copy(label = v.ifBlank { null }) } },
+                label = { Text("launcher label") }, singleLine = true,
+                modifier = Modifier.width(220.dp),
+            )
+            var showAppIconPicker by remember { mutableStateOf(false) }
+            OutlinedTextField(
+                spec.icon.orEmpty(),
+                { v -> session.update("app.icon") { it.copy(icon = v.ifBlank { null }) } },
+                label = { Text("icon (Material name)") }, singleLine = true,
+                modifier = Modifier.width(200.dp),
+                trailingIcon = {
+                    androidx.compose.material3.IconButton(onClick = { showAppIconPicker = true }) {
+                        androidx.compose.material3.Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Pick icon"
+                        )
+                    }
+                }
+            )
+            if (showAppIconPicker) {
+                IconPicker(
+                    onIconSelected = { name ->
+                        session.update { spec -> spec.copy(icon = name) }
+                        showAppIconPicker = false
+                    },
+                    onDismiss = { showAppIconPicker = false }
+                )
+            }
+            OutlinedTextField(
+                spec.order?.toString().orEmpty(),
+                { v -> session.update("app.order") { it.copy(order = v.toIntOrNull()) } },
+                label = { Text("launcher order") }, singleLine = true,
+                modifier = Modifier.width(140.dp),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Icons are Material symbol names (snake_case), e.g. kitchen, " +
+                "table_chart, checklist. Unknown names render a placeholder.",
+            style = MaterialTheme.typography.bodySmall,
         )
     }
-    Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        var showAppIconPicker by remember { mutableStateOf(false) }
+
+    FormSection("Integration") {
         OutlinedTextField(
-            spec.icon.orEmpty(),
-            { v -> session.update("app.icon") { it.copy(icon = v.ifBlank { null }) } },
-            label = { Text("icon (Material name)") }, singleLine = true,
-            modifier = Modifier.width(200.dp),
-            trailingIcon = {
-                androidx.compose.material3.IconButton(onClick = { showAppIconPicker = true }) {
-                    androidx.compose.material3.Icon(
-                        Icons.Default.Edit, // palette-like
-                        contentDescription = "Pick icon"
+            spec.inbox.orEmpty(),
+            { v -> session.update("app.inbox") { it.copy(inbox = v.ifBlank { null }) } },
+            label = { Text("quick-capture inbox (optional org path)") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
+    FormSection("TODO Keywords") {
+        Text(
+            "Keywords before the separator are active states; after are done states. " +
+                "Emitted as #+TODO: in the file.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Spacer(Modifier.height(8.dp))
+        FlowRow(
+            verticalArrangement = Arrangement.Center,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val activeKws = spec.todoSequence.filter { !it.isDone }
+            val doneKws = spec.todoSequence.filter { it.isDone }
+            activeKws.forEachIndexed { i, kw ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        kw.keyword,
+                        { v ->
+                            session.update("app.todo.active.$i") {
+                                it.copy(todoSequence = it.todoSequence.map { tk ->
+                                    if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
+                                })
+                            }
+                        },
+                        singleLine = true, modifier = Modifier.width(100.dp),
                     )
+                    TextButton(onClick = {
+                        session.update { it.copy(todoSequence = it.todoSequence.filter { tk -> tk !== kw }) }
+                    }) { Text("×") }
                 }
             }
-        )
-        if (showAppIconPicker) {
-            IconPicker(
-                onIconSelected = { name ->
-                    session.update { spec -> spec.copy(icon = name) }
-                    showAppIconPicker = false
-                },
-                onDismiss = { showAppIconPicker = false }
-            )
+            OutlinedButton(onClick = {
+                session.update {
+                    it.copy(todoSequence = it.todoSequence + TodoKeyword("NEW", isDone = false))
+                }
+            }) { Text("+ Active") }
+
+            Box(Modifier.padding(horizontal = 8.dp).align(Alignment.CenterVertically)) {
+                Text("|", style = MaterialTheme.typography.titleMedium)
+            }
+
+            doneKws.forEachIndexed { i, kw ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        kw.keyword,
+                        { v ->
+                            session.update("app.todo.done.$i") {
+                                it.copy(todoSequence = it.todoSequence.map { tk ->
+                                    if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
+                                })
+                            }
+                        },
+                        singleLine = true, modifier = Modifier.width(100.dp),
+                    )
+                    TextButton(onClick = {
+                        session.update { it.copy(todoSequence = it.todoSequence.filter { tk -> tk !== kw }) }
+                    }) { Text("×") }
+                }
+            }
+            OutlinedButton(onClick = {
+                session.update {
+                    it.copy(todoSequence = it.todoSequence + TodoKeyword("DONE", isDone = true))
+                }
+            }) { Text("+ Done") }
         }
+    }
+
+    FormSection("Classification") {
         OutlinedTextField(
-            spec.order?.toString().orEmpty(),
-            { v -> session.update("app.order") { it.copy(order = v.toIntOrNull()) } },
-            label = { Text("launcher order") }, singleLine = true,
-            modifier = Modifier.width(140.dp),
+            spec.tags.joinToString(", "),
+            { v ->
+                session.update("app.tags") {
+                    it.copy(tags = v.split(",").map(String::trim).filter(String::isNotEmpty))
+                }
+            },
+            label = { Text("tags (comma-separated)") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
-    Spacer(Modifier.height(8.dp))
-    Text(
-        "Icons are Material symbol names (snake_case), e.g. kitchen, " +
-            "table_chart, checklist. Unknown names render a placeholder.",
-        style = MaterialTheme.typography.bodySmall,
-    )
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        spec.inbox.orEmpty(),
-        { v -> session.update("app.inbox") { it.copy(inbox = v.ifBlank { null }) } },
-        label = { Text("quick-capture inbox (optional org path)") },
-        singleLine = true, modifier = Modifier.width(420.dp),
-    )
-
-    // ─── TODO Keywords ───────────────────────────────────────────────────
-    Spacer(Modifier.height(16.dp))
-    Text("TODO Keywords", style = MaterialTheme.typography.titleMedium)
-    Text(
-        "Keywords before the separator are active states; after are done states. " +
-            "Emitted as #+TODO: in the file.",
-        style = MaterialTheme.typography.bodySmall,
-    )
-    Spacer(Modifier.height(8.dp))
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        val activeKws = spec.todoSequence.filter { !it.isDone }
-        val doneKws = spec.todoSequence.filter { it.isDone }
-        activeKws.forEachIndexed { i, kw ->
-            OutlinedTextField(
-                kw.keyword,
-                { v ->
-                    session.update("app.todo.active.$i") {
-                        it.copy(todoSequence = it.todoSequence.map { tk ->
-                            if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
-                        })
-                    }
-                },
-                singleLine = true, modifier = Modifier.width(100.dp),
-            )
-            TextButton(onClick = {
-                session.update { it.copy(todoSequence = it.todoSequence.filter { tk -> tk !== kw }) }
-            }) { Text("×") }
-        }
-        OutlinedButton(onClick = {
-            session.update {
-                it.copy(todoSequence = it.todoSequence + TodoKeyword("NEW", isDone = false))
-            }
-        }) { Text("+") }
-
-        Text(" | ", style = MaterialTheme.typography.titleMedium)
-
-        doneKws.forEachIndexed { i, kw ->
-            OutlinedTextField(
-                kw.keyword,
-                { v ->
-                    session.update("app.todo.done.$i") {
-                        it.copy(todoSequence = it.todoSequence.map { tk ->
-                            if (tk === kw) tk.copy(keyword = v.trim().uppercase()) else tk
-                        })
-                    }
-                },
-                singleLine = true, modifier = Modifier.width(100.dp),
-            )
-            TextButton(onClick = {
-                session.update { it.copy(todoSequence = it.todoSequence.filter { tk -> tk !== kw }) }
-            }) { Text("×") }
-        }
-        OutlinedButton(onClick = {
-            session.update {
-                it.copy(todoSequence = it.todoSequence + TodoKeyword("DONE", isDone = true))
-            }
-        }) { Text("+") }
-    }
-
-    // ─── Tags ────────────────────────────────────────────────────────────
-    Spacer(Modifier.height(16.dp))
-    Text("Tags", style = MaterialTheme.typography.titleMedium)
-    OutlinedTextField(
-        spec.tags.joinToString(", "),
-        { v ->
-            session.update("app.tags") {
-                it.copy(tags = v.split(",").map(String::trim).filter(String::isNotEmpty))
-            }
-        },
-        label = { Text("tags (comma-separated)") }, singleLine = true,
-        modifier = Modifier.width(400.dp),
-    )
 }
 
 // ─── View form ───────────────────────────────────────────────────────────────
@@ -207,144 +240,158 @@ fun ViewForm(session: EditorSession, index: Int) {
     fun editText(key: String, transform: (ViewSpec) -> ViewSpec) =
         session.update("view.$index.$key") { ModelOps.updateView(it, index, transform) }
 
-    Text("View — ${view.title}", style = MaterialTheme.typography.titleLarge)
+    Text("View Detail", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(12.dp))
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            view.title, { v -> editText("title") { it.copy(title = v) } },
-            label = { Text("title (tab label)") }, singleLine = true,
-            modifier = Modifier.width(220.dp),
-        )
-        var showViewIconPicker by remember { mutableStateOf(false) }
-        OutlinedTextField(
-            view.icon.orEmpty(),
-            { v -> editText("icon") { it.copy(icon = v.ifBlank { null }) } },
-            label = { Text("tab icon") }, singleLine = true,
-            modifier = Modifier.width(200.dp),
-            trailingIcon = {
-                androidx.compose.material3.IconButton(onClick = { showViewIconPicker = true }) {
-                    androidx.compose.material3.Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "Pick icon"
-                    )
-                }
-            }
-        )
-        if (showViewIconPicker) {
-            IconPicker(
-                onIconSelected = { 
-                    edit { spec -> spec.copy(icon = it) }
-                    showViewIconPicker = false
-                },
-                onDismiss = { showViewIconPicker = false }
-            )
-        }
-        OutlinedTextField(
-            view.order?.toString().orEmpty(),
-            { v -> editText("order") { it.copy(order = v.toIntOrNull()) } },
-            label = { Text("tab order") }, singleLine = true,
-            modifier = Modifier.width(120.dp),
-        )
-    }
-
-    Spacer(Modifier.height(8.dp))
-    Row(verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Kind:", style = MaterialTheme.typography.bodyMedium)
-
-        var expanded by remember { mutableStateOf(false) }
-        androidx.compose.foundation.layout.Box {
-            OutlinedButton(onClick = { expanded = true }) {
-                Text(view.kind.name)
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                ViewKind.entries.forEach { kind ->
-                    DropdownMenuItem(
-                        text = { Text(kind.name) },
-                        onClick = {
-                            edit {
-                                val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT)) {
-                                    it.schema.ifEmpty { listOf(SchemaField("ITEM", "Name")) }
-                                } else it.schema
-                                it.copy(
-                                    kind = kind,
-                                    schema = schema,
-                                    metrics = if (kind == ViewKind.DASHBOARD)
-                                        it.metrics.ifEmpty {
-                                            listOf(DashboardMetric(AggregateOp.COUNT))
-                                        }
-                                    else emptyList(),
-                                )
-                            }
-                            expanded = false
-                        }
-                    )
-                }
-            }
-        }
-    }
-
-    Spacer(Modifier.height(8.dp))
-    Row(verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Placement:", style = MaterialTheme.typography.bodyMedium)
-
-        val placement = when {
-            view.group != null -> "Group"
-            view.nav == ViewNav.DRAWER -> "Drawer"
-            else -> "Bottom tab"
-        }
-        var placeExpanded by remember { mutableStateOf(false) }
-        androidx.compose.foundation.layout.Box {
-            OutlinedButton(onClick = { placeExpanded = true }) {
-                Text(placement)
-            }
-            DropdownMenu(expanded = placeExpanded,
-                         onDismissRequest = { placeExpanded = false }) {
-                DropdownMenuItem(text = { Text("Bottom tab") }, onClick = {
-                    edit { it.copy(nav = ViewNav.TAB, group = null) }
-                    placeExpanded = false
-                })
-                DropdownMenuItem(text = { Text("Drawer (hamburger)") }, onClick = {
-                    edit { it.copy(nav = ViewNav.DRAWER, group = null) }
-                    placeExpanded = false
-                })
-                DropdownMenuItem(text = { Text("Group (tabbed)…") }, onClick = {
-                    edit { it.copy(nav = ViewNav.TAB, group = it.group ?: "Group") }
-                    placeExpanded = false
-                })
-            }
-        }
-        if (view.group != null) {
+    FormSection("Tab Identity") {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             OutlinedTextField(
-                view.group,
-                { v -> editText("group") { it.copy(group = v.ifBlank { null }) } },
-                label = { Text("group name (shared destination)") }, singleLine = true,
-                modifier = Modifier.width(240.dp),
+                view.title, { v -> editText("title") { it.copy(title = v) } },
+                label = { Text("title (tab label)") }, singleLine = true,
+                modifier = Modifier.width(220.dp),
+            )
+            var showViewIconPicker by remember { mutableStateOf(false) }
+            OutlinedTextField(
+                view.icon.orEmpty(),
+                { v -> editText("icon") { it.copy(icon = v.ifBlank { null }) } },
+                label = { Text("tab icon") }, singleLine = true,
+                modifier = Modifier.width(200.dp),
+                trailingIcon = {
+                    androidx.compose.material3.IconButton(onClick = { showViewIconPicker = true }) {
+                        androidx.compose.material3.Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Pick icon"
+                        )
+                    }
+                }
+            )
+            if (showViewIconPicker) {
+                IconPicker(
+                    onIconSelected = {
+                        editText("icon") { spec -> spec.copy(icon = it) }
+                        showViewIconPicker = false
+                    },
+                    onDismiss = { showViewIconPicker = false }
+                )
+            }
+            OutlinedTextField(
+                view.order?.toString().orEmpty(),
+                { v -> editText("order") { it.copy(order = v.toIntOrNull()) } },
+                label = { Text("tab order") }, singleLine = true,
+                modifier = Modifier.width(120.dp),
             )
         }
     }
 
-    Spacer(Modifier.height(8.dp))
-    SourceEditor(view, ::edit, ::editText)
+    FormSection("Navigation & Type") {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Kind:", style = MaterialTheme.typography.labelLarge)
 
-    Spacer(Modifier.height(16.dp))
-    when {
-        view.kind == ViewKind.CHECKLIST -> ChecklistEditor(view, ::edit, ::editText)
-        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT) -> {
-            RecordsSchemaEditor(spec, view, ::edit, ::editText)
-            Spacer(Modifier.height(16.dp))
-            ActionEditor(
-                actions = view.actions,
-                onUpdate = { newActions, coalesceKey ->
-                    if (coalesceKey == null) edit { it.copy(actions = newActions) }
-                    else editText("actions.$coalesceKey") { it.copy(actions = newActions) }
-                },
-            )
+                var expanded by remember { mutableStateOf(false) }
+                androidx.compose.foundation.layout.Box {
+                    OutlinedButton(onClick = { expanded = true }) {
+                        Text(view.kind.name)
+                    }
+                    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                        ViewKind.entries.forEach { kind ->
+                            DropdownMenuItem(
+                                text = { Text(kind.name) },
+                                onClick = {
+                                    edit {
+                                        val schema = if (kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT)) {
+                                            it.schema.ifEmpty { listOf(SchemaField("ITEM", "Name")) }
+                                        } else it.schema
+                                        it.copy(
+                                            kind = kind,
+                                            schema = schema,
+                                            metrics = if (kind == ViewKind.DASHBOARD)
+                                                it.metrics.ifEmpty {
+                                                    listOf(DashboardMetric(AggregateOp.COUNT))
+                                                }
+                                            else emptyList(),
+                                        )
+                                    }
+                                    expanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Placement:", style = MaterialTheme.typography.labelLarge)
+
+                val placement = when {
+                    view.group != null -> "Group"
+                    view.nav == ViewNav.DRAWER -> "Drawer"
+                    else -> "Bottom tab"
+                }
+                var placeExpanded by remember { mutableStateOf(false) }
+                androidx.compose.foundation.layout.Box {
+                    OutlinedButton(onClick = { placeExpanded = true }) {
+                        Text(placement)
+                    }
+                    DropdownMenu(expanded = placeExpanded,
+                                 onDismissRequest = { placeExpanded = false }) {
+                        DropdownMenuItem(text = { Text("Bottom tab") }, onClick = {
+                            edit { it.copy(nav = ViewNav.TAB, group = null) }
+                            placeExpanded = false
+                        })
+                        DropdownMenuItem(text = { Text("Drawer (hamburger)") }, onClick = {
+                            edit { it.copy(nav = ViewNav.DRAWER, group = null) }
+                            placeExpanded = false
+                        })
+                        DropdownMenuItem(text = { Text("Group (tabbed)…") }, onClick = {
+                            edit { it.copy(nav = ViewNav.TAB, group = it.group ?: "Group") }
+                            placeExpanded = false
+                        })
+                    }
+                }
+                if (view.group != null) {
+                    OutlinedTextField(
+                        view.group,
+                        { v -> editText("group") { it.copy(group = v.ifBlank { null }) } },
+                        label = { Text("group name") }, singleLine = true,
+                        modifier = Modifier.width(200.dp),
+                    )
+                }
+            }
         }
-        view.source == null -> InlineTableEditor(view, referenceTargets, ::edit, ::editText)
-        else -> ExternalColumnsEditor(view, referenceTargets, ::edit, ::editText)
+    }
+
+    FormSection("Data Source") {
+        SourceEditor(view, ::edit, ::editText)
+    }
+
+    val editorModifier = Modifier.padding(top = 8.dp)
+    when {
+        view.kind == ViewKind.CHECKLIST -> FormSection("Checklist Items") { ChecklistEditor(view, ::edit, ::editText) }
+        view.kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT) -> {
+            FormSection("Schema & Configuration") {
+                RecordsSchemaEditor(spec, view, ::edit, ::editText)
+            }
+            FormSection("Quick Actions") {
+                ActionEditor(
+                    actions = view.actions,
+                    onUpdate = { newActions, coalesceKey ->
+                        if (coalesceKey == null) edit { it.copy(actions = newActions) }
+                        else editText("actions.$coalesceKey") { it.copy(actions = newActions) }
+                    },
+                )
+            }
+        }
+        view.source == null -> FormSection("Inline Data") { InlineTableEditor(view, referenceTargets, ::edit, ::editText) }
+        else -> FormSection("External Columns") { ExternalColumnsEditor(view, referenceTargets, ::edit, ::editText) }
     }
 }
 
@@ -764,6 +811,12 @@ private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit)
             source.dir,
             { v -> editText("source.dir") { it.copy(source = SourceRef.Dir(v)) } },
             label = { Text("note vault directory") }, singleLine = true,
+            modifier = Modifier.width(320.dp),
+        )
+        is SourceRef.Pack -> OutlinedTextField(
+            source.source,
+            { v -> editText("source.source") { it.copy(source = source.copy(source = v)) } },
+            label = { Text("pack source") }, singleLine = true,
             modifier = Modifier.width(320.dp),
         )
         null -> {}

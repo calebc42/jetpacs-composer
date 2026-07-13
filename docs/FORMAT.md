@@ -1,12 +1,11 @@
-# The Jetpacs CRUD app format, v2 — `app.org`
+# The Jetpacs CRUD app format, v3 — `app.org`
 
 **STATUS: current format.** This document is the contract between the
 composer (the desktop editor), `jetpacs-crud-orgapp.el` (the on-device
 parser), and `jetpacs-crud.el` (the runtime). Anything not listed here
 is not part of the format; adding a keyword, drawer property, column
-type, or action requires a deliberate format change. There was no installed
-v1 app base, so v2 is a clean cutover: explicit v1 documents are rejected and
-there is no migration ladder. A missing version means the current version.
+type, or action requires a deliberate format change. A missing version
+means the current version.
 
 An app is **one org file**. Everything the runtime needs is in it; the
 data it manages lives in org tables — either inline in this file or in
@@ -22,7 +21,7 @@ Case-insensitive, like all org keywords.
 | `#+TITLE:` | no | Launcher label (default: capitalized id). |
 | `#+JETPACS_ICON:` | no | Material icon name for the launcher card (default `apps`). |
 | `#+JETPACS_ORDER:` | no | Integer sort key for the launcher home (default 100). |
-| `#+JETPACS_APP_FORMAT:` | no | Format version; default and only valid value: `2`. The canonical writer always emits it. |
+| `#+JETPACS_APP_FORMAT:` | no | Format version; default and valid values are up to `3`. The canonical writer always emits it. |
 | `#+JETPACS_INBOX:` | no | App-scoped quick-capture destination; relative paths resolve beside the app document. |
 | `#+TODO:` | no | Org TODO keyword sequence used by TODO fields and actions. |
 | `#+TAGS:` | no | File tag vocabulary offered by the composer. |
@@ -89,6 +88,8 @@ records' `:GROUP_BY:`, which lanes a single board's records.
 - `/absolute/path/vault/` (trailing slash) — **notes** views only: a
   vulpea vault directory, where every `.org` note file is one record
   (see Notes views).
+- `pack:<pack-id>/<source>` — an external pack datasource, bound to a
+  `jetpacs-defsource` registry entry.
 
 If an external source file does not exist at registration time, the
 runtime creates it when it can: table views need `:COLUMNS:` (for the
@@ -246,6 +247,7 @@ Actions are a closed, space-separated vocabulary attached to each record card:
 - `todo(KEYWORD)` · `schedule` · `deadline`
 - `tags` or `tags(a,b)` · `priority` or `priority(A)`
 - `refile` or `refile(TARGET)` · `archive` or `archive(STYLE)`
+- `pack:<pack-id>/<action>` or `pack:<pack-id>/<action>(args)`
 
 They dispatch through the single closed `crud.action.apply` handler and map to
 org's own mutation commands. Unknown future tokens are preserved and ignored by

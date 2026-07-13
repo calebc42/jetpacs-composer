@@ -15,6 +15,7 @@ import com.calebc42.composer.model.TodoKeyword
 import com.calebc42.composer.model.ViewKind
 import com.calebc42.composer.model.ViewNav
 import com.calebc42.composer.model.ViewSpec
+import com.calebc42.composer.model.ContractManifest
 
 /**
  * Reader/writer for the current v2 app.org format (docs/FORMAT.md).
@@ -25,9 +26,9 @@ import com.calebc42.composer.model.ViewSpec
  * It deliberately parses the SAME grammar as jetpacs-crud-orgapp.el;
  * the shared fixture corpus (elisp/test/fixtures) keeps the two honest.
  */
-object OrgCodec {
+object OrgCodec : OrgAppCodec {
 
-    const val FORMAT_VERSION = 2
+    const val FORMAT_VERSION = 3
 
     class FormatException(message: String) : Exception(message)
 
@@ -45,9 +46,9 @@ object OrgCodec {
     private val CHECKBOX_RE = Regex("""^\s*[-+*] +\[([ xX-])\] +(.*)$""")
     private val COLTYPE_RE = Regex("""([a-z]+)(\(([^)]*)\))?""")
     private val SCHEMA_RE = Regex("""%([A-Za-z_][A-Za-z_0-9-]*)(\(([^)]*)\))?""")
-    private val ACTION_TOKEN_RE = Regex("""([a-z]+)(?:\(([^)]*)\))?""")
+    private val ACTION_TOKEN_RE = Regex("""([a-z][a-z0-9:/_.-]*)(?:\(([^)]*)\))?""", RegexOption.IGNORE_CASE)
 
-    fun parse(text: String): AppSpec {
+    override fun parse(text: String): AppSpec {
         val lines = text.lines()
 
         val keywords = mutableMapOf<String, String>()
@@ -62,7 +63,8 @@ object OrgCodec {
         if (!AppSpec.ID_RE.matches(id))
             throw FormatException("app id must match [a-z][a-z0-9-]*, got \"$id\"")
         keywords["JETPACS_APP_FORMAT"]?.let {
-            if (it.trim() != FORMAT_VERSION.toString())
+            val v = it.trim().toIntOrNull() ?: FORMAT_VERSION
+            if (v > FORMAT_VERSION)
                 throw FormatException("unsupported JETPACS_APP_FORMAT \"$it\"")
         }
 
@@ -121,20 +123,16 @@ object OrgCodec {
 
     private fun buildView(title: String, props: Map<String, String>,
                           bodyLines: List<String>, index: Int): ViewSpec {
-        val kind = when (props["KIND"]?.trim()?.lowercase()) {
-            null, "", "table" -> ViewKind.TABLE
-            "checklist" -> ViewKind.CHECKLIST
-            "records" -> ViewKind.RECORDS
-            "notes" -> ViewKind.NOTES
-            "board" -> ViewKind.BOARD
-            "calendar" -> ViewKind.CALENDAR
-            "gallery" -> ViewKind.GALLERY
-            "tree" -> ViewKind.TREE
-            "dashboard" -> ViewKind.DASHBOARD
-            "gantt" -> ViewKind.GANTT
+        val kindStr = props["KIND"]?.trim()?.lowercase()
+        val kind = when {
+            kindStr.isNullOrEmpty() -> ViewKind.TABLE
+            kindStr in ContractManifest.viewKinds -> {
+                // Safely handle enum conversion; fallback to UNKNOWN if mismatched
+                runCatching { ViewKind.valueOf(kindStr.uppercase()) }.getOrDefault(ViewKind.UNKNOWN)
+            }
             else -> ViewKind.UNKNOWN
         }
-        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT)
+        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT, ViewKind.UNKNOWN)
         if (isRecordsType && props["SCHEMA"].isNullOrBlank())
             throw FormatException("a ${kind.name.lowercase()} view needs a :SCHEMA: under \"$title\"")
         if (kind == ViewKind.NOTES && props["SOURCE"].isNullOrBlank())
@@ -205,7 +203,16 @@ object OrgCodec {
 
             val token = match.groupValues[1]
             val options = match.groups[2]?.value
-            actions += when (token) {
+            
+            actions += if (token.startsWith("pack:")) {
+                val slash = token.indexOf('/')
+                if (slash == -1) throw FormatException("malformed pack action token: $token")
+                val packId = token.substring(5, slash)
+                val action = token.substring(slash + 1)
+                ActionDef.PackAction(packId, action, options?.trim()?.ifEmpty { null })
+            } else if (token !in ContractManifest.actions) {
+                ActionDef.Unknown(token)
+            } else when (token) {
                 "todo" -> ActionDef.SetTodo(
                     options?.trim()?.ifEmpty { null }
                         ?: throw FormatException("todo() needs a keyword"))
@@ -236,6 +243,13 @@ object OrgCodec {
     private fun parseSource(value: String): SourceRef? {
         val v = value.trim()
         if (v.equals("inline", ignoreCase = true)) return null
+        if (v.startsWith("pack:", ignoreCase = true)) {
+            val slash = v.indexOf('/')
+            if (slash == -1) throw FormatException("malformed pack source: $v")
+            val packId = v.substring(5, slash)
+            val source = v.substring(slash + 1)
+            return SourceRef.Pack(packId, source)
+        }
         // A trailing slash marks a note vault directory, not a file::*heading.
         if (v.endsWith("/")) return SourceRef.Dir(v.removeSuffix("/"))
         val parts = v.split("::", limit = 2)
@@ -289,7 +303,10 @@ object OrgCodec {
         COLTYPE_RE.findAll(value).map { m ->
             val token = m.groupValues[1]
             val options = if (m.groupValues[2].isEmpty()) null else m.groupValues[3]
-            when (token) {
+            
+            if (token !in ContractManifest.colTypes) {
+                ColType.Unknown(token)
+            } else when (token) {
                 "text" -> ColType.Text
                 "number" -> ColType.Number
                 "date" -> ColType.Date
@@ -369,7 +386,7 @@ object OrgCodec {
 
     // ─── Writing (canonical form) ─────────────────────────────────────────
 
-    fun write(spec: AppSpec): String = buildString {
+    override fun write(spec: AppSpec): String = buildString {
         appendLine("#+JETPACS_APP: ${spec.id}")
         appendLine("#+JETPACS_APP_FORMAT: $FORMAT_VERSION")
         spec.label?.let { appendLine("#+TITLE: $it") }
@@ -421,6 +438,7 @@ object OrgCodec {
                 add("SOURCE" to when (it) {
                     is SourceRef.File -> it.file + (it.heading?.let { h -> "::*$h" } ?: "")
                     is SourceRef.Dir -> it.dir + "/"
+                    is SourceRef.Pack -> "pack:${it.packId}/${it.source}"
                 })
             }
             if (view.schema.isNotEmpty())

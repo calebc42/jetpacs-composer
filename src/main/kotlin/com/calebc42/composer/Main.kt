@@ -11,11 +11,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import com.calebc42.composer.ui.EditorScreen
 import com.calebc42.composer.ui.EditorSession
 import com.calebc42.composer.ui.HomeScreen
@@ -33,18 +37,43 @@ fun main() {
         var session by remember { mutableStateOf<EditorSession?>(null) }
         var error by remember { mutableStateOf<String?>(null) }
         var showExitWarning by remember { mutableStateOf(false) }
-        
+
+        val windowState = rememberWindowState(
+            placement = if (appConfig.windowMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
+            position = run {
+                val x = appConfig.windowX
+                val y = appConfig.windowY
+                if (x != null && y != null) WindowPosition(x.dp, y.dp)
+                else WindowPosition.Aligned(Alignment.Center)
+            },
+            width = appConfig.windowWidth.dp,
+            height = appConfig.windowHeight.dp
+        )
+
+        fun exitWithSave() {
+            val pos = windowState.position
+            val finalConfig = appConfig.copy(
+                windowWidth = windowState.size.width.value.toInt(),
+                windowHeight = windowState.size.height.value.toInt(),
+                windowX = if (pos is WindowPosition.Absolute) pos.x.value.toInt() else null,
+                windowY = if (pos is WindowPosition.Absolute) pos.y.value.toInt() else null,
+                windowMaximized = windowState.placement == WindowPlacement.Maximized
+            )
+            RecentFiles.save(finalConfig)
+            exitApplication()
+        }
+
         Window(
             onCloseRequest = {
                 if (session?.dirty == true) {
                     showExitWarning = true
                 } else {
-                    exitApplication()
+                    exitWithSave()
                 }
             },
             title = "jetpacs-composer",
             icon = painterResource("icons/jetpacs-composer-icon-forground.svg"),
-            state = WindowState(width = 1400.dp, height = 820.dp),
+            state = windowState,
         ) {
             val isDark = when (appConfig.theme) {
                 ThemePreference.DARK -> true
@@ -81,9 +110,9 @@ fun main() {
                                     }
                                 }
                                 // A cancelled Save-As must not close and lose the doc.
-                                if (saved) exitApplication() else showExitWarning = false
+                                if (saved) exitWithSave() else showExitWarning = false
                             },
-                            onDiscardAndClose = { exitApplication() },
+                            onDiscardAndClose = { exitWithSave() },
                             onCancel = { showExitWarning = false }
                         )
                     }

@@ -1,0 +1,23 @@
+{
+  "id": "glasspane",
+  "label": "Glasspane",
+  "version": "1.0.0",
+  "sources": [
+    {
+      "id": "glasspane.org",
+      "params": [{"name": "query", "type": "text", "required": false}],
+      "fields": [
+        {"name": "ITEM", "type": "text"},
+        {"name": "DEADLINE", "type": "date"},
+        {"name": "SCHEDULED", "type": "date"},
+        {"name": "TAGS", "type": "string-list"}
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "glasspane.search",
+      "params": [{"name": "query", "type": "text", "required": true}]
+    }
+  ]
+}

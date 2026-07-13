@@ -1,0 +1,12 @@
+#+JETPACS_APP: tasks
+#+TITLE: Task Tracker
+#+TODO: TODO NEXT DOING WAITING | DONE CANCELLED
+
+* Task Tracker
+:PROPERTIES:
+:ORDER: 10
+:KIND: board
+:SOURCE: /sdcard/org/tasks.org
+:SCHEMA: %ITEM(Name) %TODO %PRIORITY %DEADLINE %TAGS
+:GROUP_BY: TODO
+:END:

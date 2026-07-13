@@ -26,6 +26,8 @@
 ;; vulpea itself from the checkout named by $VULPEA_DIR.  Without either, the
 ;; notes CRUD test skips (see its `skip-unless') and everything else is
 ;; unaffected — the runtime never hard-depends on vulpea.
+(when (getenv "ELPA_DIR")
+  (setq package-user-dir (expand-file-name (getenv "ELPA_DIR"))))
 (ignore-errors (package-activate-all))
 (let ((vulpea-dir (getenv "VULPEA_DIR")))
   (when (and vulpea-dir (file-directory-p vulpea-dir))
@@ -284,7 +286,7 @@ as an `unknown' marker (rendered as text) instead of erroring."
 
 (ert-deftest jetpacs-crud-derives-stable-date-reminder ()
   (let ((spec '(:id "tasks"))
-        (view '(:name "all" :title "Tasks"
+        (view '(:name "all" :title "Tasks" :kind records
                 :reminder (:date-field "DEADLINE" :relative-days -3))))
     (cl-letf (((symbol-function 'jetpacs-crud--reminder-records)
                (lambda (&rest _)
@@ -463,10 +465,10 @@ as an `unknown' marker (rendered as text) instead of erroring."
       (should (file-exists-p (expand-file-name
                               "shopping-list.org"
                               (file-name-directory file))))
-      ;; Nine views, but six shell views: the four :GROUP: Tasks members
+      ;; Eleven views, but eight shell views: the four :GROUP: Tasks members
       ;; collapse into one tabulated destination; the rest (two of them
       ;; :NAV: drawer) each register their own.
-      (should (= (length jetpacs-shell-views) 6))
+      (should (= (length jetpacs-shell-views) 8))
       (dolist (entry jetpacs-shell-views)
         (let ((body (funcall (plist-get (cdr entry) :builder) nil)))
           (should (null (jetpacs-lint-spec body)))
@@ -874,6 +876,47 @@ in both whole-file and subtree (`::*Heading') scopes."
         (should (string-match-p "Notes about Ada that must survive" json))
         (should (string-match-p "Duplicate record" json))))))
 
+(ert-deftest jetpacs-crud-record-detail-is-dedicated-typed-composition ()
+  (let* ((spec '(:id "typed"))
+         (view '(:name "items" :title "Items" :actions "archive"
+                 :schema (("ITEM" . "Name") ("State" . "State")
+                          ("Done" . "Complete") ("When" . "When")
+                          ("Count" . "Count"))
+                 :coltypes (text (enum "New" "Done") checkbox date number)))
+         (record '(:pos 19
+                   :fields (("ITEM" . "Alpha") ("State" . "New")
+                            ("Done" . "[X]") ("When" . "<2026-07-12 Sun>")
+                            ("Count" . "42"))))
+         (node (jetpacs-crud--record-detail-node
+                spec view record "*Body* with [[https://example.com][link]]."))
+         (json (json-serialize (jetpacs-render-to-json node)))
+         (note-node (jetpacs-crud--record-detail-node
+                     spec view (plist-put (copy-tree record) :id "note-1")
+                     "Note body" t))
+         (note-json (json-serialize (jetpacs-render-to-json note-node))))
+    (should (null (jetpacs-lint-spec node)))
+    (should (string-match-p "\\\"title\\\":\\\"Actions\\\"" json))
+    (should (string-match-p "\\\"t\\\":\\\"date_stamp\\\"" json))
+    (should (string-match-p "Checked" json))
+    (should (string-match-p "\\\"syntax\\\":\\\"org\\\"" json))
+    (should (string-match-p "crud.field.edit" json))
+    (should (string-match-p "crud.action.apply" json))
+    (should (string-match-p "Duplicate record" json))
+    (should (null (jetpacs-lint-spec note-node)))
+    (should (string-match-p "crud.note.field.edit" note-json))
+    (should (string-match-p "Delete note" note-json))
+    (should-not (string-match-p "Duplicate record" note-json))))
+
+(ert-deftest jetpacs-crud-checkbox-editor-uses-closed-native-choice ()
+  (let (offered)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt collection &rest _)
+                 (setq offered collection)
+                 "[X]")))
+      (should (equal (jetpacs-crud--prompt-value "Complete" 'checkbox "[ ]")
+                     "[X]")))
+    (should (equal offered '("[ ]" "[X]")))))
+
 (ert-deftest jetpacs-crud-field-edit-todo-uses-real-keywords ()
   (jetpacs-crud-tests--with-clean-state
     (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
@@ -1084,23 +1127,25 @@ in both whole-file and subtree (`::*Heading') scopes."
 ;; ─── FILTER query engine ─────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-crud-query-parse-shapes ()
-  "The three FILTER input shapes normalize to org-ql sexps."
+  "The three FILTER input shapes normalize to org-ql sexps.
+The parser now lives in jetpacs core (`jetpacs-org-parse-query');
+this pins the contract every :FILTER: drawer relies on."
   ;; Empty / blank → no query (every record).
-  (should (null (jetpacs-crud--parse-query nil)))
-  (should (null (jetpacs-crud--parse-query "   ")))
+  (should (null (jetpacs-org-parse-query nil)))
+  (should (null (jetpacs-org-parse-query "   ")))
   ;; A sexp is read and its bare argument symbols stringified.
-  (should (equal (jetpacs-crud--parse-query "(todo NEXT)") '(todo "NEXT")))
-  (should (equal (jetpacs-crud--parse-query "(property \"Tier\" \"Gold\")")
+  (should (equal (jetpacs-org-parse-query "(todo NEXT)") '(todo "NEXT")))
+  (should (equal (jetpacs-org-parse-query "(property \"Tier\" \"Gold\")")
                  '(property "Tier" "Gold")))
   ;; Filter tokens AND together; comma splits any-of.
-  (should (equal (jetpacs-crud--parse-query "todo:NEXT tags:work,home")
+  (should (equal (jetpacs-org-parse-query "todo:NEXT tags:work,home")
                  '(and (todo "NEXT") (tags "work" "home"))))
-  (should (equal (jetpacs-crud--parse-query "priority:A") '(priority "A")))
+  (should (equal (jetpacs-org-parse-query "priority:A") '(priority "A")))
   ;; Bare words become substring (regexp) matches.
-  (should (equal (jetpacs-crud--parse-query "foo bar")
+  (should (equal (jetpacs-org-parse-query "foo bar")
                  '(and (regexp "foo") (regexp "bar"))))
   ;; A malformed sexp signals rather than matching nothing silently.
-  (should-error (jetpacs-crud--parse-query "(unbalanced")
+  (should-error (jetpacs-org-parse-query "(unbalanced")
                 :type 'user-error))
 
 (defmacro jetpacs-crud-tests--in-org (content &rest body)
@@ -1121,10 +1166,12 @@ Assumes the current buffer is an org buffer positioned anywhere."
   (goto-char (point-min))
   (re-search-forward (concat "^\\*+ .*" (regexp-quote title)))
   (org-back-to-heading t)
-  (jetpacs-crud--entry-matches-p (jetpacs-crud--parse-query filter)))
+  (jetpacs-org-entry-matches-p (jetpacs-org-parse-query filter)))
 
 (ert-deftest jetpacs-crud-query-interpreter ()
-  "The built-in interpreter covers the common org-ql subset."
+  "The built-in interpreter covers the common org-ql subset.
+The interpreter now lives in jetpacs core (`jetpacs-org-entry-matches-p');
+this pins the FILTER subset the runtime documents in FORMAT.md."
   (jetpacs-crud-tests--in-org
       "* NEXT Alpha :work:
 :PROPERTIES:
@@ -1170,7 +1217,7 @@ body mentions xylophone here
      (progn (goto-char (point-min))
             (re-search-forward "Alpha")
             (org-back-to-heading t)
-            (jetpacs-crud--entry-matches-p '(clocked)))
+            (jetpacs-org-entry-matches-p '(clocked)))
      :type 'user-error)))
 
 ;; ─── Notes (vulpea-backed) views ─────────────────────────────────────────────

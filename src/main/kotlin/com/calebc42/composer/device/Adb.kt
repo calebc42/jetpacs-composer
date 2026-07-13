@@ -34,7 +34,13 @@ object Adb {
     }
 
     private fun runs(exe: String): Boolean = runCatching {
-        ProcessBuilder(exe, "version").start().waitFor(10, TimeUnit.SECONDS)
+        val proc = ProcessBuilder(exe, "version").start()
+        // Must drain streams even for small output to avoid potential hangs
+        proc.inputStream.bufferedReader().use { it.readText() }
+        proc.errorStream.bufferedReader().use { it.readText() }
+        val exited = proc.waitFor(5, TimeUnit.SECONDS)
+        if (!exited) proc.destroyForcibly()
+        exited && proc.exitValue() == 0
     }.getOrDefault(false)
 
     fun run(vararg args: String, timeoutSeconds: Long = 60): CmdResult {
@@ -94,14 +100,32 @@ object Adb {
     internal fun exec(command: List<String>, timeoutSeconds: Long): CmdResult =
         runCatching {
             val proc = ProcessBuilder(command)
-                .redirectErrorStream(false)
+                .redirectErrorStream(true)
                 .start()
-            val out = proc.inputStream.bufferedReader().readText()
-            val err = proc.errorStream.bufferedReader().readText()
-            if (!proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-                proc.destroyForcibly()
-                return CmdResult(-1, out, "timed out after ${timeoutSeconds}s")
+            
+            var output = ""
+            val readerThread = Thread {
+                try {
+                    proc.inputStream.bufferedReader().use { output = it.readText() }
+                } catch (e: Exception) {
+                    output += "\n[Reader Error: ${e.message}]"
+                }
+            }.apply { 
+                name = "Adb-Redirect-Reader"
+                isDaemon = true 
+                start() 
             }
-            CmdResult(proc.exitValue(), out, err)
-        }.getOrElse { CmdResult(-1, "", it.message ?: "failed to start") }
+
+            val exited = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            if (!exited) {
+                proc.destroyForcibly()
+                // Wait a moment for reader to pick up the termination
+                readerThread.join(500)
+                return CmdResult(-1, output, "timed out after ${timeoutSeconds}s")
+            }
+            readerThread.join(1000)
+            CmdResult(proc.exitValue(), output, "")
+        }.getOrElse { 
+            CmdResult(-1, "", it.message ?: "failed to start") 
+        }
 }

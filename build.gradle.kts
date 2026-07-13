@@ -19,6 +19,13 @@ dependencies {
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    // General org syntax/AST layer. Composer FORMAT semantics stay in the
+    // adapter and legacy OrgCodec until shadow-parser parity is complete.
+    // Upstream 0.4.1 is temporarily used to establish the dependency/API seam.
+    // Its JVM artifact targets Java 21, so keep it off the packaged runtime
+    // while establishing compile-time API containment. Promote to
+    // implementation when the fork publishes a Java-17-compatible coordinate.
+    compileOnly("xyz.lepisma:orgmode:0.4.1")
     testImplementation(kotlin("test"))
 }
 

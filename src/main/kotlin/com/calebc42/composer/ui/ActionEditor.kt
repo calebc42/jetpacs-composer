@@ -178,6 +178,9 @@ private fun ActionFields(
                 modifier = Modifier.width(140.dp),
             )
         }
+        is ActionDef.PackAction -> {
+            Text("Pack Action: ${action.packId}/${action.action}", style = MaterialTheme.typography.bodyMedium)
+        }
         is ActionDef.Unknown -> {
             Text(
                 "Unknown action \"${action.token}\" — kept as written",

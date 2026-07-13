@@ -364,6 +364,8 @@ object ModelOps {
                     add(Problem("Source file cannot be blank", i))
                 is SourceRef.Dir -> if (source.dir.isBlank())
                     add(Problem("Source directory cannot be blank", i))
+                is SourceRef.Pack -> if (source.source.isBlank() || source.packId.isBlank())
+                    add(Problem("Pack source cannot be blank", i))
                 null -> {}
             }
             view.colTypes.filterIsInstance<ColType.Enum>().forEach { enum ->
@@ -457,6 +459,14 @@ object ModelOps {
                         Severity.Warning,
                     ))
             }
+            
+            // FIXME (T1.5): When `when_offline` is added to `ActionDef`, validate it here:
+            // view.actions.forEach { action ->
+            //     if (action.whenOffline != null && action.whenOffline !in ContractManifest.offlinePolicies) {
+            //         add(Problem("Action offline policy \"${action.whenOffline}\" is invalid (must be one of ${ContractManifest.offlinePolicies})", i))
+            //     }
+            // }
+
             // Placement: :GROUP: wins over :NAV:, so a grouped drawer view is
             // a contradiction — the group is its bottom destination.
             if (view.group != null && view.nav == ViewNav.DRAWER)

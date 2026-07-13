@@ -156,6 +156,10 @@ sealed interface SourceRef {
     /** A note vault: a `dir/` SOURCE, one note file per record. */
     @Serializable
     data class Dir(val dir: String) : SourceRef
+
+    /** An external pack data source, formatted as pack:<packId>/<source> */
+    @Serializable
+    data class Pack(val packId: String, val source: String) : SourceRef
 }
 
 @Serializable
@@ -229,6 +233,8 @@ sealed interface ActionDef {
     @Serializable data class Refile(val target: String? = null) : ActionDef
     /** Archive a heading (subtree or tag). */
     @Serializable data class Archive(val style: String = "default") : ActionDef
+    /** Action from an external pack, formatted as pack:<packId>/<action>(args) */
+    @Serializable data class PackAction(val packId: String, val action: String, val args: String? = null) : ActionDef
     /** Unknown action token. */
     @Serializable data class Unknown(val token: String) : ActionDef
 
@@ -240,6 +246,7 @@ sealed interface ActionDef {
         is SetPriority -> if (priority == null) "priority" else "priority($priority)"
         is Refile -> if (target == null) "refile" else "refile($target)"
         is Archive -> if (style == "default") "archive" else "archive($style)"
+        is PackAction -> "pack:$packId/$action${args?.let { "($it)" } ?: ""}"
         is Unknown -> token
     }
 }

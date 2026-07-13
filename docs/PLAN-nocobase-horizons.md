@@ -440,10 +440,12 @@ Work therefore proceeds compiler-first:
   rows, tag chips, compact captions, and explicit reference/edit affordances.
   These are derived from today's schema and org built-ins; no format keyword is
   needed.
-- **V3. Dedicated typed detail/edit composition.** Replace the current
-  "record card inside a sheet" with a detail builder using section headers,
-  typed values and native field editors while retaining the closed `crud.*`
-  action boundary and source-scoped handlers.
+- **V3. Dedicated typed detail/edit composition — landed.** Record and note
+  drill-ins now use a full-sheet detail builder rather than nesting a list card:
+  rich heading, schema-complete typed field cards, native date/enum/checkbox/tag
+  presentation, org-markup body, explicit editors, and declared/lifecycle
+  actions. The closed `crud.*` boundary and source-scoped handlers remain the
+  only mutation path.
 - **V4. Vocabulary graduation gate.** Add `AppSpec`/FORMAT vocabulary only when
   direct-DSL evidence shows that data cannot be derived from schema, coltype,
   org properties, or view kind. The field-interface layer remains the likely

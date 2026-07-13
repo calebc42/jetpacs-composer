@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.calebc42.composer.ui
 
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -14,7 +17,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -108,26 +115,20 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
         },
     ) {
         // ── Toolbar ──────────────────────────────────────────────────────
-        Row(
+        FlowRow(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.Center,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
                 (session.file?.name ?: "unsaved") + if (session.dirty) " •" else "",
                 style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.align(Alignment.CenterVertically).padding(end = 8.dp)
             )
             OutlinedButton(onClick = ::undo, enabled = session.canUndo) { Text("Undo") }
             OutlinedButton(onClick = ::redo, enabled = session.canRedo) { Text("Redo") }
             OutlinedButton(onClick = { previewVisible = !previewVisible }) {
                 Text(if (previewVisible) "Hide preview" else "Preview")
-            }
-            Spacer(Modifier.weight(1f))
-            androidx.compose.material3.IconButton(onClick = onSettings) {
-                androidx.compose.material3.Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Settings"
-                )
             }
             OutlinedButton(onClick = { sourcePreviewDialog = session.documentText() to "org" }) {
                 Text("app.org")
@@ -151,6 +152,15 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
             }, enabled = !hasErrors) { Text("Export bundle") }
             Button(onClick = { browsingFiles = true }) { Text("Device Files…") }
             Button(onClick = { deploying = true }, enabled = !hasErrors) { Text("Deploy…") }
+            
+            Spacer(Modifier.weight(1f))
+            
+            androidx.compose.material3.IconButton(onClick = onSettings) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Settings"
+                )
+            }
             TextButton(onClick = onClose) { Text("Close") }
         }
         HorizontalDivider()
@@ -164,27 +174,44 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
                 Row(Modifier.fillMaxSize()) {
                     OutlinePane(session, selection, onSelect = { selection = it })
                     VerticalDivider()
-                    Column(
-                        Modifier.weight(1f).fillMaxHeight()
-                            .verticalScroll(rememberScrollState()).padding(16.dp),
-                    ) {
-                        when (val sel = selection) {
-                            is Selection.App -> AppForm(session)
-                            is Selection.View ->
-                                if (sel.index in session.spec.views.indices)
-                                    ViewForm(session, sel.index)
-                                else AppForm(session)
+                    val scrollState = rememberScrollState()
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        Column(
+                            Modifier.fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Column(Modifier.widthIn(max = 800.dp)) {
+                                when (val sel = selection) {
+                                    is Selection.App -> AppForm(session)
+                                    is Selection.View ->
+                                        if (sel.index in session.spec.views.indices)
+                                            ViewForm(session, sel.index)
+                                        else AppForm(session)
+                                }
+                            }
                         }
+                        VerticalScrollbar(
+                            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                            adapter = rememberScrollbarAdapter(scrollState)
+                        )
                     }
                 }
             },
             previewContent = {
-                SemanticPreview(
-                    spec = session.spec,
-                    selectedViewIndex = (selection as? Selection.View)?.index,
-                    onSelectView = { selection = Selection.View(it) },
-                    modifier = Modifier.fillMaxSize().padding(12.dp),
-                )
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    SemanticPreview(
+                        spec = session.spec,
+                        selectedViewIndex = (selection as? Selection.View)?.index,
+                        onSelectView = { selection = Selection.View(it) },
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .fillMaxHeight()
+                            .widthIn(max = 450.dp)
+                            .fillMaxWidth(),
+                    )
+                }
             },
         )
 
@@ -226,6 +253,7 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
 
     sourcePreviewDialog?.let { (text, type) ->
         val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+        val annotatedText = remember(text, type) { highlightSyntax(text, type) }
         AlertDialog(
             onDismissRequest = { sourcePreviewDialog = null },
             confirmButton = {
@@ -239,11 +267,18 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
             title = { Text(if (type == "org") "app.org Preview" else "Exported Elisp Preview") },
             text = {
                 androidx.compose.foundation.text.selection.SelectionContainer {
-                    Column(Modifier.fillMaxWidth().height(420.dp).verticalScroll(rememberScrollState())) {
-                        Text(
-                            text = highlightSyntax(text, type),
-                            fontFamily = FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodySmall
+                    val scrollState = rememberScrollState()
+                    Box(Modifier.fillMaxWidth().height(420.dp)) {
+                        Column(Modifier.fillMaxSize().verticalScroll(scrollState)) {
+                            Text(
+                                text = annotatedText,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        VerticalScrollbar(
+                            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                            adapter = rememberScrollbarAdapter(scrollState)
                         )
                     }
                 }
@@ -294,80 +329,95 @@ private fun OutlinePane(
     selection: Selection,
     onSelect: (Selection) -> Unit,
 ) {
-    Column(
-        Modifier.width(260.dp).fillMaxHeight()
-            .verticalScroll(rememberScrollState()).padding(8.dp),
-    ) {
-        OutlineRow(
-            label = "App: ${session.spec.id}",
-            selected = selection == Selection.App,
-            onClick = { onSelect(Selection.App) }
-        )
-        HorizontalDivider(Modifier.padding(vertical = 4.dp))
-        session.spec.views.forEachIndexed { i, view ->
-            OutlineRow(
-                label = when (view.kind) {
-                    ViewKind.CHECKLIST -> "☑ ${view.title}"
-                    ViewKind.RECORDS -> "☰ ${view.title}"
-                    ViewKind.TABLE -> "▦ ${view.title}"
-                    ViewKind.NOTES -> "📝 ${view.title}"
-                    ViewKind.BOARD -> "📋 ${view.title}"
-                    ViewKind.CALENDAR -> "📅 ${view.title}"
-                    ViewKind.GALLERY -> "🖼 ${view.title}"
-                    ViewKind.TREE -> "🌳 ${view.title}"
-                    ViewKind.DASHBOARD -> "📊 ${view.title}"
-                    ViewKind.GANTT -> "▰ ${view.title}"
-                    ViewKind.UNKNOWN -> "❓ ${view.title}"
-                },
-                selected = selection == Selection.View(i),
-                onClick = { onSelect(Selection.View(i)) },
-                onMoveUp = if (i > 0) { {
-                    session.update { ModelOps.moveView(it, i, -1) }
-                    onSelect(Selection.View(i - 1))
-                } } else null,
-                onMoveDown = if (i < session.spec.views.size - 1) { {
-                    session.update { ModelOps.moveView(it, i, +1) }
-                    onSelect(Selection.View(i + 1))
-                } } else null,
-                onDelete = {
-                    session.update { ModelOps.removeView(it, i) }
-                    onSelect(Selection.App)
-                }
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        var addViewExpanded by remember { mutableStateOf(false) }
-        androidx.compose.foundation.layout.Box {
-            OutlinedButton(onClick = { addViewExpanded = true }) { Text("+ View") }
-            androidx.compose.material3.DropdownMenu(
-                expanded = addViewExpanded,
-                onDismissRequest = { addViewExpanded = false },
-            ) {
-                ViewKind.entries.forEach { kind ->
-                    val icon = when (kind) {
-                        ViewKind.TABLE -> "▦"
-                        ViewKind.CHECKLIST -> "☑"
-                        ViewKind.RECORDS -> "☰"
-                        ViewKind.NOTES -> "📝"
-                        ViewKind.BOARD -> "📋"
-                        ViewKind.CALENDAR -> "📅"
-                        ViewKind.GALLERY -> "🖼"
-                        ViewKind.TREE -> "🌳"
-                        ViewKind.DASHBOARD -> "📊"
-                        ViewKind.GANTT -> "▰"
-                        ViewKind.UNKNOWN -> "❓"
+    Box(Modifier.width(260.dp).fillMaxHeight()) {
+        val state = androidx.compose.foundation.lazy.rememberLazyListState()
+        LazyColumn(
+            state = state,
+            modifier = Modifier.fillMaxSize().padding(8.dp),
+        ) {
+            item {
+                OutlineRow(
+                    label = "App: ${session.spec.id}",
+                    selected = selection == Selection.App,
+                    onClick = { onSelect(Selection.App) }
+                )
+            }
+            item {
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            }
+            itemsIndexed(session.spec.views) { i, view ->
+                OutlineRow(
+                    label = when (view.kind) {
+                        ViewKind.CHECKLIST -> "☑ ${view.title}"
+                        ViewKind.RECORDS -> "☰ ${view.title}"
+                        ViewKind.TABLE -> "▦ ${view.title}"
+                        ViewKind.NOTES -> "📝 ${view.title}"
+                        ViewKind.BOARD -> "📋 ${view.title}"
+                        ViewKind.CALENDAR -> "📅 ${view.title}"
+                        ViewKind.GALLERY -> "🖼 ${view.title}"
+                        ViewKind.TREE -> "🌳 ${view.title}"
+                        ViewKind.DASHBOARD -> "📊 ${view.title}"
+                        ViewKind.GANTT -> "▰ ${view.title}"
+                        ViewKind.UNKNOWN -> "❓ ${view.title}"
+                    },
+                    selected = selection == Selection.View(i),
+                    onClick = { onSelect(Selection.View(i)) },
+                    onMoveUp = if (i > 0) { {
+                        session.update { ModelOps.moveView(it, i, -1) }
+                        onSelect(Selection.View(i - 1))
+                    } } else null,
+                    onMoveDown = if (i < session.spec.views.size - 1) { {
+                        session.update { ModelOps.moveView(it, i, +1) }
+                        onSelect(Selection.View(i + 1))
+                    } } else null,
+                    onDelete = {
+                        session.update { ModelOps.removeView(it, i) }
+                        onSelect(Selection.App)
                     }
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("$icon ${kind.name}") },
-                        onClick = {
-                            session.update { ModelOps.addView(it, "New ${kind.name.lowercase()}", kind) }
-                            onSelect(Selection.View(session.spec.views.size))
-                            addViewExpanded = false
-                        },
-                    )
+                )
+            }
+            item {
+                Spacer(Modifier.height(12.dp))
+            }
+            item {
+                var addViewExpanded by remember { mutableStateOf(false) }
+                androidx.compose.foundation.layout.Box {
+                    OutlinedButton(onClick = { addViewExpanded = true }) { Text("+ View") }
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = addViewExpanded,
+                        onDismissRequest = { addViewExpanded = false },
+                    ) {
+                        ViewKind.entries.forEach { kind ->
+                            val icon = when (kind) {
+                                ViewKind.TABLE -> "▦"
+                                ViewKind.CHECKLIST -> "☑"
+                                ViewKind.RECORDS -> "☰"
+                                ViewKind.NOTES -> "📝"
+                                ViewKind.BOARD -> "📋"
+                                ViewKind.CALENDAR -> "📅"
+                                ViewKind.GALLERY -> "🖼"
+                                ViewKind.TREE -> "🌳"
+                                ViewKind.DASHBOARD -> "📊"
+                                ViewKind.GANTT -> "▰"
+                                ViewKind.UNKNOWN -> "❓"
+                            }
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("$icon ${kind.name}") },
+                                onClick = {
+                                    session.update { ModelOps.addView(it, "New ${kind.name.lowercase()}", kind) }
+                                    onSelect(Selection.View(session.spec.views.size))
+                                    addViewExpanded = false
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
+        VerticalScrollbar(
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            adapter = rememberScrollbarAdapter(state)
+        )
     }
 }
 
