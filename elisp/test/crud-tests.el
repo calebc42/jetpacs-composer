@@ -1408,6 +1408,30 @@ harness) so the run never touches the developer's real note database."
       ;; a term outside the subset signals, naming the limit
       (should-error (m '(clocked) ada) :type 'user-error))))
 
+(ert-deftest jetpacs-crud-note-done-detection-survives-unset-keywords ()
+  "`done'/`todo' work when `org-done-keywords' is nil (the headless path).
+The index scan runs with no org buffer live, so the global keyword list
+is unset; done-detection must still recognize a DONE note (fallback to
+\"DONE\") and honor a CLOSED stamp.  Regression for a bug the notes
+end-to-end drive caught that a keyword-bound unit test had masked."
+  (skip-unless (require 'vulpea nil t))
+  (let ((org-done-keywords nil)          ; reproduce the real scan condition
+        (open (make-vulpea-note :id "o" :path "/x/o.org" :level 1
+                                :title "Open" :todo "NEXT"))
+        (done (make-vulpea-note :id "d" :path "/x/d.org" :level 1
+                                :title "Done" :todo "DONE"))
+        (closed (make-vulpea-note :id "c" :path "/x/c.org" :level 1
+                                  :title "Closed" :todo "NEXT"
+                                  :closed "2027-01-01 12:00:00")))
+    (should (jetpacs-crud--note-done-p done))          ; via "DONE" fallback
+    (should (jetpacs-crud--note-done-p closed))        ; via CLOSED stamp
+    (should-not (jetpacs-crud--note-done-p open))
+    (should (jetpacs-crud--note-matches-p '(done) done))
+    (should-not (jetpacs-crud--note-matches-p '(done) open))
+    (should (jetpacs-crud--note-matches-p '(todo) open))     ; not done
+    (should-not (jetpacs-crud--note-matches-p '(todo) done)) ; DONE is not "todo"
+    (should-not (jetpacs-crud--note-matches-p '(todo) closed))))
+
 (ert-deftest jetpacs-crud-test-app-parity ()
   "Parse the shared app-parity.org fixture to ensure parser parity."
   (jetpacs-crud-tests--with-clean-state

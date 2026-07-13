@@ -1048,6 +1048,7 @@ which needs the source buffer current).  nil when org declares nothing."
 (declare-function vulpea-note-scheduled "vulpea-note" (note))
 (declare-function vulpea-note-deadline "vulpea-note" (note))
 (declare-function vulpea-note-outline-path "vulpea-note" (note))
+(declare-function vulpea-note-closed "vulpea-note" (note))
 
 (defvar jetpacs-crud--vulpea 'unknown
   "Cached vulpea availability: `unknown' re-probes, else t / nil.
@@ -1107,6 +1108,17 @@ SOURCE returns the id'd headings directly under that heading."
                     (equal (vulpea-note-outline-path n) (list heading))
                   t))))))))
 
+(defun jetpacs-crud--note-done-p (note)
+  "Non-nil when vulpea NOTE is in a done state, judged off the index.
+The vulpea index does not record a note file's per-file DONE keyword set,
+so this approximates: the note's todo is a global done keyword (falling
+back to the near-universal \"DONE\" when `org-done-keywords' is unset —
+as it is in a headless scan with no org buffer live), or the note carries
+a CLOSED stamp.  Exotic per-file done keywords need the org-ql arm."
+  (let ((s (vulpea-note-todo note)))
+    (or (and s (member s (or org-done-keywords '("DONE"))) t)
+        (and (vulpea-note-closed note) t))))
+
 (defun jetpacs-crud--note-priority-char (note)
   "The priority of vulpea NOTE as a character, or nil.
 `vulpea-note-priority' may be a char (org's native form) or a string."
@@ -1152,10 +1164,8 @@ unsupported terms to org-ql instead of tripping this."
     (`(todo . ,kws)
      (let ((s (vulpea-note-todo note)))
        (if kws (and s (member s kws) t)
-         (and s (not (member s org-done-keywords)) t))))
-    (`(done)
-     (let ((s (vulpea-note-todo note)))
-       (and s (member s org-done-keywords) t)))
+         (and s (not (jetpacs-crud--note-done-p note)) t))))
+    (`(done) (jetpacs-crud--note-done-p note))
     (`(tags . ,tgs)
      (let ((have (vulpea-note-tags note)))
        (if tgs (and (cl-some (lambda (tg) (member tg have)) tgs) t) (and have t))))
