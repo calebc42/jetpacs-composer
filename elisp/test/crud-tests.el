@@ -1432,6 +1432,52 @@ end-to-end drive caught that a keyword-bound unit test had masked."
     (should-not (jetpacs-crud--note-matches-p '(todo) done)) ; DONE is not "todo"
     (should-not (jetpacs-crud--note-matches-p '(todo) closed))))
 
+(ert-deftest jetpacs-crud-vulpea-ensure-source-adopts-ids ()
+  "ensure-source adds ids, indexes the records, is idempotent, and degrades.
+Drives the register-time normalization over a real, isolated vulpea index
+(skipped without vulpea)."
+  (skip-unless (require 'vulpea nil t))
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((jetpacs-crud--vulpea 'unknown)
+           (root (make-temp-file "jetpacs-ensure" t))
+           (vault (expand-file-name "vault/" root))
+           (vulpea-directory vault)
+           (vulpea-db-location (expand-file-name "vulpea.db" root))
+           (vulpea-db--connection nil)
+           (src (expand-file-name "tasks.org" vault))
+           (spec (list :id "t" :file src))
+           (view (list :name "backlog" :title "Backlog" :kind 'records
+                       :schema '(("ITEM" . "Task"))
+                       :source (list :file src :heading "Backlog"))))
+      (push root jetpacs-crud-tests--temp-dirs)
+      (make-directory vault t)
+      (with-temp-file src
+        (insert "#+TITLE: Tasks\n\n* Backlog\n** Alpha\n** Beta\n** Gamma\n"))
+      (unwind-protect
+          (progn
+            (vulpea-db)
+            (cl-flet ((records-in-index ()
+                        (sort (mapcar #'vulpea-note-title
+                                      (vulpea-db-query
+                                       (lambda (n)
+                                         (equal (vulpea-note-outline-path n)
+                                                '("Backlog")))))
+                              #'string<)))
+              ;; First run adopts ids and the records land in the index.
+              (should (jetpacs-crud-vulpea-ensure-source spec view))
+              (should (equal (records-in-index) '("Alpha" "Beta" "Gamma")))
+              ;; file-level + Backlog + 3 children = 5 ids.
+              (should (= 5 (with-temp-buffer
+                             (insert-file-contents src)
+                             (how-many ":ID:" (point-min) (point-max)))))
+              ;; Idempotent: nothing to change the second time.
+              (should-not (jetpacs-crud-vulpea-ensure-source spec view))
+              ;; Degrades: absent vulpea, it never touches the file.
+              (let ((jetpacs-crud--vulpea nil))
+                (should-not (jetpacs-crud-vulpea-ensure-source spec view)))))
+        (when (and (boundp 'vulpea-db--connection) vulpea-db--connection)
+          (vulpea-db-close))))))
+
 (ert-deftest jetpacs-crud-test-app-parity ()
   "Parse the shared app-parity.org fixture to ensure parser parity."
   (jetpacs-crud-tests--with-clean-state

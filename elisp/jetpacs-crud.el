@@ -1066,6 +1066,53 @@ and pulling to refresh lights notes views up without a restart.")
 (add-hook 'jetpacs-shell-refresh-hook
           (lambda () (setq jetpacs-crud--vulpea 'unknown)))
 
+(defun jetpacs-crud-vulpea-ensure-source (spec view)
+  "Give VIEW's source file and record headings stable `:ID:'s, then reindex.
+vulpea only indexes a heading that carries an `:ID:', so a heading-family
+kind must adopt ids before it can be read from the index.  This adds a
+file-level `:ID:', an `:ID:' on the source heading (when the SOURCE names
+one), and one on each direct-child record heading; it saves only when a
+buffer actually changed and then asks vulpea to re-index the file.
+
+It is a no-op when vulpea is absent (the org-buffer scan still serves the
+view) and idempotent when the ids already exist — an already-normalized
+file is neither modified nor re-saved.  Only VIEW's own declared source
+file is touched (an inline source is the app document itself); nothing
+outside it is read or written.  Returns non-nil when the file changed.
+
+See FORMAT.md \"What the runtime does to your files\"."
+  (when (jetpacs-crud--vulpea-p)
+    (let* ((source (jetpacs-crud--view-source spec view))
+           (file (car source))
+           (heading (cdr source))
+           (changed nil))
+      (when (and file (file-readable-p file))
+        (jetpacs-crud--with-source file
+          (cl-flet ((adopt ()
+                      (let ((before (org-id-get)))
+                        (org-id-get-create)
+                        (unless (equal before (org-id-get)) (setq changed t)))))
+            (save-restriction
+              (widen)
+              (goto-char (point-min))
+              (adopt)                     ; file-level id (the extractor's anchor)
+              (let ((base 0))
+                (when heading
+                  (unless (jetpacs-crud--goto-heading heading)
+                    (user-error "Heading %s not found in %s" heading file))
+                  (setq base (org-outline-level))
+                  (adopt)                 ; the source heading itself
+                  (org-narrow-to-subtree))
+                (let ((target (1+ base)))
+                  (org-map-entries
+                   (lambda () (when (= (org-outline-level) target) (adopt)))
+                   nil)))))
+          (when (and changed (buffer-modified-p))
+            (save-buffer)))
+        (when changed
+          (vulpea-db-update-file (expand-file-name file))))
+      changed)))
+
 (defun jetpacs-crud--slug (text)
   "A filesystem-safe slug for TEXT (note file names)."
   (let ((s (replace-regexp-in-string
