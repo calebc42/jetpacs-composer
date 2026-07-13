@@ -1345,6 +1345,69 @@ harness) so the run never touches the developer's real note database."
         (when (and (boundp 'vulpea-db--connection) vulpea-db--connection)
           (vulpea-db-close))))))
 
+(ert-deftest jetpacs-crud-compile-filter-routes-terms ()
+  "The FILTER compiler yields an index predicate or an org-ql handoff."
+  ;; Empty filter → a predicate that admits everything.
+  (pcase (jetpacs-crud--compile-filter nil)
+    (`(:pred ,p) (should (functionp p)))
+    (other (ert-fail (format "empty filter did not compile to :pred: %S" other))))
+  ;; The whole index subset stays on the :pred arm.
+  (dolist (tree '((todo "TODO") (done) (tags "work") (priority = "A")
+                  (heading "Ada") (regexp "x") (property "Tier" "Gold")
+                  (level 1) (scheduled) (deadline)
+                  (and (todo "TODO") (not (tags "home")))))
+    (should (eq (car (jetpacs-crud--compile-filter tree)) :pred)))
+  ;; A term outside the subset is handed to org-ql verbatim.
+  (should (equal (jetpacs-crud--compile-filter '(clocked))
+                 '(:org-ql (clocked))))
+  (should (eq (car (jetpacs-crud--compile-filter '(and (todo "TODO") (clocked))))
+              :org-ql)))
+
+(ert-deftest jetpacs-crud-note-index-matcher-covers-subset ()
+  "The vulpea note-index matcher evaluates the extended subset off the struct."
+  (skip-unless (require 'vulpea nil t))
+  (let* ((org-done-keywords '("DONE"))
+         (ada (make-vulpea-note
+               :id "n1" :path "/x/ada.org" :level 1 :title "Ada Lovelace"
+               :todo "NEXT" :priority ?A :tags '("work" "math")
+               :properties '(("Tier" . "Gold"))
+               :scheduled "<2027-01-01 Fri>"))
+         (bob (make-vulpea-note
+               :id "n2" :path "/x/bob.org" :level 1 :title "Bob"
+               :todo "DONE" :tags '("home")
+               :deadline "<2027-02-10 Wed>")))
+    (cl-flet ((m (tree note) (jetpacs-crud--note-matches-p tree note)))
+      ;; todo / done
+      (should (m '(todo "NEXT") ada))
+      (should-not (m '(todo "NEXT") bob))
+      (should (m '(todo) ada))          ; any not-done
+      (should-not (m '(todo) bob))      ; DONE is not "todo"
+      (should (m '(done) bob))
+      (should-not (m '(done) ada))
+      ;; tags (any-of)
+      (should (m '(tags "work") ada))
+      (should-not (m '(tags "home") ada))
+      ;; priority: org urgency A > B, so A satisfies "> B"
+      (should (m '(priority = "A") ada))
+      (should (m '(priority > "B") ada))
+      (should-not (m '(priority = "A") bob))   ; bob has none
+      ;; heading / property / level
+      (should (m '(heading "Lovelace") ada))
+      (should (m '(property "Tier" "Gold") ada))
+      (should-not (m '(property "Tier" "Gold") bob))
+      (should (m '(level 1) ada))
+      ;; planning presence
+      (should (m '(scheduled) ada))
+      (should-not (m '(scheduled) bob))
+      (should (m '(deadline) bob))
+      (should-not (m '(deadline) ada))
+      ;; boolean composition
+      (should (m '(and (todo "NEXT") (tags "work")) ada))
+      (should (m '(or (done) (tags "work")) ada))
+      (should (m '(not (done)) ada))
+      ;; a term outside the subset signals, naming the limit
+      (should-error (m '(clocked) ada) :type 'user-error))))
+
 (ert-deftest jetpacs-crud-test-app-parity ()
   "Parse the shared app-parity.org fixture to ensure parser parity."
   (jetpacs-crud-tests--with-clean-state

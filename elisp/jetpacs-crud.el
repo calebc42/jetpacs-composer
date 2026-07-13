@@ -1216,8 +1216,32 @@ An empty TREE compiles to a predicate that admits every note."
     (list :pred (lambda (note) (jetpacs-crud--note-matches-p tree note))))
    (t (list :org-ql tree))))
 
+(defun jetpacs-crud--notes-org-ql-ids (notes tree)
+  "IDs among NOTES whose headings match org-ql sexp TREE via org-ql.
+Runs org-ql once per distinct source file, collecting each matched
+heading's `:ID:'.  Requires org-ql; signals `user-error' naming it
+otherwise (the honest \"install org-ql\" instruction).  Heading-per-record
+notes match; file-level notes (level 0) have no heading for org-ql to
+visit, so an org-ql-only FILTER does not select them — narrow the SOURCE."
+  (unless (jetpacs-crud--org-ql-p)
+    (user-error "FILTER term needs the org-ql package installed on this device"))
+  (let ((ids (make-hash-table :test 'equal))
+        (files (delete-dups
+                (mapcar (lambda (n) (expand-file-name (vulpea-note-path n)))
+                        notes))))
+    (dolist (file files)
+      (when (file-readable-p file)
+        (dolist (id (org-ql-select file tree
+                                   :action (lambda () (org-entry-get nil "ID"))))
+          (when (and (stringp id) (not (string-empty-p id)))
+            (puthash id t ids)))))
+    ids))
+
 (defun jetpacs-crud--scan-notes-impl (spec view)
-  "VIEW's note records: plists (:id ID :fields ALIST), FILTER-matched."
+  "VIEW's note records: plists (:id ID :fields ALIST), FILTER-matched.
+The FILTER is compiled once (`jetpacs-crud--compile-filter'): the
+index-evaluable subset runs as a `vulpea-note' predicate off the index;
+a term beyond it is handed to org-ql over the source files."
   (ignore spec)
   (let* ((props (mapcar #'car (jetpacs-crud--schema-props view)))
          (search-id (format "search_%s" (plist-get view :name)))
@@ -1226,16 +1250,23 @@ An empty TREE compiles to a predicate that admits every note."
          (tree (if (and search (not (string-empty-p search)))
                    (let ((q (list 'or `(regexp ,search) `(tags ,search) `(todo ,search))))
                      (if static-tree (list 'and static-tree q) q))
-                 static-tree)))
+                 static-tree))
+         (notes (jetpacs-crud--notes-query view))
+         (compiled (jetpacs-crud--compile-filter tree))
+         (keep (pcase compiled
+                 (`(:pred ,pred) pred)
+                 (`(:org-ql ,ql)
+                  (let ((set (jetpacs-crud--notes-org-ql-ids notes ql)))
+                    (lambda (n) (gethash (vulpea-note-id n) set)))))))
     (delq nil
           (mapcar
            (lambda (n)
-             (when (or (null tree) (jetpacs-crud--note-matches-p tree n))
+             (when (funcall keep n)
                (list :id (vulpea-note-id n)
                      :fields (mapcar (lambda (p)
                                        (cons p (jetpacs-crud--note-field n p)))
                                      props))))
-           (jetpacs-crud--notes-query view)))))
+           notes))))
 
 ;; ─── Source Binding Definitions ──────────────────────────────────────────────
 
