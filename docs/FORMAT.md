@@ -110,12 +110,20 @@ it is a clean error with nothing dispatched.
 The composer provisions a device once, either by pasting its **install
 snippet** into `~/.emacs.d/init.el` (after `(require 'jetpacs-core)`) or
 by running **Setup device** against a live Termux Emacs. Both run the
-same forms: install `org-ql` and `vulpea` from MELPA (retried each launch
-until they succeed; an offline launch never breaks startup), then enable
+same forms over the app's **install list** — the selected pack
+manifest's `depends` for a pack-backed app, else the document's own
+`#+JETPACS_DEPENDS:` plus what its views require (`org-ql`/`vulpea`) —
+installing each from MELPA (retried each launch until they succeed; an
+offline launch never breaks startup; built-ins like `org` and `cl-lib`
+are no-ops via `package-installed-p`), then enabling
 `vulpea-db-autosync-mode` over the org vault and the installed-apps
 directory so the index tracks the vault — including external edits from
 git or Syncthing. A first-run marker triggers one full scan so an
 existing vault is indexed before the first query.
+
+A dependency naming a **Termux binary** (rg/ripgrep, fd, git, sqlite3)
+is never handed to `package-install`: the deploy dialog surfaces it as
+an "install via Termux (`pkg install …`)" warning instead.
 
 ## Views
 

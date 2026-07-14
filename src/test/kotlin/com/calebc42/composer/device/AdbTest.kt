@@ -31,7 +31,7 @@ class AdbTest {
 
     @Test
     fun installSnippetIsBalancedElisp() {
-        val snippet = Deployer.installSnippet
+        val snippet = Deployer.installSnippet()
         assertEquals(snippet.count { it == '(' }, snippet.count { it == ')' })
         assertTrue("jetpacs-app-*.el" in snippet)
     }

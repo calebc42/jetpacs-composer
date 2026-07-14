@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.calebc42.composer.device
 
+import com.calebc42.composer.model.AppSpec
+import com.calebc42.composer.model.PackManifest
+import com.calebc42.composer.model.requiredDepends
 import java.io.File
 
 /**
@@ -66,22 +69,58 @@ object Deployer {
         return steps
     }
 
+    /** The engines every non-pack composer app leans on. */
+    val DEFAULT_ENGINES = listOf("org-ql", "vulpea")
+
     /**
-     * The engine-bootstrap forms: install org-ql + vulpea from MELPA and
-     * wire vulpea's autosync over the org vault AND the installed-apps
+     * Dependency names that are Termux binaries, not Emacs packages —
+     * the engines survey flags rg/fd-class tools. These are surfaced as
+     * "install via Termux" warnings ([binaryWarnings]) and NEVER handed
+     * to package-install.
+     */
+    val BINARY_DEPS = setOf("rg", "ripgrep", "fd", "fd-find", "git", "sqlite3")
+
+    /**
+     * The packages a deploy installs for [spec]: the selected pack
+     * [manifest]'s `depends` when the app is pack-backed, else the
+     * document's own `#+JETPACS_DEPENDS:` plus what its views require
+     * ([requiredDepends]), else the classic engine pair. Binary deps are
+     * filtered out here (see [binaryWarnings]); built-ins like org and
+     * cl-lib pass through — `package-installed-p` makes them no-ops.
+     */
+    fun installList(spec: AppSpec, manifest: PackManifest?): List<String> {
+        val declared = manifest?.depends?.map { it.name }
+            ?: (spec.depends + spec.requiredDepends()).distinct()
+        return (declared.ifEmpty { DEFAULT_ENGINES }).filterNot { it in BINARY_DEPS }
+    }
+
+    /** Human-readable warnings for deps a MELPA install can never satisfy. */
+    fun binaryWarnings(spec: AppSpec, manifest: PackManifest?): List<String> {
+        val declared = manifest?.depends?.map { it.name }
+            ?: (spec.depends + spec.requiredDepends()).distinct()
+        return declared.filter { it in BINARY_DEPS }.map {
+            "\"$it\" is not installable from MELPA — install it in Termux " +
+                "(pkg install $it)"
+        }
+    }
+
+    /**
+     * The engine-bootstrap forms: install [depends] from MELPA and wire
+     * vulpea's autosync over the org vault AND the installed-apps
      * directory (composer apps keep their inline sources there). Mirrors
      * Glasspane's docs/starter-init.el. Every step is wrapped so an
      * offline launch never breaks startup — installs are retried each
      * launch until they succeed. Idempotent (package-installed-p, a
-     * once-only full-scan marker, and autosync-mode being a no-op when on).
+     * once-only full-scan marker, and autosync-mode being a no-op when
+     * on). The vulpea wiring stays even when vulpea isn't in [depends] —
+     * `(require 'vulpea nil t)` makes it a no-op then.
      */
-    val depBootstrapForms = """
-        ;; jetpacs-composer engines: org-ql (rich FILTER queries) and vulpea
-        ;; (the note index behind records/notes/board/… kinds).
+    fun depBootstrapForms(depends: List<String> = DEFAULT_ENGINES): String = """
+        ;; jetpacs-composer engines for this app's views and packs.
         (require 'package)
         (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
         (package-initialize)
-        (dolist (pkg '(org-ql vulpea))
+        (dolist (pkg '(${depends.joinToString(" ")}))
           (unless (package-installed-p pkg)
             (condition-case err
                 (progn
@@ -109,9 +148,10 @@ object Deployer {
      * composer bundles install themselves — the starter-init adopt
      * pattern, generalized from a fixed list to the composer's
      * jetpacs-app-*.el naming convention — preceded by the engine
-     * bootstrap. Place it AFTER `(require 'jetpacs-core)`.
+     * bootstrap (per-app [depends]). Place it AFTER `(require 'jetpacs-core)`.
      */
-    val installSnippet = depBootstrapForms + "\n\n" + """
+    fun installSnippet(depends: List<String> = DEFAULT_ENGINES): String =
+        depBootstrapForms(depends) + "\n\n" + """
         ;; jetpacs-composer apps: adopt newer staged bundles, then load all.
         (let ((dir (expand-file-name "elisp" user-emacs-directory)))
           (dolist (staged (append
@@ -132,20 +172,21 @@ object Deployer {
 
     /**
      * Provision an already-running device without editing its init: run
-     * [depBootstrapForms] over the live emacsclient channel. The forms
-     * contain apostrophe-quoted elisp, which does not survive ssh
-     * single-quote wrapping, so we stage them as a file and `load` it
-     * (a double-quoted remote command with no apostrophes). Idempotent —
-     * safe to run on every deploy.
+     * [depBootstrapForms] (over [depends]) via the live emacsclient
+     * channel. The forms contain apostrophe-quoted elisp, which does not
+     * survive ssh single-quote wrapping, so we stage them as a file and
+     * `load` it (a double-quoted remote command with no apostrophes).
+     * Idempotent — safe to run on every deploy.
      */
-    fun bootstrapDeps(serial: String): List<Step> {
+    fun bootstrapDeps(serial: String,
+                      depends: List<String> = DEFAULT_ENGINES): List<Step> {
         val steps = mutableListOf<Step>()
         val forward = Adb.forward(serial, SSH_PORT, SSH_PORT)
         steps += Step("adb forward tcp:$SSH_PORT", forward)
         if (!forward.ok) return steps
 
         val bootFile = File.createTempFile("jetpacs-boot", ".el").apply {
-            writeText(depBootstrapForms + "\n")
+            writeText(depBootstrapForms(depends) + "\n")
             deleteOnExit()
         }
 

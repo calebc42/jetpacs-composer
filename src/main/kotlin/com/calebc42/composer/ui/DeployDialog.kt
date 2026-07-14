@@ -45,6 +45,11 @@ fun DeployDialog(session: EditorSession, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var showSnippet by remember { mutableStateOf(false) }
 
+    // The install list for THIS app: the selected pack manifest's depends
+    // when pack-backed, else the document's own (S4.4).
+    val installList = Deployer.installList(session.spec, session.exportManifest())
+    val binaryWarnings = Deployer.binaryWarnings(session.spec, session.exportManifest())
+
     fun refresh() = scope.launch {
         withContext(Dispatchers.IO) {
             val found = Adb.devices()
@@ -137,11 +142,16 @@ fun DeployDialog(session: EditorSession, onDismiss: () -> Unit) {
                         "on the device; staging only needs adb.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                binaryWarnings.forEach { warning ->
+                    Text("⚠ $warning",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.error)
+                }
                 if (showSnippet) {
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     Text("Add once to the device init, after (require 'jetpacs-core):",
                          style = MaterialTheme.typography.bodySmall)
-                    Text(Deployer.installSnippet,
+                    Text(Deployer.installSnippet(installList),
                          fontFamily = FontFamily.Monospace,
                          style = MaterialTheme.typography.bodySmall)
                 }
