@@ -278,8 +278,32 @@ object ModelOps {
         val severity: Severity = Severity.Error,
     )
 
-    /** Everything the closed format can still get wrong after the UI. */
-    fun validate(spec: AppSpec): List<Problem> = buildList {
+    /**
+     * The native node a view kind prefers, when the runtime has a widget
+     * fallback for its absence. Grounded in the runtime's actual
+     * `jetpacs-node-supported-p` gates: dashboards fall back from `chart`,
+     * calendars from `month_grid`. Used for advisory warnings only.
+     */
+    private val KIND_PREFERRED_NODES = mapOf(
+        ViewKind.DASHBOARD to "chart",
+        ViewKind.CALENDAR to "month_grid",
+    )
+
+    /**
+     * Everything the closed format can still get wrong after the UI.
+     *
+     * [nodeTypes], when given (the vendored contract.json's or a live
+     * device's vocabulary), adds per-view *warnings* for kinds whose
+     * preferred native node is missing — the runtime falls back, nothing
+     * breaks. [packs], when given, adds *warnings* for `pack:` references
+     * that no installed manifest can serve. Both are permissive when
+     * absent (null) — validation stays advisory across connections.
+     */
+    fun validate(
+        spec: AppSpec,
+        nodeTypes: Set<String>? = null,
+        packs: PackRegistry? = null,
+    ): List<Problem> = buildList {
         if (spec.views.isEmpty())
             add(Problem("An app needs at least one view"))
         if (spec.inbox != null && spec.inbox.isBlank())
@@ -374,6 +398,47 @@ object ModelOps {
                     Severity.Warning,
                 ))
                 null -> {}
+            }
+            nodeTypes?.let { supported ->
+                KIND_PREFERRED_NODES[view.kind]?.let { node ->
+                    if (node !in supported)
+                        add(Problem(
+                            "The companion contract lacks the \"$node\" node — " +
+                                "this ${view.kind.name.lowercase()} view will " +
+                                "render via its widget fallback",
+                            i,
+                            Severity.Warning,
+                        ))
+                }
+            }
+            packs?.let { registry ->
+                fun checkPackRef(packId: String, kind: String, name: String,
+                                 present: Boolean) {
+                    val manifest = registry.byId(packId)
+                    when {
+                        manifest == null -> add(Problem(
+                            "No installed pack manifest for \"$packId\" — " +
+                                "the $kind \"$name\" can't be checked and the " +
+                                "view will be unavailable until that pack is installed",
+                            i,
+                            Severity.Warning,
+                        ))
+                        !present -> add(Problem(
+                            "Pack \"$packId\" (v${manifest.pack_version}) does " +
+                                "not declare $kind \"$name\"",
+                            i,
+                            Severity.Warning,
+                        ))
+                    }
+                }
+                (view.source as? SourceRef.Pack)?.let { pack ->
+                    checkPackRef(pack.packId, "source", pack.source,
+                                 registry.byId(pack.packId)?.source(pack.source) != null)
+                }
+                view.actions.filterIsInstance<ActionDef.PackAction>().forEach { pa ->
+                    checkPackRef(pa.packId, "action", pa.action,
+                                 registry.byId(pa.packId)?.action(pa.action) != null)
+                }
             }
             view.colTypes.filterIsInstance<ColType.Enum>().forEach { enum ->
                 if (enum.options.none { it.isNotBlank() })

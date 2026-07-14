@@ -41,6 +41,15 @@ class EditorSession private constructor(
         private set
 
     /**
+     * Which installed pack manifest backs this app's pack pickers, when
+     * the user picked one explicitly (else the registry derives it from
+     * the document's own pack references — see PackRegistry.selectedPack).
+     * Editor-session state; the document records its pack dependency
+     * itself via `#+JETPACS_PACK:`.
+     */
+    var selectedPackId by mutableStateOf<String?>(null)
+
+    /**
      * Apply one edit. Consecutive edits with the same non-null [coalesceKey]
      * within the typing window share one undo snapshot.
      */

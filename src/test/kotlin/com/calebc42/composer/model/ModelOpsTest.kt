@@ -369,4 +369,66 @@ class ModelOpsTest {
         assertTrue(messages.any { "TODO field" in it })
         assertTrue(messages.any { "SCHEDULED field" in it })
     }
+
+    // ─── Advisory warnings: node fallbacks and pack references (S4.1) ────
+
+    private val calendarApp = AppSpec(id = "cal", views = listOf(ViewSpec(
+        title = "Agenda",
+        kind = ViewKind.CALENDAR,
+        schema = listOf(SchemaField("ITEM"), SchemaField("SCHEDULED")),
+        dateField = "SCHEDULED",
+    )))
+
+    @Test
+    fun missingPreferredNodeWarnsButNeverErrors() {
+        val without = ModelOps.validate(calendarApp, nodeTypes = setOf("text", "card"))
+        val warning = without.single { "month_grid" in it.message }
+        assertEquals(ModelOps.Severity.Warning, warning.severity)
+        // Present node, or no contract at all: silent.
+        assertTrue(ModelOps.validate(calendarApp, nodeTypes = setOf("month_grid"))
+            .none { "month_grid" in it.message })
+        assertTrue(ModelOps.validate(calendarApp)
+            .none { "month_grid" in it.message })
+    }
+
+    private fun packApp(source: SourceRef.Pack? = null,
+                        action: ActionDef.PackAction? = null) =
+        AppSpec(id = "p", views = listOf(ViewSpec(
+            title = "Linked",
+            kind = ViewKind.RECORDS,
+            schema = listOf(SchemaField("ITEM")),
+            source = source,
+            actions = listOfNotNull(action),
+        )))
+
+    @Test
+    fun packReferencesAreCheckedAgainstInstalledManifestsAsWarnings() {
+        val registry = PackRegistry.load(null)  // the vendored glasspane manifest
+
+        // A reference the manifest declares: silent.
+        assertTrue(ModelOps.validate(
+            packApp(source = SourceRef.Pack("glasspane", "glasspane.notes"),
+                    action = ActionDef.PackAction("glasspane", "heading.schedule")),
+            packs = registry,
+        ).none { "pack" in it.message.lowercase() })
+
+        // A source the manifest does not declare: warning, never an error.
+        val badSource = ModelOps.validate(
+            packApp(source = SourceRef.Pack("glasspane", "glasspane.bogus")),
+            packs = registry,
+        ).single { "glasspane.bogus" in it.message }
+        assertEquals(ModelOps.Severity.Warning, badSource.severity)
+
+        // An unknown pack id: warning naming the missing manifest.
+        val noPack = ModelOps.validate(
+            packApp(action = ActionDef.PackAction("elsewhere", "some.act")),
+            packs = registry,
+        ).single { "elsewhere" in it.message }
+        assertEquals(ModelOps.Severity.Warning, noPack.severity)
+
+        // No registry: permissive — nothing to say.
+        assertTrue(ModelOps.validate(
+            packApp(source = SourceRef.Pack("glasspane", "glasspane.bogus")),
+        ).none { "glasspane.bogus" in it.message })
+    }
 }

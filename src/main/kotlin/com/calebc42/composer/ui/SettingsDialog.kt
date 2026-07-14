@@ -35,6 +35,7 @@ fun SettingsDialog(
     var theme by remember { mutableStateOf(config.theme) }
     var defaultAppPath by remember { mutableStateOf(config.defaultAppPath.orEmpty()) }
     var defaultExportPath by remember { mutableStateOf(config.defaultExportPath.orEmpty()) }
+    var packDirectory by remember { mutableStateOf(config.packDirectory.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -71,6 +72,14 @@ fun SettingsDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = packDirectory,
+                    onValueChange = { packDirectory = it },
+                    label = { Text("Pack manifest directory (*-pack.json)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         },
         confirmButton = {
@@ -80,7 +89,8 @@ fun SettingsDialog(
                         config.copy(
                             theme = theme,
                             defaultAppPath = defaultAppPath.ifBlank { null },
-                            defaultExportPath = defaultExportPath.ifBlank { null }
+                            defaultExportPath = defaultExportPath.ifBlank { null },
+                            packDirectory = packDirectory.ifBlank { null }
                         )
                     )
                 }

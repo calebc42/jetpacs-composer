@@ -55,7 +55,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.calebc42.composer.model.ContractManifest
 import com.calebc42.composer.model.ModelOps
+import com.calebc42.composer.model.PackRegistry
 import com.calebc42.composer.model.ViewKind
 import com.calebc42.composer.project.ComposerConfig
 import com.calebc42.composer.ui.preview.PreviewSplitPane
@@ -79,7 +81,14 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
     var deploying by remember { mutableStateOf(false) }
     var browsingFiles by remember { mutableStateOf(false) }
 
-    val problems = ModelOps.validate(session.spec)
+    val packRegistry = remember(config.packDirectory) {
+        PackRegistry.load(config.packDirectory?.let(::File))
+    }
+    val problems = ModelOps.validate(
+        session.spec,
+        nodeTypes = ContractManifest.contract.node_types.toSet(),
+        packs = packRegistry,
+    )
     val hasErrors = problems.any { it.severity == ModelOps.Severity.Error }
 
     fun moveHistory(move: () -> Boolean) {
@@ -187,7 +196,7 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
                                     is Selection.App -> AppForm(session)
                                     is Selection.View ->
                                         if (sel.index in session.spec.views.indices)
-                                            ViewForm(session, sel.index)
+                                            ViewForm(session, sel.index, packRegistry)
                                         else AppForm(session)
                                 }
                             }

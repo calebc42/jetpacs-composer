@@ -46,6 +46,8 @@ import com.calebc42.composer.model.DateReminderRule
 import com.calebc42.composer.model.DashboardMetric
 import com.calebc42.composer.model.ModelOps
 import com.calebc42.composer.model.OrgBuiltin
+import com.calebc42.composer.model.PackManifest
+import com.calebc42.composer.model.PackRegistry
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.TodoKeyword
@@ -229,9 +231,10 @@ fun AppForm(session: EditorSession) {
 // ─── View form ───────────────────────────────────────────────────────────────
 
 @Composable
-fun ViewForm(session: EditorSession, index: Int) {
+fun ViewForm(session: EditorSession, index: Int, packs: PackRegistry = PackRegistry.EMPTY) {
     val spec = session.spec
     val view = spec.views[index]
+    val selectedPack = packs.selectedPack(spec, session.selectedPackId)
     val referenceTargets = spec.views.filter {
         it.kind == ViewKind.RECORDS || it.kind == ViewKind.NOTES
     }
@@ -370,7 +373,9 @@ fun ViewForm(session: EditorSession, index: Int) {
     }
 
     FormSection("Data Source") {
-        SourceEditor(view, ::edit, ::editText)
+        SourceEditor(view, packs, selectedPack,
+                     onSelectPack = { session.selectedPackId = it },
+                     ::edit, ::editText)
     }
 
     val editorModifier = Modifier.padding(top = 8.dp)
@@ -383,6 +388,7 @@ fun ViewForm(session: EditorSession, index: Int) {
             FormSection("Quick Actions") {
                 ActionEditor(
                     actions = view.actions,
+                    pack = selectedPack,
                     onUpdate = { newActions, coalesceKey ->
                         if (coalesceKey == null) edit { it.copy(actions = newActions) }
                         else editText("actions.$coalesceKey") { it.copy(actions = newActions) }
@@ -772,21 +778,45 @@ private fun RecordsSchemaEditor(
 }
 
 @Composable
-private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit) {
+private fun SourceEditor(
+    view: ViewSpec,
+    packs: PackRegistry,
+    selectedPack: PackManifest?,
+    onSelectPack: (String?) -> Unit,
+    edit: ViewEdit,
+    editText: ViewTextEdit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Data lives:", style = MaterialTheme.typography.bodyMedium)
         RadioButton(view.source == null,
                     onClick = { edit { it.copy(source = null) } })
         Text("inline (in the app document)")
-        RadioButton(view.source != null,
+        RadioButton(view.source is SourceRef.File || view.source is SourceRef.Dir,
                     onClick = {
                         edit {
-                            it.copy(source = it.source
+                            it.copy(source = it.source as? SourceRef.File
+                                ?: it.source as? SourceRef.Dir
                                 ?: SourceRef.File("/sdcard/org/data.org", it.title))
                         }
                     })
         Text("external org file")
+        if (packs.manifests.isNotEmpty() || view.source is SourceRef.Pack) {
+            RadioButton(view.source is SourceRef.Pack,
+                        onClick = {
+                            edit {
+                                it.copy(source = it.source as? SourceRef.Pack
+                                    ?: (selectedPack ?: packs.manifests.firstOrNull())
+                                        ?.let { pack ->
+                                            SourceRef.Pack(
+                                                pack.pack_id,
+                                                pack.sources.firstOrNull()?.name.orEmpty())
+                                        }
+                                    ?: SourceRef.Pack("", ""))
+                            }
+                        })
+            Text("pack source")
+        }
     }
     when (val source = view.source) {
         is SourceRef.File -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -813,19 +843,15 @@ private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit)
             label = { Text("note vault directory") }, singleLine = true,
             modifier = Modifier.width(320.dp),
         )
-        is SourceRef.Pack -> OutlinedTextField(
-            source.source,
-            { v -> editText("source.source") { it.copy(source = source.copy(source = v)) } },
-            label = { Text("pack source") }, singleLine = true,
-            modifier = Modifier.width(320.dp),
-        )
+        is SourceRef.Pack -> PackSourcePicker(
+            source, packs, selectedPack, onSelectPack, edit, editText)
         is SourceRef.Unknown -> Text(
             "Unknown source \"${source.raw}\" — kept as written",
             style = MaterialTheme.typography.bodyMedium,
         )
         null -> {}
     }
-    if (view.source != null) {
+    if (view.source is SourceRef.File || view.source is SourceRef.Dir) {
         if (ModelOps.isRecordsType(view.kind)) {
             Text(
                 "⚠ Bring-your-own file: the runtime edits it with org-mode's " +
@@ -837,6 +863,106 @@ private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit)
                 color = MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+/**
+ * The manifest-driven pack source picker. With an installed manifest the
+ * pack and source are dropdowns over its declared vocabulary (typed
+ * params shown as a hint); without one the reference is edited as text —
+ * permissive, matching validation's warnings-only stance.
+ */
+@Composable
+private fun PackSourcePicker(
+    source: SourceRef.Pack,
+    packs: PackRegistry,
+    selectedPack: PackManifest?,
+    onSelectPack: (String?) -> Unit,
+    edit: ViewEdit,
+    editText: ViewTextEdit,
+) {
+    val manifest = selectedPack?.takeIf { it.pack_id == source.packId }
+        ?: packs.byId(source.packId)
+    Row(verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (packs.manifests.isNotEmpty()) {
+            var packOpen by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { packOpen = true }) {
+                    Text("pack: " + source.packId.ifEmpty { "(select)" })
+                }
+                DropdownMenu(expanded = packOpen,
+                             onDismissRequest = { packOpen = false }) {
+                    packs.manifests.forEach { m ->
+                        DropdownMenuItem(
+                            text = { Text("${m.pack_id} (v${m.pack_version})") },
+                            onClick = {
+                                onSelectPack(m.pack_id)
+                                edit {
+                                    it.copy(source = SourceRef.Pack(
+                                        m.pack_id,
+                                        m.sources.firstOrNull()?.name.orEmpty()))
+                                }
+                                packOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+        } else {
+            OutlinedTextField(
+                source.packId,
+                { v -> editText("source.packId") {
+                    it.copy(source = source.copy(packId = v))
+                } },
+                label = { Text("pack id") }, singleLine = true,
+                modifier = Modifier.width(180.dp),
+            )
+        }
+        if (manifest != null && manifest.sources.isNotEmpty()) {
+            var sourceOpen by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { sourceOpen = true }) {
+                    Text(source.source.ifEmpty { "(select source)" })
+                }
+                DropdownMenu(expanded = sourceOpen,
+                             onDismissRequest = { sourceOpen = false }) {
+                    manifest.sources.forEach { s ->
+                        DropdownMenuItem(
+                            text = { Text(s.name) },
+                            onClick = {
+                                edit { it.copy(source = source.copy(source = s.name)) }
+                                sourceOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+        } else {
+            OutlinedTextField(
+                source.source,
+                { v -> editText("source.source") {
+                    it.copy(source = source.copy(source = v))
+                } },
+                label = { Text("pack source") }, singleLine = true,
+                modifier = Modifier.width(240.dp),
+            )
+        }
+    }
+    val declared = manifest?.source(source.source)
+    when {
+        manifest == null -> Text(
+            "No installed manifest for pack \"${source.packId}\" — point " +
+                "Settings → Pack manifest directory at its *-pack.json for pickers.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        declared != null && declared.params.isNotEmpty() -> Text(
+            "Params: " + declared.params.joinToString(", ") { p ->
+                p.name + ": " + p.type + (if (p.required) " (required)" else "")
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        else -> {}
     }
 }
 

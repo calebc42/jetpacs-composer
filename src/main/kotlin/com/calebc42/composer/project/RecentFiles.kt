@@ -13,6 +13,8 @@ data class ComposerConfig(
     val theme: ThemePreference = ThemePreference.SYSTEM,
     val defaultAppPath: String? = null,
     val defaultExportPath: String? = null,
+    /** Directory of installed `*-pack.json` manifests (see PackRegistry). */
+    val packDirectory: String? = null,
     val windowWidth: Int = 1400,
     val windowHeight: Int = 820,
     val windowX: Int? = null,

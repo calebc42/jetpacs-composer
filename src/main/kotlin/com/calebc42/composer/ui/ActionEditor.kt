@@ -26,15 +26,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.calebc42.composer.model.ActionDef
+import com.calebc42.composer.model.PackManifest
 
 /**
  * Editor for a view's [ActionDef] list.  Shows each existing action with
- * inline fields for its parameters, and a "+ Action" dropdown to add new ones.
+ * inline fields for its parameters, and a "+ Action" dropdown to add new
+ * ones — including, when a pack manifest is selected [pack], that pack's
+ * annotated actions with their typed args.
  */
 @Composable
 fun ActionEditor(
     actions: List<ActionDef>,
     onUpdate: (List<ActionDef>, coalesceKey: String?) -> Unit,
+    pack: PackManifest? = null,
 ) {
     Text("Actions", style = MaterialTheme.typography.titleMedium)
     Text(
@@ -49,7 +53,7 @@ fun ActionEditor(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(vertical = 2.dp),
         ) {
-            ActionFields(action) { updated, key ->
+            ActionFields(action, pack) { updated, key ->
                 onUpdate(
                     actions.mapIndexed { j, a -> if (j == i) updated else a },
                     key?.let { "$i.$it" },
@@ -61,7 +65,8 @@ fun ActionEditor(
         }
     }
 
-    // "+ Action" dropdown
+    // "+ Action" dropdown: the built-in org vocabulary, then the selected
+    // pack's annotated actions.
     var expanded by remember { mutableStateOf(false) }
     Box {
         OutlinedButton(onClick = { expanded = true }) { Text("+ Action") }
@@ -71,6 +76,25 @@ fun ActionEditor(
                     text = { Text(label) },
                     onClick = {
                         onUpdate(actions + factory(), null)
+                        expanded = false
+                    },
+                )
+            }
+            pack?.actions?.forEach { packAction ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text("${pack.pack_id}/${packAction.action}")
+                            packAction.doc?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    },
+                    onClick = {
+                        onUpdate(
+                            actions + ActionDef.PackAction(pack.pack_id, packAction.action),
+                            null,
+                        )
                         expanded = false
                     },
                 )
@@ -94,6 +118,7 @@ private val actionDefaults: List<Pair<String, () -> ActionDef>> = listOf(
 @Composable
 private fun ActionFields(
     action: ActionDef,
+    pack: PackManifest?,
     onChange: (ActionDef, coalesceKey: String?) -> Unit,
 ) {
     when (action) {
@@ -179,7 +204,32 @@ private fun ActionFields(
             )
         }
         is ActionDef.PackAction -> {
-            Text("Pack Action: ${action.packId}/${action.action}", style = MaterialTheme.typography.bodyMedium)
+            val declared = pack?.takeIf { it.pack_id == action.packId }
+                ?.action(action.action)
+            Column {
+                Text("Pack: ${action.packId}/${action.action}",
+                     style = MaterialTheme.typography.bodyMedium)
+                declared?.doc?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                declared?.args?.takeIf { it.isNotEmpty() }?.let { args ->
+                    Text(
+                        "Args: " + args.joinToString(", ") { a ->
+                            a.name + ": " + a.type + (if (a.required) " (required)" else "")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            OutlinedTextField(
+                action.args.orEmpty(),
+                { v -> onChange(
+                    action.copy(args = v.trim().ifBlank { null }),
+                    "packargs",
+                ) },
+                label = { Text("args (optional)") }, singleLine = true,
+                modifier = Modifier.width(220.dp),
+            )
         }
         is ActionDef.Unknown -> {
             Text(
