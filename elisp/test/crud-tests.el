@@ -443,6 +443,54 @@ action: the full render + action round-trip over a fake pack."
       (should-not (assq 'token (car calls)))
       (should-not (assq 'app (car calls))))))
 
+(ert-deftest jetpacs-crud-pack-action-args-come-from-the-declaration ()
+  "The document's declared token options are authoritative: a wire
+`options' can never rewrite them (a tap fires a declared action, it does
+not re-arm it).  Guards the fail-closed contract against a forged tap."
+  (jetpacs-crud-tests--with-toypack
+    ;; The declared token is pack:toypack/toy.ping(mode=fast); the wire lies.
+    (jetpacs-crud-action-pack-apply
+     '((app . "toy") (view . "things")
+       (token . "pack:toypack/toy.ping") (options . "mode=EVIL")
+       (ref . "toy-1"))
+     nil)
+    (should (= (length calls) 1))
+    (should (equal (alist-get 'mode (car calls)) "fast"))))
+
+(ert-deftest jetpacs-crud-pack-note-add-fails-closed-on-a-pack-view ()
+  "`crud.note.add' on a pack-source view dispatches nothing (no prompt, no
+crash): the wire action is still allowlisted even though the FAB is gone."
+  (jetpacs-crud-tests--with-toypack
+    (should-error (jetpacs-crud-action-note-add
+                   '((app . "toy") (view . "things")) nil)
+                  :type 'user-error)))
+
+(ert-deftest jetpacs-crud-pack-register-tolerates-version-drift ()
+  "Two trusted registrants of the SAME pack (feature) at different versions
+keep the pack served — the newer facts win — rather than contesting both
+apps.  Only a different feature is a genuine id collision."
+  (jetpacs-crud-tests--with-toypack
+    ;; A second bundle exported at a newer pack version, same feature.
+    (jetpacs-crud-pack-register "toypack"
+                                :feature 'jetpacs-crud-tests-toypack
+                                :version "2.0"
+                                :sources '("toypack.things")
+                                :actions '("toy.ping"))
+    (should (equal "2.0" (plist-get (gethash "toypack" jetpacs-crud--packs)
+                                    :version)))
+    (should-not (string-match-p
+                 "is unavailable"
+                 (json-serialize (jetpacs-crud--build-view "toy" "things" nil)
+                                 :null-object :null :false-object :false)))
+    ;; An OLDER re-register never regresses the incumbent.
+    (jetpacs-crud-pack-register "toypack"
+                                :feature 'jetpacs-crud-tests-toypack
+                                :version "1.0"
+                                :sources '("toypack.things")
+                                :actions '("toy.ping"))
+    (should (equal "2.0" (plist-get (gethash "toypack" jetpacs-crud--packs)
+                                    :version)))))
+
 (ert-deftest jetpacs-crud-pack-key-value-filter-binds-named-params ()
   "A key=value :FILTER: binds declared params by name."
   (jetpacs-crud-tests--with-toypack

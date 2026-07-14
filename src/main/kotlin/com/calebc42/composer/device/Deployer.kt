@@ -81,28 +81,36 @@ object Deployer {
     val BINARY_DEPS = setOf("rg", "ripgrep", "fd", "fd-find", "git", "sqlite3")
 
     /**
-     * The packages a deploy installs for [spec]: the selected pack
-     * [manifest]'s `depends` when the app is pack-backed, else the
-     * document's own `#+JETPACS_DEPENDS:` plus what its views require
-     * ([requiredDepends]), else the classic engine pair. Binary deps are
-     * filtered out here (see [binaryWarnings]); built-ins like org and
+     * Every package a deploy declares for [spec], as one deduped set. The
+     * classic engine pair ([DEFAULT_ENGINES]) is always present — the
+     * composer runtime reads records/notes through vulpea and rich filters
+     * through org-ql regardless of any pack, and the device-init snippet
+     * that installs these is pasted once and shared by every later app, so
+     * the substrate can never be dropped just because one app's manifest
+     * omits it. A pack-backed app UNIONS its selected [manifest]'s `depends`
+     * on top (never replaces the baseline, so its own non-pack views' and
+     * `#+JETPACS_DEPENDS:` engines still install). Both [installList] and
+     * [binaryWarnings] partition this one set — never recompute it apart.
+     */
+    private fun declaredDepends(spec: AppSpec, manifest: PackManifest?): List<String> =
+        (DEFAULT_ENGINES +
+            (manifest?.depends?.map { it.name } ?: emptyList()) +
+            spec.depends + spec.requiredDepends()).distinct()
+
+    /**
+     * The packages a deploy installs: [declaredDepends] minus the Termux
+     * binaries (surfaced by [binaryWarnings]). Built-ins like org and
      * cl-lib pass through — `package-installed-p` makes them no-ops.
      */
-    fun installList(spec: AppSpec, manifest: PackManifest?): List<String> {
-        val declared = manifest?.depends?.map { it.name }
-            ?: (spec.depends + spec.requiredDepends()).distinct()
-        return (declared.ifEmpty { DEFAULT_ENGINES }).filterNot { it in BINARY_DEPS }
-    }
+    fun installList(spec: AppSpec, manifest: PackManifest?): List<String> =
+        declaredDepends(spec, manifest).filterNot { it in BINARY_DEPS }
 
     /** Human-readable warnings for deps a MELPA install can never satisfy. */
-    fun binaryWarnings(spec: AppSpec, manifest: PackManifest?): List<String> {
-        val declared = manifest?.depends?.map { it.name }
-            ?: (spec.depends + spec.requiredDepends()).distinct()
-        return declared.filter { it in BINARY_DEPS }.map {
+    fun binaryWarnings(spec: AppSpec, manifest: PackManifest?): List<String> =
+        declaredDepends(spec, manifest).filter { it in BINARY_DEPS }.map {
             "\"$it\" is not installable from MELPA — install it in Termux " +
                 "(pkg install $it)"
         }
-    }
 
     /**
      * The engine-bootstrap forms: install [depends] from MELPA and wire

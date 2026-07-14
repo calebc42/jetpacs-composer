@@ -347,6 +347,32 @@ object ModelOps {
                     ))
             }
         }
+        // An app targets exactly one pack (a single #+JETPACS_PACK:, a single
+        // embedded registration at export). A pack: source or action naming a
+        // different pack would export a green bundle whose lone registration
+        // can't back it — the view fails closed on device with no export-time
+        // signal — so a cross-pack reference is an error, not a warning. This
+        // is a pure model rule (no registry needed).
+        spec.pack?.let { declared ->
+            spec.views.forEachIndexed { i, view ->
+                (view.source as? SourceRef.Pack)?.let { s ->
+                    if (s.packId != declared.packId)
+                        add(Problem(
+                            "Source references pack \"${s.packId}\" but the app " +
+                                "declares \"${declared.packId}\" — an app targets one pack",
+                            i,
+                        ))
+                }
+                view.actions.filterIsInstance<ActionDef.PackAction>().forEach { pa ->
+                    if (pa.packId != declared.packId)
+                        add(Problem(
+                            "Action references pack \"${pa.packId}\" but the app " +
+                                "declares \"${declared.packId}\" — an app targets one pack",
+                            i,
+                        ))
+                }
+            }
+        }
         val slugs = spec.views.map { it.name }
         val liveViews = slugs.toSet()
         slugs.groupBy { it }.filter { it.value.size > 1 }.keys.forEach {
@@ -493,6 +519,17 @@ object ModelOps {
                 else if (target.kind !in setOf(ViewKind.RECORDS, ViewKind.NOTES))
                     add(Problem(
                         "Reference target \"${ref.targetView}\" must be a records or notes view",
+                        i,
+                    ))
+                else if (target.source is SourceRef.Pack ||
+                    target.source is SourceRef.Unknown)
+                    // A ref resolves by scanning the target's file-backed
+                    // records; a pack/unknown source has no such file, so the
+                    // runtime's ref lookup would fail mid-render, not degrade.
+                    add(Problem(
+                        "Reference target \"${ref.targetView}\" reads a pack/unknown " +
+                            "source and can't be referenced — point the ref at a " +
+                            "file- or vault-backed view",
                         i,
                     ))
                 else if (target.kind == ViewKind.RECORDS &&

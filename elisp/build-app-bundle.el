@@ -35,12 +35,17 @@
     (buffer-string)))
 
 (defun jetpacs-crud-bundle--uses-pack-p (spec)
-  "Non-nil when SPEC uses any pack feature (declaration, source, action)."
+  "Non-nil when SPEC uses any pack feature (declaration, source, action).
+Actions are TOKENIZED, not string-matched, so a `pack:' that appears only
+inside another action's options (e.g. `refile(pack:x)') is not mistaken
+for a pack action — matching the JVM twin `AppSpec.usesPackFeatures',
+which inspects parsed `ActionDef.PackAction' only."
   (or (plist-get spec :pack)
       (cl-some (lambda (view)
                  (or (plist-get (plist-get view :source) :pack)
-                     (let ((actions (plist-get view :actions)))
-                       (and actions (string-match-p "\\_<pack:" actions)))))
+                     (cl-some (lambda (tc) (string-prefix-p "pack:" (car tc)))
+                              (jetpacs-crud--action-tokens
+                               (plist-get view :actions)))))
                (plist-get spec :views))))
 
 (defun jetpacs-crud-bundle--pack-registration (json-text)
@@ -57,8 +62,17 @@ BundleExporter.packRegistration (the JVM twin)."
                           (append (gethash "sources" m) nil)))
          (actions (mapcar (lambda (a) (gethash "action" a))
                           (append (gethash "actions" m) nil))))
+    ;; The feature is spliced into trusted generated code as a quoted
+    ;; symbol, so it must be a valid symbol name — never app-influenced
+    ;; text that could inject forms, and never absent (a featureless pack
+    ;; can never load, so its every view would fail closed forever).
+    ;; Mirrors PackManifest.validated()'s FEATURE_RE on the JVM side.
+    (unless (and (stringp feature)
+                 (string-match-p "\\`[a-z][a-z0-9+/_-]*\\'" feature))
+      (user-error "pack manifest feature %S is missing or not a valid symbol name"
+                  feature))
     (concat (format "(jetpacs-crud-pack-register %S" id)
-            (when (stringp feature) (format " :feature '%s" feature))
+            (format " :feature '%s" feature)
             (format " :version %S" version)
             (when sources (format " :sources '%S" sources))
             (when actions (format " :actions '%S" actions))
@@ -96,7 +110,16 @@ that parses.  Returns the output path."
               (unless (file-readable-p mf)
                 (user-error "%s: pack-backed app needs its installed manifest %s"
                             app-file mf))
-              (jetpacs-crud-bundle--slurp mf))))
+              (let* ((json (jetpacs-crud-bundle--slurp mf))
+                     (mid (gethash "pack_id" (json-parse-string json))))
+                ;; The manifest must be the DECLARED pack (mirrors the JVM
+                ;; twin's `check(it.packId == pack.pack_id)'): a stale-named
+                ;; sibling *-pack.json must not silently register a different
+                ;; pack id the document's `pack:' references can never bind.
+                (unless (equal mid pack-id)
+                  (user-error "%s: declared pack %S but manifest %s is %S"
+                              app-file pack-id (file-name-nondirectory mf) mid))
+                json))))
          (out (expand-file-name
                (format "jetpacs-app-%s.el" id)
                (or out-dir (file-name-directory (expand-file-name app-file)))))

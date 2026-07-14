@@ -75,6 +75,18 @@ fun AppSpec.usesPackFeatures(): Boolean =
     }
 
 /**
+ * Whether this document must be stamped FORMAT 4 rather than 3. That is
+ * every pack-backed document ([usesPackFeatures]), PLUS any document that
+ * preserves an unknown `:SOURCE:` scheme: a pre-Stage-4 runtime has no
+ * unknown-source branch and would silently misparse `zzz:x/y` as a file
+ * path (scaffolding a junk file), so it must reject the document via the
+ * version gate instead. Unknown actions/coltypes are excluded — those
+ * degrade gracefully on every runtime and round-trip fine at FORMAT 3.
+ */
+fun AppSpec.usesFormat4Vocabulary(): Boolean =
+    usesPackFeatures() || views.any { it.source is SourceRef.Unknown }
+
+/**
  * The engine packages this app needs installed on the device, for
  * `#+JETPACS_DEPENDS:`. Every datasource kind now reads from the vulpea
  * index, so any real (non-[ViewKind.UNKNOWN]) view needs **vulpea**; a

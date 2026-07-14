@@ -1361,14 +1361,30 @@ fails closed — two manifests claiming one id is never silently decided."
         (existing (gethash pack-id jetpacs-crud--packs)))
     (cond
      ((null existing) (puthash pack-id entry jetpacs-crud--packs))
-     ((equal existing entry) nil)
+     ((eq existing 'contested) nil)     ; a real id collision stays closed
+     ((equal existing entry) nil)       ; idempotent reload
+     ;; Same feature, drifted facts (two bundles exported at different pack
+     ;; versions, or the pack package self-registering alongside a bundle
+     ;; snapshot): both callers are trusted and name the SAME pack, so keep
+     ;; the newer manifest rather than failing both apps closed.  Only a
+     ;; different feature is a genuine two-packs-one-id collision.
+     ((equal (plist-get existing :feature) feature)
+      (when (jetpacs-crud--pack-version-newer-p version (plist-get existing :version))
+        (puthash pack-id entry jetpacs-crud--packs)))
      (t (puthash pack-id 'contested jetpacs-crud--packs)
         (display-warning
          'jetpacs-crud
-         (format "pack id %S claimed twice with different manifests — failing closed"
+         (format "pack id %S claimed by two different features — failing closed"
                  pack-id)
          :warning)))
     pack-id))
+
+(defun jetpacs-crud--pack-version-newer-p (a b)
+  "Non-nil when pack version string A is strictly newer than B.
+Unparsable versions never win, so drift toward garbage keeps the incumbent."
+  (condition-case nil
+      (version< (or b "0") (or a "0"))
+    (error nil)))
 
 (defun jetpacs-crud--pack-resolve (spec pack-id)
   "Resolve PACK-ID to its servable registry entry for app SPEC.
@@ -1393,7 +1409,11 @@ must fail closed: unregistered, contested, below the app's declared
                         pack-id declared-min
                         (or (plist-get entry :version) "unknown"))))
      ((not (and (plist-get entry :feature)
-                (require (plist-get entry :feature) nil t)))
+                ;; `require' with NOERROR only swallows a missing file; a
+                ;; feature whose file exists but errors mid-load (e.g. its own
+                ;; dependency is absent) would otherwise crash the whole view
+                ;; build.  Fail closed to the placeholder instead.
+                (ignore-errors (require (plist-get entry :feature) nil t))))
       (cons nil (format "pack %s's feature `%s' is not available on this device"
                         pack-id (plist-get entry :feature))))
      (t (cons entry nil)))))
@@ -2138,17 +2158,22 @@ short of all of it is a clean `user-error' with nothing dispatched."
   (let* ((appid (alist-get 'app args))
          (view-name (alist-get 'view args))
          (token (alist-get 'token args))
-         (options (alist-get 'options args))
          (spec (or (jetpacs-crud--app appid)
                    (user-error "Unknown CRUD app: %S" appid)))
          (view (or (jetpacs-crud--view spec view-name)
-                   (user-error "Unknown view %S in app %s" view-name appid))))
-    (unless (and (stringp token) (string-prefix-p "pack:" token)
-                 (cl-find token
-                          (jetpacs-crud--action-tokens (plist-get view :actions))
-                          :key #'car :test #'equal))
+                   (user-error "Unknown view %S in app %s" view-name appid)))
+         (declared (and (stringp token) (string-prefix-p "pack:" token)
+                        (cl-find token
+                                 (jetpacs-crud--action-tokens
+                                  (plist-get view :actions))
+                                 :key #'car :test #'equal))))
+    (unless declared
       (user-error "Action %S is not declared by view %s" token view-name))
-    (let* ((rest (substring token (length "pack:")))
+    ;; Static args come from the DOCUMENT's declared token, never the wire:
+    ;; the tap may fire a declared action but can never rewrite its pinned
+    ;; options (the declaration wins over the tap).
+    (let* ((options (cdr declared))
+           (rest (substring token (length "pack:")))
            (slash (string-search "/" rest))
            (pack-id (and slash (substring rest 0 slash)))
            (name (and slash (substring rest (1+ slash)))))
@@ -2885,6 +2910,8 @@ A file-level note (id in the top drawer, not a heading) leaves point at
                    (user-error "Unknown CRUD app: %S" appid)))
          (view (or (jetpacs-crud--view spec name)
                    (user-error "Unknown view %S in app %s" name appid)))
+         (_ (when (jetpacs-crud--source-unserved-p view)
+              (user-error "View %s's source is not available on this device" name)))
          (source (plist-get view :source))
          (dir (plist-get source :dir))
          (file (plist-get source :file))

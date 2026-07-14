@@ -63,6 +63,14 @@ data class PackManifest(
             "pack_id must match [a-z][a-z0-9-]*, got \"$pack_id\""
         }
         require(pack_version.isNotBlank()) { "pack_version cannot be blank" }
+        // The feature is spliced into the bundle's trusted registration as a
+        // quoted elisp symbol, and the runtime requires it to load before it
+        // binds a single view — so it must be present and a valid symbol name
+        // (never app-influenced text that could inject forms, never absent).
+        // The elisp reference builder enforces the identical FEATURE_RE.
+        require(feature != null && FEATURE_RE.matches(feature)) {
+            "feature must be a symbol name matching [a-z][a-z0-9+/_-]*, got \"$feature\""
+        }
         depends.forEach {
             require(AppSpec.DEPEND_RE.matches(it.name)) {
                 "depends name must match [a-z][a-z0-9-]*, got \"${it.name}\""
@@ -103,6 +111,9 @@ data class PackManifest(
         /** Action arg types — mirrors the `jetpacs-defaction` arg schema. */
         val ACTION_ARG_TYPES = setOf("text", "number", "enum", "date", "ref", "bool")
 
+        /** A loadable elisp feature name (symbol-safe; no injection surface). */
+        val FEATURE_RE = Regex("[a-z][a-z0-9+/_-]*")
+
         private val json = Json { ignoreUnknownKeys = true }
 
         /** Parse and structurally validate one manifest. */
@@ -133,12 +144,16 @@ class PackRegistry private constructor(
 
     /**
      * The manifest backing pack pickers for one app: the explicitly
-     * selected id when given, else the pack the document already
-     * references (its first `pack:` source or action), else the sole
-     * installed manifest.
+     * selected id when given, else the app's DECLARED pack
+     * (`#+JETPACS_PACK:` — the authoritative single pack, even before any
+     * view references it), else the pack a view already references, else
+     * the sole installed manifest. Consulting the declaration first is what
+     * keeps the pickers, [ModelOps.validate], and the exporter agreeing on
+     * one pack when several manifests are installed.
      */
     fun selectedPack(spec: AppSpec, explicitId: String? = null): PackManifest? {
         explicitId?.let { return byId(it) }
+        spec.pack?.let { return byId(it.packId) }
         val referenced = spec.views.firstNotNullOfOrNull { view ->
             (view.source as? SourceRef.Pack)?.packId
                 ?: view.actions.filterIsInstance<ActionDef.PackAction>()

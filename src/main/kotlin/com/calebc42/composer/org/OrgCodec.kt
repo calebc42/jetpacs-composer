@@ -12,6 +12,7 @@ import com.calebc42.composer.model.DashboardMetric
 import com.calebc42.composer.model.PackRef
 import com.calebc42.composer.model.SchemaField
 import com.calebc42.composer.model.usesPackFeatures
+import com.calebc42.composer.model.usesFormat4Vocabulary
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.TodoKeyword
 import com.calebc42.composer.model.ViewKind
@@ -63,6 +64,9 @@ object OrgCodec : OrgAppCodec {
     // A :SOURCE: value carrying a scheme prefix (pack: or a future one).
     // "::"-continuations are excluded so file::*Heading stays a file source.
     private val SOURCE_SCHEME_RE = Regex("""^[a-z][a-z0-9-]*:(?!:)""")
+    // The leading numeric run of a version string, matching elisp's
+    // `string-to-number' (so "4.5"/"5x" are 4.5/5, not silently accepted).
+    private val LEADING_NUMBER_RE = Regex("""^[+-]?\d*\.?\d+""")
 
     override fun parse(text: String): AppSpec {
         val lines = text.lines()
@@ -79,7 +83,10 @@ object OrgCodec : OrgAppCodec {
         if (!AppSpec.ID_RE.matches(id))
             throw FormatException("app id must match [a-z][a-z0-9-]*, got \"$id\"")
         keywords["JETPACS_APP_FORMAT"]?.let {
-            val v = it.trim().toIntOrNull() ?: FORMAT_VERSION
+            // Mirror the elisp oracle's `string-to-number': it reads the
+            // leading numeric run, so "4.5"/"5x" parse as 4.5/5 and are
+            // rejected — not silently accepted as toIntOrNull()?:MAX would.
+            val v = LEADING_NUMBER_RE.find(it.trim())?.value?.toDoubleOrNull() ?: 0.0
             if (v > FORMAT_VERSION)
                 throw FormatException("unsupported JETPACS_APP_FORMAT \"$it\"")
         }
@@ -434,7 +441,7 @@ object OrgCodec : OrgAppCodec {
     override fun write(spec: AppSpec): String = buildString {
         appendLine("#+JETPACS_APP: ${spec.id}")
         appendLine("#+JETPACS_APP_FORMAT: ${
-            if (spec.usesPackFeatures()) FORMAT_VERSION else BASE_FORMAT_VERSION}")
+            if (spec.usesFormat4Vocabulary()) FORMAT_VERSION else BASE_FORMAT_VERSION}")
         spec.label?.let { appendLine("#+TITLE: $it") }
         spec.icon?.let { appendLine("#+JETPACS_ICON: $it") }
         spec.order?.let { appendLine("#+JETPACS_ORDER: $it") }

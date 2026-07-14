@@ -826,18 +826,22 @@ private fun SourceEditor(
                         }
                     })
         Text("external org file")
-        if (packs.manifests.isNotEmpty() || view.source is SourceRef.Pack) {
+        // Only offer a pack SOURCE when some installed manifest actually
+        // declares a source — seeding a blank half (pack:id/) would write a
+        // token both parsers reject, locking the document out on reopen.
+        val sourcePacks = packs.manifests.filter { it.sources.isNotEmpty() }
+        if (sourcePacks.isNotEmpty() || view.source is SourceRef.Pack) {
             RadioButton(view.source is SourceRef.Pack,
                         onClick = {
                             edit {
                                 it.copy(source = it.source as? SourceRef.Pack
-                                    ?: (selectedPack ?: packs.manifests.firstOrNull())
+                                    ?: (selectedPack?.takeIf { p -> p.sources.isNotEmpty() }
+                                        ?: sourcePacks.firstOrNull())
                                         ?.let { pack ->
-                                            SourceRef.Pack(
-                                                pack.pack_id,
-                                                pack.sources.firstOrNull()?.name.orEmpty())
+                                            SourceRef.Pack(pack.pack_id,
+                                                           pack.sources.first().name)
                                         }
-                                    ?: SourceRef.Pack("", ""))
+                                    ?: it.source)
                             }
                         })
             Text("pack source")
@@ -918,15 +922,16 @@ private fun PackSourcePicker(
                 }
                 DropdownMenu(expanded = packOpen,
                              onDismissRequest = { packOpen = false }) {
-                    packs.manifests.forEach { m ->
+                    // Only packs that declare a source can back a source view;
+                    // seeding one without a source would mint a blank half.
+                    packs.manifests.filter { it.sources.isNotEmpty() }.forEach { m ->
                         DropdownMenuItem(
                             text = { Text("${m.pack_id} (v${m.pack_version})") },
                             onClick = {
                                 onSelectPack(m.pack_id)
                                 edit {
                                     it.copy(source = SourceRef.Pack(
-                                        m.pack_id,
-                                        m.sources.firstOrNull()?.name.orEmpty()))
+                                        m.pack_id, m.sources.first().name))
                                 }
                                 packOpen = false
                             },

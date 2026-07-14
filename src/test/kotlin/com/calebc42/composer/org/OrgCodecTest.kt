@@ -431,14 +431,21 @@ class OrgCodecTest {
     }
 
     @Test
-    fun unknownSourceSchemeRoundTripsByteFaithfully() {
+    fun unknownSourceSchemePreservedAndStampedFormat4() {
+        // The fixture arrives stamped 3 (a hand-authored / older doc).
         val text = fixture("parser-parity-unknown-source.org")
         val spec = OrgCodec.parse(text)
         assertEquals(
             com.calebc42.composer.model.SourceRef.Unknown("zzz:mystery/feed"),
             spec.views.single().source,
         )
-        assertEquals(text, OrgCodec.write(spec), "unknown-source round-trip drifted")
+        val out = OrgCodec.write(spec)
+        // The unknown source is preserved verbatim...
+        assertTrue(":SOURCE: zzz:mystery/feed" in out)
+        // ...but re-emitted at FORMAT 4, so a pre-Stage-4 runtime (which has
+        // no unknown-scheme branch and would misparse it as a file path)
+        // rejects it via the version gate instead.
+        assertTrue("#+JETPACS_APP_FORMAT: 4" in out)
     }
 
     @Test
@@ -501,6 +508,11 @@ class OrgCodecTest {
         assertEquals("4", stampOf(
             "#+JETPACS_APP: c\n\n* V\n:PROPERTIES:\n:KIND: records\n" +
                 ":SCHEMA: %ITEM\n:ACTIONS: pack:p/a.b\n:END:\n"))
+        // An unknown source scheme also bumps to 4: a pre-Stage-4 runtime
+        // has no unknown-scheme branch, so it must reject, not misparse.
+        assertEquals("4", stampOf(
+            "#+JETPACS_APP: d\n\n* V\n:PROPERTIES:\n:KIND: records\n" +
+                ":SOURCE: zzz:x/y\n:SCHEMA: %ITEM\n:END:\n"))
     }
 
     @Test
@@ -539,6 +551,15 @@ class OrgCodecTest {
         assertFailsWith<OrgCodec.FormatException> {
             OrgCodec.parse(
                 "#+JETPACS_APP: future\n#+JETPACS_APP_FORMAT: ${OrgCodec.FORMAT_VERSION + 1}$body")
+        }
+        // Non-integer versions must parse like the elisp oracle's
+        // string-to-number ("4.5"→4.5, "5x"→5) and reject when above the
+        // max — never be silently accepted as toIntOrNull()?:MAX did.
+        assertFailsWith<OrgCodec.FormatException> {
+            OrgCodec.parse("#+JETPACS_APP: half\n#+JETPACS_APP_FORMAT: 4.5$body")
+        }
+        assertFailsWith<OrgCodec.FormatException> {
+            OrgCodec.parse("#+JETPACS_APP: fivex\n#+JETPACS_APP_FORMAT: 5x$body")
         }
     }
 }

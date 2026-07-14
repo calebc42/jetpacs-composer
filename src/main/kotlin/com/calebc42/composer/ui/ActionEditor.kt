@@ -223,10 +223,16 @@ private fun ActionFields(
             }
             OutlinedTextField(
                 action.args.orEmpty(),
-                { v -> onChange(
-                    action.copy(args = v.trim().ifBlank { null }),
-                    "packargs",
-                ) },
+                { v ->
+                    // Args land verbatim inside the token's `(...)`, whose
+                    // grammar is `[^)]*` on both parsers — a ')' or newline
+                    // would make the saved document unparseable (and it can't
+                    // be re-opened). Strip exactly those; keep interior
+                    // spaces (a multi-word value is legal) and don't trim on
+                    // keystroke (that ate every trailing space as typed).
+                    val cleaned = v.filterNot { it == ')' || it == '\n' || it == '\r' }
+                    onChange(action.copy(args = cleaned.ifBlank { null }), "packargs")
+                },
                 label = { Text("args (optional)") }, singleLine = true,
                 modifier = Modifier.width(220.dp),
             )

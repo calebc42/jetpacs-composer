@@ -85,25 +85,36 @@ names — is *trusted generated code*; the document alone can never
 register a pack, choose a feature, or trigger an install (SPEC §5).
 
 Rendering a `pack:` view resolves, in order: the pack is registered and
-uncontested (two manifests claiming one id serve nothing), the installed
-version satisfies the document's `#+JETPACS_PACK:` minimum, the pack's
-feature `require`s, the source name is declared by the manifest AND
-present in the core source registry. Any failure renders the
-unavailable-view placeholder naming the reason, with no mutation
-affordances. Source params bind from the view's `:FILTER:` string: if
-every whitespace token is `key=value` with declared param keys, each
-binds by name; otherwise the raw string binds the source's `query`
-param when it declares one. A required param the view cannot bind fails
-the query — and the view degrades — rather than guessing.
+uncontested (two manifests claiming one id with *different features*
+serve nothing; a newer version of the same pack simply supersedes an
+older one), the installed version satisfies the document's
+`#+JETPACS_PACK:` minimum, the pack's feature `require`s (a feature that
+errors mid-load degrades to the placeholder, never crashes the view),
+the source name is declared by the manifest AND present in the core
+source registry. Any failure renders the unavailable-view placeholder
+naming the reason, with no mutation affordances. Source params bind from
+the view's `:FILTER:` string: if every whitespace token is `key=value`
+with declared param keys, each binds by name; otherwise the raw string
+binds the source's `query` param when it declares one. A required param
+the view cannot bind fails the query — and the view degrades — rather
+than guessing.
+
+A `pack:` view renders its rows as **read-only cards** (title, schema
+fields, and the view's declared pack-action buttons), regardless of its
+`:KIND:` — a `pack:`-sourced `board`/`calendar` does not yet get lanes or
+a month grid the way a file/vault-backed one does. Mutation is through
+the view's declared pack actions only, never the `crud.*` file handlers.
 
 Pack actions dispatch through the closed `crud.pack.action` handler:
 the token must be declared by the **registered** view's `:ACTIONS:`
 (the wire cannot invent one), the pack must resolve as above, and the
 action name must be in the manifest's declared list AND registered in
-the device's action registry. Static args come from the token's
-`(key=value,…)` options; dynamic args (like the tapped record's `ref`)
-ride the wire and never override static ones. Anything short of all of
-it is a clean error with nothing dispatched.
+the device's action registry. Static args come from the **registered
+document's** declared token options (`(key=value,…)`) — a tap fires a
+declared action but can never supply or rewrite its options; dynamic
+args (like the tapped record's `ref`) ride the wire and never override a
+static one. Anything short of all of it is a clean error with nothing
+dispatched.
 
 ### Device setup — what installs the engines
 

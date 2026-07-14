@@ -21,21 +21,26 @@ class DeployerTest {
         PackManifest.parse(fixture("glasspane-pack.json"))
 
     @Test
-    fun packBackedAppInstallsTheManifestsDepends() {
+    fun packBackedAppUnionsTheManifestsDependsOverTheBaseline() {
+        // A pack app's manifest depends join the always-present engine
+        // baseline (never replace it), so its own vulpea-kind views still
+        // install their substrate. packdemo has one records view → vulpea.
         val spec = OrgCodec.parse(fixture("packdemo.org"))
-        assertEquals(listOf("org", "org-ql", "vulpea", "cl-lib"),
+        assertEquals(listOf("org-ql", "vulpea", "org", "cl-lib"),
                      Deployer.installList(spec, glasspaneManifest()))
         assertTrue(Deployer.binaryWarnings(spec, glasspaneManifest()).isEmpty())
     }
 
     @Test
-    fun nonPackAppFallsBackToItsOwnDeclarations() {
-        // contacts.org declares nothing; its notes views require vulpea.
+    fun nonPackAppUnionsItsDeclarationsOverTheBaseline() {
+        // contacts.org declares nothing; its notes views require vulpea, and
+        // the org-ql/vulpea baseline is always present (the shared device
+        // snippet must never drop the substrate for a later app).
         val contacts = OrgCodec.parse(fixture("contacts.org"))
-        assertEquals(listOf("vulpea"), Deployer.installList(contacts, null))
-        // An explicit #+JETPACS_DEPENDS: is unioned with the derived set.
-        val declared = contacts.copy(depends = listOf("org-ql"))
-        assertEquals(listOf("org-ql", "vulpea"),
+        assertEquals(listOf("org-ql", "vulpea"), Deployer.installList(contacts, null))
+        // An explicit #+JETPACS_DEPENDS: is unioned on top of the baseline.
+        val declared = contacts.copy(depends = listOf("org-super-agenda"))
+        assertEquals(listOf("org-ql", "vulpea", "org-super-agenda"),
                      Deployer.installList(declared, null))
     }
 
@@ -58,8 +63,8 @@ class DeployerTest {
             Deployer.installList(OrgCodec.parse(fixture("packdemo.org")),
                                  glasspaneManifest()))
         assertEquals(forms.count { it == '(' }, forms.count { it == ')' })
-        // The manifest's install list, verbatim, in one dolist.
-        assertTrue("(dolist (pkg '(org org-ql vulpea cl-lib))" in forms)
+        // The install list (baseline ∪ manifest), verbatim, in one dolist.
+        assertTrue("(dolist (pkg '(org-ql vulpea org cl-lib))" in forms)
         // The offline-retry + idempotence shape survives parameterization.
         assertTrue("condition-case" in forms)
         assertTrue("package-installed-p" in forms)

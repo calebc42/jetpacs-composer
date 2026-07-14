@@ -61,32 +61,47 @@ class PackManifestTest {
         // Field type outside the closed source vocabulary.
         assertFailsWith<IllegalArgumentException> {
             PackManifest.parse(
-                """{"pack_id":"x","pack_version":"1",
+                """{"pack_id":"x","pack_version":"1","feature":"x",
                     "sources":[{"name":"s","fields":[{"name":"f","type":"florb"}]}]}""")
         }
         // Enum without values.
         assertFailsWith<IllegalArgumentException> {
             PackManifest.parse(
-                """{"pack_id":"x","pack_version":"1",
+                """{"pack_id":"x","pack_version":"1","feature":"x",
                     "sources":[{"name":"s","params":[{"name":"p","type":"enum"}]}]}""")
         }
         // Action arg outside the defaction arg vocabulary ("boolean" is
         // source-side; actions say "bool").
         assertFailsWith<IllegalArgumentException> {
             PackManifest.parse(
-                """{"pack_id":"x","pack_version":"1",
+                """{"pack_id":"x","pack_version":"1","feature":"x",
                     "actions":[{"action":"a","args":[{"name":"z","type":"boolean"}]}]}""")
         }
         // Bad pack id.
         assertFailsWith<IllegalArgumentException> {
-            PackManifest.parse("""{"pack_id":"Bad Id","pack_version":"1"}""")
+            PackManifest.parse("""{"pack_id":"Bad Id","pack_version":"1","feature":"x"}""")
+        }
+    }
+
+    @Test
+    fun rejectsFeaturelessOrUnsafeFeatureManifests() {
+        // No feature: unusable — the runtime requires it to load, so every
+        // view would fail closed on device. Reject at parse instead.
+        assertFailsWith<IllegalArgumentException> {
+            PackManifest.parse("""{"pack_id":"x","pack_version":"1"}""")
+        }
+        // A feature that isn't a bare symbol name is an injection surface in
+        // the trusted registration the bundle emits.
+        assertFailsWith<IllegalArgumentException> {
+            PackManifest.parse(
+                """{"pack_id":"x","pack_version":"1","feature":"x) (evil"}""")
         }
     }
 
     @Test
     fun unknownJsonKeysAreForwardCompatible() {
         val pack = PackManifest.parse(
-            """{"pack_id":"x","pack_version":"1","future_key":{"nested":true}}""")
+            """{"pack_id":"x","pack_version":"1","feature":"x","future_key":{"nested":true}}""")
         assertEquals("x", pack.pack_id)
     }
 
@@ -96,7 +111,7 @@ class PackManifestTest {
         File.createTempFile("packs", null).also { it.delete(); it.mkdirs(); it.deleteOnExit() }
 
     private fun minimal(id: String, version: String = "1.0.0") =
-        """{"pack_id":"$id","pack_version":"$version"}"""
+        """{"pack_id":"$id","pack_version":"$version","feature":"$id"}"""
 
     @Test
     fun loadsManifestsFromTheConfiguredDirectory() {
@@ -178,5 +193,19 @@ class PackManifestTest {
             File(it, "only-pack.json").writeText(minimal("glasspane"))
         })
         assertEquals("glasspane", sole.selectedPack(plain)!!.pack_id)
+    }
+
+    @Test
+    fun selectionPrefersTheDeclaredPackOverAmbiguity() {
+        val dir = tempDir()
+        File(dir, "alpha-pack.json").writeText(minimal("alpha"))
+        File(dir, "beta-pack.json").writeText(minimal("beta"))
+        val registry = PackRegistry.load(dir)
+        // The declared #+JETPACS_PACK: wins even before any view references
+        // it, and even with several manifests installed (where singleOrNull
+        // would give null) — pickers and the exporter agree on it.
+        val declared = AppSpec(id = "app", pack = PackRef("beta"),
+                               views = listOf(ViewSpec(title = "V")))
+        assertEquals("beta", registry.selectedPack(declared)!!.pack_id)
     }
 }

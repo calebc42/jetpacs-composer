@@ -95,7 +95,7 @@ class BundleExporterTest {
         }
         // And against the WRONG manifest.
         val other = PackManifest.parse(
-            """{"pack_id":"other","pack_version":"1"}""")
+            """{"pack_id":"other","pack_version":"1","feature":"other"}""")
         assertFailsWith<IllegalStateException> {
             BundleExporter.assemble(spec, text, other)
         }

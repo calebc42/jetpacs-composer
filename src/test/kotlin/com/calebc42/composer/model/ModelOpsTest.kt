@@ -461,4 +461,38 @@ class ModelOpsTest {
         assertTrue(ModelOps.validate(declared)
             .none { "#+JETPACS_PACK:" in it.message })
     }
+
+    @Test
+    fun crossPackReferenceIsAnError() {
+        // An app targets one pack; a view referencing a DIFFERENT pack would
+        // export a green bundle whose single registration can't back it, and
+        // the view fails closed on device with no export-time signal.
+        val spec = packApp(source = SourceRef.Pack("other", "other.things"))
+            .copy(pack = PackRef("glasspane", "1.0.0"))
+        val err = ModelOps.validate(spec).single { "targets one pack" in it.message }
+        assertEquals(ModelOps.Severity.Error, err.severity)
+        // Consistent references stay silent.
+        val ok = packApp(source = SourceRef.Pack("glasspane", "glasspane.notes"))
+            .copy(pack = PackRef("glasspane", "1.0.0"))
+        assertTrue(ModelOps.validate(ok).none { "targets one pack" in it.message })
+    }
+
+    @Test
+    fun referenceToAPackBackedViewIsAnError() {
+        // A ref resolves by scanning the target's file-backed records; a pack
+        // source has none, so the runtime lookup would fail mid-render.
+        val packView = ViewSpec(
+            title = "Feed", kind = ViewKind.RECORDS,
+            schema = listOf(SchemaField("ITEM")),
+            source = SourceRef.Pack("glasspane", "glasspane.notes"))
+        val referrer = ViewSpec(
+            title = "Refs", kind = ViewKind.TABLE,
+            colTypes = listOf(ColType.Ref("feed")),
+            body = listOf(BodyElement.Table(listOf("X"), emptyList())))
+        val spec = AppSpec(id = "r", pack = PackRef("glasspane", "1.0.0"),
+                           views = listOf(packView, referrer))
+        assertTrue(ModelOps.validate(spec).any {
+            it.severity == ModelOps.Severity.Error && "can't be referenced" in it.message
+        })
+    }
 }
