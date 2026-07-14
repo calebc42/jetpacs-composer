@@ -78,4 +78,9 @@ tasks.test {
     //   gradlew test -PelispBundle=OUT/jetpacs-app-pantry.el
     systemProperty("elisp.bundle",
                    providers.gradleProperty("elispBundle").getOrElse(""))
+    // Same cross-check for the pack-backed bundle (packdemo.org, built
+    // beside its glasspane-pack.json):
+    //   gradlew test -PelispPackBundle=OUT/jetpacs-app-packdemo.el
+    systemProperty("elisp.pack.bundle",
+                   providers.gradleProperty("elispPackBundle").getOrElse(""))
 }

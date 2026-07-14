@@ -62,6 +62,9 @@ smoke hello-world 8 || rc=1
 # no glasspane feature — its one view must still register, lint clean,
 # and render the fail-closed unavailable placeholder.
 smoke packdemo 1 || rc=1
+# The S4.5 recreation doc (saved-views list/board/calendar + journal +
+# backlinks over the pack): same bare-core bar, five views.
+smoke glasspane-views 5 || rc=1
 rm -rf "$TMP"
 [ "$rc" -eq 0 ] || { echo "bundle smoke FAILED"; exit 1; }
 echo "All suites passed."

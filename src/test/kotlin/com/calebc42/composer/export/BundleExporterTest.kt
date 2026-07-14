@@ -52,6 +52,18 @@ class BundleExporterTest {
         assertEquals(expected, BundleExporter.assemble(OrgCodec.parse(text), text))
     }
 
+    /** The pack-backed twin of [matchesTheElispReferenceBuilder]. */
+    @Test
+    fun matchesTheElispReferenceBuilderForPackBundles() {
+        val ref = System.getProperty("elisp.pack.bundle").orEmpty()
+        if (ref.isEmpty()) return
+        val text = fixture("packdemo.org")
+        val expected = File(ref).readText(Charsets.UTF_8)
+        assertEquals(expected,
+                     BundleExporter.assemble(OrgCodec.parse(text), text,
+                                             glasspaneManifest()))
+    }
+
     private fun glasspaneManifest(): PackManifest =
         PackManifest.parse(fixture("glasspane-pack.json"))
 

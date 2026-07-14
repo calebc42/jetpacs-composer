@@ -551,6 +551,186 @@ manifest doesn't declare — provably nothing runs."
                  (json-serialize (jetpacs-crud--build-view "toy" "things" nil)
                                  :null-object :null :false-object :false)))))
 
+;; ─── S4.5 acceptance: the Glasspane views against the REAL manifest ─────────
+;;
+;; glasspane-views.org recreates the master plan's bar — saved-views
+;; (list/board/calendar), journal history, backlinks — as pack: views
+;; over glasspane.org / glasspane.notes.  The pack facts come from the
+;; staged real glasspane-pack.json; the engine behind the source names is
+;; a tiny in-memory double (batch has no phone and no live Glasspane).
+;; The on-device rows live in the glasspane repo's TESTING-ON-DEVICE.md.
+
+(defun jetpacs-crud-tests--glasspane-manifest-facts ()
+  "Pack registration facts parsed from the staged real glasspane-pack.json."
+  (let ((json (json-parse-string
+               (jetpacs-crud-tests--slurp
+                (expand-file-name "glasspane-pack.json"
+                                  jetpacs-crud-tests--fixtures)))))
+    (list :id (gethash "pack_id" json)
+          :feature (intern (gethash "feature" json))
+          :version (gethash "pack_version" json)
+          :sources (mapcar (lambda (s) (gethash "name" s))
+                           (append (gethash "sources" json) nil))
+          :actions (mapcar (lambda (a) (gethash "action" a))
+                           (append (gethash "actions" json) nil)))))
+
+(defmacro jetpacs-crud-tests--with-glasspane-double (&rest body)
+  "Run BODY with a Glasspane engine double behind the REAL manifest names.
+Registers glasspane.org / glasspane.notes sources and the
+heading.todo-cycle / journal.capture actions over an in-memory store
+(`store'), and the pack facts straight from the staged manifest.  The
+pack feature is satisfied with a global `provide' — let-binding
+`features' does NOT reach `require'/`featurep' (they read the C-level
+list directly), and the mark is harmless: nothing else in the suite
+requires the feature, and every fail-closed test gates on registration
+or version before the feature check."
+  (declare (indent 0) (debug (body)))
+  `(jetpacs-crud-tests--with-clean-state
+     (let* ((facts (jetpacs-crud-tests--glasspane-manifest-facts))
+            (_ (provide (plist-get facts :feature)))
+            (jetpacs--sources (make-hash-table :test 'equal))
+            (jetpacs--source-cache (make-hash-table :test 'equal))
+            (jetpacs-action-handlers (copy-hash-table jetpacs-action-handlers))
+            (jetpacs--action-catalog (copy-hash-table jetpacs--action-catalog))
+            (store
+             (list (list (cons "headline" "Ship Stage 4") (cons "todo" "TODO")
+                         (cons "scheduled" "2026-07-14") (cons "tags" ["work"])
+                         (cons "ref" "h1"))
+                   (list (cons "headline" "Monday reflections") (cons "todo" "")
+                         (cons "tags" ["journal"]) (cons "ref" "h2"))))
+            (notes-params nil)
+            (captures nil))
+       (ignore store notes-params captures)
+       (jetpacs-defsource "glasspane.org"
+         :params '((:name query :type "text" :required t))
+         :fields '((:name "headline" :type "text") (:name "todo" :type "text")
+                   (:name "scheduled" :type "date") (:name "deadline" :type "date")
+                   (:name "tags" :type "string-list") (:name "ref" :type "ref"))
+         :query (lambda (params)
+                  (let ((query (alist-get 'query params)))
+                    (cl-remove-if-not
+                     (lambda (row)
+                       (pcase query
+                         ("(todo)" (not (string-empty-p
+                                         (alist-get "todo" row nil nil #'equal))))
+                         ("(scheduled)" (alist-get "scheduled" row nil nil #'equal))
+                         ((pred (string-match-p "journal"))
+                          (seq-contains-p (alist-get "tags" row nil nil #'equal)
+                                          "journal"))
+                         (_ t)))
+                     store))))
+       (jetpacs-defsource "glasspane.notes"
+         :params '((:name id :type "text" :required t)
+                   (:name relation :type "enum"
+                    :values ["backlinks" "outgoing"]))
+         :fields '((:name "title" :type "text") (:name "tags" :type "string-list")
+                   (:name "ref" :type "ref"))
+         :query (lambda (params)
+                  (setq notes-params params)
+                  (when (and (equal (alist-get 'id params) "note-hub")
+                             (equal (alist-get 'relation params) "backlinks"))
+                    (list (list (cons "title" "Linked from: Weekly review")
+                                (cons "tags" ["review"]) (cons "ref" "n1"))))))
+       (jetpacs-defaction "heading.todo-cycle"
+                          (lambda (args _payload)
+                            (let ((row (cl-find (alist-get 'ref args) store
+                                                :key (lambda (r)
+                                                       (alist-get "ref" r nil nil #'equal))
+                                                :test #'equal)))
+                              (unless row (user-error "No heading %S" args))
+                              (setcdr (assoc "todo" row)
+                                      (if (equal (alist-get "todo" row nil nil #'equal)
+                                                 "TODO")
+                                          "DONE" "TODO")))))
+       (jetpacs-defaction "journal.capture"
+                          (lambda (args _payload) (push args captures)))
+       (jetpacs-crud-pack-register (plist-get facts :id)
+                                   :feature (plist-get facts :feature)
+                                   :version (plist-get facts :version)
+                                   :sources (plist-get facts :sources)
+                                   :actions (plist-get facts :actions))
+       (jetpacs-crud-tests--with-apps-dir _dir
+         (jetpacs-crud-install
+          "glasspane-views"
+          (jetpacs-crud-tests--slurp
+           (expand-file-name "glasspane-views.org"
+                             jetpacs-crud-tests--fixtures)))
+         ,@body))))
+
+(defun jetpacs-crud-tests--view-json (app view)
+  (json-serialize (jetpacs-crud--build-view app view nil)
+                  :null-object :null :false-object :false))
+
+(ert-deftest jetpacs-crud-acceptance-glasspane-views-render-against-the-pack ()
+  "Every recreated Glasspane view renders live data through the pack."
+  (jetpacs-crud-tests--with-glasspane-double
+    (dolist (view '("tasks" "board" "calendar" "journal" "backlinks"))
+      (let* ((built (jetpacs-crud--build-view "glasspane-views" view nil))
+             (json (json-serialize built
+                                   :null-object :null :false-object :false)))
+        (should (null (jetpacs-lint-spec built)))
+        (should-not (string-match-p "is unavailable" json))))
+    ;; The saved-view list carries the task, not the journal note.
+    (let ((tasks (jetpacs-crud-tests--view-json "glasspane-views" "tasks")))
+      (should (string-match-p "Ship Stage 4" tasks))
+      (should-not (string-match-p "Monday reflections" tasks)))
+    ;; Journal history sees exactly the journal-tagged entry.
+    (let ((journal (jetpacs-crud-tests--view-json "glasspane-views" "journal")))
+      (should (string-match-p "Monday reflections" journal))
+      (should-not (string-match-p "Ship Stage 4" journal)))
+    ;; Backlinks bound both named params from the key=value :FILTER:.
+    (let ((backlinks (jetpacs-crud-tests--view-json "glasspane-views" "backlinks")))
+      (should (string-match-p "Weekly review" backlinks))
+      (should (equal notes-params
+                     '((id . "note-hub") (relation . "backlinks")))))))
+
+(ert-deftest jetpacs-crud-acceptance-glasspane-mutation-round-trips ()
+  "One mutation round-trips: todo-cycle through crud.pack.action, then the
+re-rendered saved view shows the new state."
+  (jetpacs-crud-tests--with-glasspane-double
+    (should (string-match-p "State: TODO"
+                            (jetpacs-crud-tests--view-json
+                             "glasspane-views" "tasks")))
+    (jetpacs-crud-action-pack-apply
+     '((app . "glasspane-views") (view . "tasks")
+       (token . "pack:glasspane/heading.todo-cycle") (ref . "h1"))
+     nil)
+    (should (string-match-p "State: DONE"
+                            (jetpacs-crud-tests--view-json
+                             "glasspane-views" "tasks")))))
+
+(ert-deftest jetpacs-crud-acceptance-pack-missing-and-incompatible ()
+  "The same document with the pack missing or too old: every view is the
+fail-closed placeholder, and the app still lints clean end to end."
+  ;; Missing: no registration at all.
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir _dir
+      (jetpacs-crud-install
+       "glasspane-views"
+       (jetpacs-crud-tests--slurp
+        (expand-file-name "glasspane-views.org" jetpacs-crud-tests--fixtures)))
+      (dolist (view '("tasks" "board" "calendar" "journal" "backlinks"))
+        (let* ((built (jetpacs-crud--build-view "glasspane-views" view nil))
+               (json (json-serialize built
+                                     :null-object :null :false-object :false)))
+          (should (null (jetpacs-lint-spec built)))
+          (should (string-match-p "is unavailable" json))
+          (should (string-match-p "not installed" json))))))
+  ;; Incompatible: registered, but older than the declared minimum.
+  (jetpacs-crud-tests--with-glasspane-double
+    (puthash "glasspane"
+             (plist-put (copy-sequence (gethash "glasspane" jetpacs-crud--packs))
+                        :version "0.9")
+             jetpacs-crud--packs)
+    (let ((json (jetpacs-crud-tests--view-json "glasspane-views" "tasks")))
+      (should (string-match-p "is unavailable" json))
+      (should (string-match-p "needs pack" json)))
+    (should-error (jetpacs-crud-action-pack-apply
+                   '((app . "glasspane-views") (view . "tasks")
+                     (token . "pack:glasspane/heading.todo-cycle") (ref . "h1"))
+                   nil)
+                  :type 'user-error)))
+
 (ert-deftest jetpacs-crud-parse-depends ()
   "A valid `#+JETPACS_DEPENDS:' parses to the :depends package list."
   (let ((file (make-temp-file
