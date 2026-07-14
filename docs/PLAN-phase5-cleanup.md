@@ -158,16 +158,18 @@ degradation, `#+JETPACS_DEPENDS:`, device setup). Do a consolidated pass:
    hello-world → verify every kind renders, a cell edit round-trips, and an
    external Termux `sed` edit + autosync refreshes the view. Add to README.
 
-3. **Three pre-existing JVM `OrgCodecTest` failures** (red before this
-   work): `writerEmitsParsableCanonicalForm` and
-   `formatTwoIsTheCleanCutoverVersion` still assume the format-2 era (the
-   writer emits `3`; old formats are accepted per FORMAT.md — the tests are
-   stale), and `sharedParserParityManifest` hits a JVM-vs-elisp divergence
-   on unknown-`:KIND:` leniency (the elisp parser accepts an unknown kind
-   with a warning; the JVM parser demands a `:SCHEMA:` and rejects it —
-   make `OrgCodec` lenient to match, and drop/rewrite the two stale format
-   tests). This is a small parser-parity fix plus a decision on whether old
-   `#+JETPACS_APP_FORMAT:` versions should be rejected outright.
+3. ~~**Three pre-existing JVM `OrgCodecTest` failures**~~ **RESOLVED
+   2026-07-13.** The decision went to parity-with-the-elisp-oracle
+   (which FORMAT.md already documented): old `#+JETPACS_APP_FORMAT:`
+   versions are ACCEPTED, only a future version is rejected. Fixes:
+   `OrgCodec`'s schema demand no longer covers `ViewKind.UNKNOWN`
+   (mirrors the elisp `memq` list — forward-compat leniency accepts an
+   unknown `:KIND:` and surfaces it as Unknown);
+   `writerEmitsParsableCanonicalForm` pins the writer to
+   `OrgCodec.FORMAT_VERSION` instead of a literal `2`; the stale
+   `formatTwoIsTheCleanCutoverVersion` became
+   `formatGateAcceptsOldAndRejectsFuture`. Full JVM suite green
+   (26/26); shared parity manifest passes on both sides.
 
 ## Key files
 - `elisp/jetpacs-crud.el` (source of the extraction; dead-code sweep)

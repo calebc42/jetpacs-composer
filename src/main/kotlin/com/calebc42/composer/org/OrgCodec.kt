@@ -136,7 +136,12 @@ object OrgCodec : OrgAppCodec {
             }
             else -> ViewKind.UNKNOWN
         }
-        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT, ViewKind.UNKNOWN)
+        // The eight KNOWN heading-family kinds demand a :SCHEMA:.  An UNKNOWN
+        // kind is deliberately outside the list: forward-compat leniency says
+        // accept it and surface it as Unknown — we can't know a future kind's
+        // requirements.  Mirrors the elisp parser's memq list exactly (the
+        // runtime oracle; pinned by the shared parser-parity manifest).
+        val isRecordsType = kind in listOf(ViewKind.RECORDS, ViewKind.NOTES, ViewKind.BOARD, ViewKind.CALENDAR, ViewKind.GALLERY, ViewKind.TREE, ViewKind.DASHBOARD, ViewKind.GANTT)
         if (isRecordsType && props["SCHEMA"].isNullOrBlank())
             throw FormatException("a ${kind.name.lowercase()} view needs a :SCHEMA: under \"$title\"")
         if (kind == ViewKind.NOTES && props["SOURCE"].isNullOrBlank())

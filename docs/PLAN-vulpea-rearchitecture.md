@@ -28,15 +28,12 @@ current) rather than the plan's full `(heading, tbl, row, col)` logical
 addressing; and the vulpea code still lives in `jetpacs-crud.el` rather
 than a split-out `jetpacs-crud-vulpea.el` (Phase 5).
 
-**Known pre-existing failures (not introduced here, tracked for later):**
-three JVM `OrgCodecTest` cases are red from before Phase 1 —
-`writerEmitsParsableCanonicalForm` and `formatTwoIsTheCleanCutoverVersion`
-still assume the format-2 era (the writer now emits format 3 and old
-formats are accepted per FORMAT.md), and `sharedParserParityManifest`
-hits a JVM-vs-elisp divergence on unknown-`:KIND:` leniency (the elisp
-parser accepts it, the JVM parser demands a `:SCHEMA:`). Fixing these is
-a small parser-parity cleanup plus a decision on whether old format
-versions should be rejected outright.
+**~~Known pre-existing failures~~ RESOLVED 2026-07-13:** the three red
+JVM `OrgCodecTest` cases are fixed — `OrgCodec` now matches the elisp
+oracle (unknown `:KIND:` accepted without a `:SCHEMA:` demand; old
+`#+JETPACS_APP_FORMAT:` versions accepted, future rejected) and the two
+stale format-2-era tests were rewritten against `FORMAT_VERSION`. Full
+JVM suite green. See PLAN-phase5-cleanup.md deferred item 3.
 
 ## Why
 

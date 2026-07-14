@@ -439,19 +439,29 @@ class OrgCodecTest {
         val spec = OrgCodec.parse(fixture("pantry.org"))
         val text = OrgCodec.write(spec)
         assertTrue(text.startsWith("#+JETPACS_APP: pantry\n"))
-        assertTrue("#+JETPACS_APP_FORMAT: 2\n" in text)
+        assertTrue("#+JETPACS_APP_FORMAT: ${OrgCodec.FORMAT_VERSION}\n" in text)
         assertTrue(":COLTYPES: text number date enum(Low,Mid,High) checkbox" in text)
         assertTrue("| Rice | 2   | 2026-09-01 | Mid   | [ ]     |" in text)
     }
 
+    /**
+     * The format gate is forward-compatible, matching the elisp parser
+     * (the runtime oracle): no keyword and every PAST version parse — old
+     * documents keep opening — while a FUTURE version is a clear
+     * rejection, never a misparse.
+     */
     @Test
-    fun formatTwoIsTheCleanCutoverVersion() {
+    fun formatGateAcceptsOldAndRejectsFuture() {
         val body = "\n* Table\n\n| Name |\n|------+\n| one  |\n"
         assertEquals("current", OrgCodec.parse(
             "#+JETPACS_APP: current$body").id)
+        assertEquals("one", OrgCodec.parse(
+            "#+JETPACS_APP: one\n#+JETPACS_APP_FORMAT: 1$body").id)
+        assertEquals("two", OrgCodec.parse(
+            "#+JETPACS_APP: two\n#+JETPACS_APP_FORMAT: 2$body").id)
         assertFailsWith<OrgCodec.FormatException> {
             OrgCodec.parse(
-                "#+JETPACS_APP: old\n#+JETPACS_APP_FORMAT: 1$body")
+                "#+JETPACS_APP: future\n#+JETPACS_APP_FORMAT: ${OrgCodec.FORMAT_VERSION + 1}$body")
         }
     }
 }
