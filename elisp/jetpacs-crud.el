@@ -31,6 +31,7 @@
 
 (require 'cl-lib)
 (require 'org)
+(require 'org-id)
 (require 'jetpacs-org)
 (require 'jetpacs-source)
 (require 'org-table)
@@ -233,25 +234,135 @@ callers gate on `jetpacs-crud--vulpea-p' and degrade."
 
 ;; ─── Scaffolding missing sources ─────────────────────────────────────────────
 
+(defun jetpacs-crud--view-seed (spec view)
+  "VIEW's authored body in the app document — its scaffold seed.
+For an external-source view the body under its heading is otherwise
+dead space; FORMAT.md defines it as the initial content of a scaffolded
+\(missing) source, which is how a sample app arrives pre-loaded.  Meta —
+the property drawer, planning lines — is excluded; prose, tables, list
+items, and record sub-headings are all seed.  Returns a trimmed string,
+or nil when the view has no body."
+  (let ((doc (plist-get spec :file))
+        (title (plist-get view :title)))
+    (when (and doc (file-readable-p doc))
+      (with-temp-buffer
+        (insert-file-contents doc)
+        (delay-mode-hooks (org-mode))
+        (when (jetpacs-crud--goto-heading title)
+          (org-narrow-to-subtree)
+          (org-end-of-meta-data t)
+          (let ((body (string-trim (buffer-substring-no-properties
+                                    (point) (point-max)))))
+            (unless (string-empty-p body) body)))))))
+
+(defun jetpacs-crud--seed-normalize (seed base)
+  "SEED with its shallowest org heading level shifted to BASE.
+Records sit one level under the view heading in the app document; a
+scaffolded source expects them at BASE (1 in a bare file, 2 under a
+`::*Heading').  Seeds without headings pass through untouched."
+  (with-temp-buffer
+    (insert seed "\n")
+    (let ((case-fold-search nil) (min nil))
+      (goto-char (point-min))
+      (while (re-search-forward "^\\(\\*+\\) " nil t)
+        (let ((n (length (match-string 1))))
+          (when (or (null min) (< n min)) (setq min n))))
+      (when (and min (/= min base))
+        (let ((delta (- base min)))
+          (goto-char (point-min))
+          (while (re-search-forward "^\\(\\*+\\) " nil t)
+            (replace-match
+             (concat (make-string (max 1 (+ (length (match-string 1)) delta)) ?*)
+                     " "))))))
+    (string-trim-right (buffer-string))))
+
+(defun jetpacs-crud--scaffold-vault (dir seed spec view)
+  "Scaffold vault DIR with one note file per record heading in SEED.
+The notes-view half of body-as-seed: each of SEED's shallowest-level
+headings becomes one `.org' note file carrying the file-level `:ID:'
+vulpea indexes by, the record's own drawer properties, `#+TITLE:', and
+its body.  Prose outside record headings is documentation, not data —
+it stays in the app document.  Create-once: callers gate on DIR not
+existing.  Freshly written notes are indexed immediately when vulpea is
+present; otherwise the engine light-up's initial full scan finds them
+\(the vault lives inside the synced jetpacs-crud/ directory)."
+  (make-directory dir t)
+  (let ((written 0)
+        (coding-system-for-write 'utf-8))
+    (with-temp-buffer
+      (insert seed "\n")
+      (delay-mode-hooks (org-mode))
+      (let ((case-fold-search nil) (min nil))
+        (goto-char (point-min))
+        (while (re-search-forward "^\\(\\*+\\) " nil t)
+          (let ((n (length (match-string 1))))
+            (when (or (null min) (< n min)) (setq min n))))
+        (when min
+          (goto-char (point-min))
+          (while (re-search-forward (format "^\\*\\{%d\\} " min) nil t)
+            (beginning-of-line)
+            (let* ((title (org-get-heading t t t t))
+                   (drawer (org-get-property-block))
+                   (props (and drawer (string-trim-right
+                                       (buffer-substring-no-properties
+                                        (car drawer) (cdr drawer)))))
+                   (body (save-excursion
+                           (org-end-of-meta-data t)
+                           (string-trim (buffer-substring-no-properties
+                                         (point)
+                                         (save-excursion
+                                           (org-end-of-subtree t t) (point))))))
+                   (note (expand-file-name
+                          (concat (jetpacs-crud--slug title) ".org") dir)))
+              (unless (file-exists-p note)
+                (with-temp-file note
+                  (insert ":PROPERTIES:\n:ID:       " (org-id-uuid) "\n")
+                  (when (and props (not (string-empty-p props)))
+                    (insert props "\n"))
+                  (insert ":END:\n#+TITLE: " title "\n")
+                  (unless (string-empty-p body) (insert "\n" body "\n")))
+                (setq written (1+ written))
+                (when (fboundp 'jetpacs-crud--reindex)
+                  (ignore-errors (jetpacs-crud--reindex note))))
+              (org-end-of-subtree t t))))))
+    (when (> written 0)
+      (message "jetpacs-crud: scaffolded %d note(s) into %s for %s.%s"
+               written dir (plist-get spec :id) (plist-get view :name)))))
+
 (defun jetpacs-crud--scaffold-source (spec view)
-  "Create VIEW's external source file when missing and scaffoldable.
-Table views need `:columns' for the header row; checklist views get the
-heading alone.  Inline sources and existing files are left untouched."
+  "Create VIEW's external source when missing, seeded from the document.
+The view's own body in the app document (`jetpacs-crud--view-seed') is
+the authored initial content.  Without a seed, table views get a header
+row from `:columns' and checklist/records views the bare heading, as
+before.  A file source scaffolds one file; a vault directory source
+scaffolds one note per record heading (`jetpacs-crud--scaffold-vault').
+Inline sources and existing files/directories are never touched."
   (let* ((source (plist-get view :source))
          (file (and source (plist-get source :file)))
+         (dir (and source (plist-get source :dir)))
          (heading (and source (plist-get source :heading)))
-         (columns (plist-get view :columns)))
-    (when (and file (not (file-exists-p file))
-               (or columns (memq (plist-get view :kind) '(checklist records))))
+         (columns (plist-get view :columns))
+         (seed (and (or file dir) (jetpacs-crud--view-seed spec view))))
+    (cond
+     ((and file (not (file-exists-p file))
+           (or seed columns (memq (plist-get view :kind) '(checklist records))))
       (make-directory (file-name-directory file) t)
       (let ((coding-system-for-write 'utf-8))
         (with-temp-file file
           (when heading (insert "* " heading "\n\n"))
-          (when (and columns (eq (plist-get view :kind) 'table))
+          (when seed
+            (insert (jetpacs-crud--seed-normalize seed (if heading 2 1)) "\n"))
+          ;; A table view still needs its header row when the seed is
+          ;; prose-only (or absent): the template goes under the prose.
+          (when (and columns (eq (plist-get view :kind) 'table)
+                     (not (and seed (string-match-p "^[ \t]*|" seed))))
+            (when seed (insert "\n"))
             (insert "| " (mapconcat #'identity columns " | ") " |\n")
             (insert "|" (mapconcat (lambda (_) "---") columns "+") "|\n"))))
       (message "jetpacs-crud: scaffolded %s for %s.%s"
-               file (plist-get spec :id) (plist-get view :name)))))
+               file (plist-get spec :id) (plist-get view :name)))
+     ((and dir seed (not (file-directory-p dir)))
+      (jetpacs-crud--scaffold-vault dir seed spec view)))))
 
 ;; ─── Rendering: table views ──────────────────────────────────────────────────
 

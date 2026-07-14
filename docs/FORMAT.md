@@ -229,11 +229,28 @@ records' `:GROUP_BY:`, which lanes a single board's records.
   stays a file source.) New source types therefore never need a format
   version bump.
 
-If an external source file does not exist at registration time, the
-runtime creates it when it can: table views need `:COLUMNS:` (for the
-header row); checklist views need no schema, so their file (and heading,
-if given) is always scaffolded. A table view without `:COLUMNS:` whose
-source is missing renders an empty-state, never an error.
+If an external source does not exist at registration time, the runtime
+creates it when it can — and **the view's own body in the app document
+is its seed**. For an external-source view that body is otherwise dead
+space, so it is defined as the authored initial content of the
+scaffolded source (how a sample app arrives pre-loaded):
+
+- **File sources**: the body (prose, table, list items, record
+  sub-headings — everything below the property drawer) is written into
+  the newly created file, heading levels shifted so records land at the
+  file's top level (or one under the `::*Heading`). With no body, the
+  old templates apply: table views need `:COLUMNS:` for the header row;
+  checklist and records views get the bare file/heading.
+- **Vault directory sources** (notes views): each record heading in the
+  body becomes one `.org` note file — file-level `:ID:` (what vulpea
+  indexes by), the record's drawer properties, `#+TITLE:`, and its
+  body. Prose outside record headings is documentation and stays in the
+  app document only.
+
+Seeding is create-once: an existing file or directory is never touched,
+so re-deploys and restarts cannot resurrect deleted data. A table view
+without `:COLUMNS:` and without a body whose source is missing renders
+an empty-state, never an error.
 
 ### `:COLTYPES:` — the column types
 

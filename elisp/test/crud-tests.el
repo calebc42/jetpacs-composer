@@ -39,6 +39,14 @@
 (require 'jetpacs-crud-vulpea)
 (require 'jetpacs-crud-orgapp)
 
+;; Kill the bridge's auto-connect for the whole batch run: the core arms
+;; a 0-delay connect timer at load plus a reconnect backoff, so every
+;; test otherwise runs over connection-refused churn — and on the pinned
+;; submodule core a send racing a dying connect process can even signal
+;; (fixed in newer core; the suite must be deterministic on the pin too).
+(cancel-function-timers #'jetpacs-connect)
+(jetpacs-disconnect)
+
 ;; Isolate the vulpea index for the whole run.  Registration now adopts
 ;; ids on source files and re-indexes them (`jetpacs-crud-vulpea-ensure-source'),
 ;; so without a private db location the suite would write the developer's
@@ -953,6 +961,112 @@ fail-closed placeholder, and the app still lints clean end to end."
         (should (string-match-p "^\\* Stock" content))
         (should (string-match-p "| Part | Count |" content))))))
 
+;; ─── Body-as-seed scaffolding (FORMAT.md "the view's body is its seed") ─────
+
+(defmacro jetpacs-crud-tests--offline (&rest body)
+  "Run BODY with the wire fully stubbed out.
+The suite runs under jetpacs's auto-reconnect loop; a send that races
+the moment an async connect fails can signal instead of dropping the
+frame (core fix separate).  Registration-heavy tests bind the raw send
+away so a reconnect tick can never fail them."
+  (declare (indent 0) (debug (body)))
+  `(cl-letf (((symbol-function 'jetpacs--raw-send) #'ignore))
+     ,@body))
+
+(ert-deftest jetpacs-crud-scaffold-seeds-from-view-body ()
+  "A missing external file source scaffolds with the view's authored
+body — how a sample app arrives pre-loaded — and never reseeds an
+existing file."
+  (jetpacs-crud-tests--offline
+   (jetpacs-crud-tests--with-clean-state
+    (let* ((dir (make-temp-file "jetpacs-crud-seed" t))
+           (doc (expand-file-name "seeded.org" dir))
+           (backend (expand-file-name "backend.org" dir)))
+      (push dir jetpacs-crud-tests--temp-dirs)
+      (with-temp-file doc
+        (insert "#+JETPACS_APP: seeded\n\n"
+                "* Stock\n:PROPERTIES:\n:KIND: table\n:SOURCE: backend.org\n"
+                ":COLUMNS: Part | Count\n:COLTYPES: text number\n:END:\n\n"
+                "Warehouse starter rows.\n\n"
+                "| Part | Count |\n|------+-------|\n| Bolt |    12 |\n"))
+      (jetpacs-crud-register-file doc)
+      (let ((content (jetpacs-crud-tests--slurp backend)))
+        (should (string-match-p "| Bolt |" content))
+        (should (string-match-p "Warehouse starter rows" content))
+        ;; The seed's own table stands alone — the header-row template
+        ;; was not ALSO written (exactly one header row).
+        (should (= 1 (cl-count "| Part | Count |"
+                               (split-string content "\n")
+                               :test (lambda (needle line)
+                                       (string-match-p (regexp-quote needle)
+                                                       line))))))
+      ;; Create-once: edit the backend, re-register, nothing reseeds.
+      (with-temp-file backend (insert "edited\n"))
+      (jetpacs-crud-register-file doc)
+      (should (equal "edited\n" (jetpacs-crud-tests--slurp backend)))))))
+
+(ert-deftest jetpacs-crud-scaffold-seed-normalizes-record-levels ()
+  "Record sub-headings (level 2 under the view) land at level 1 in a
+bare-file source and at level 2 under a ::*Heading source."
+  (jetpacs-crud-tests--offline
+   (jetpacs-crud-tests--with-clean-state
+    (let* ((dir (make-temp-file "jetpacs-crud-seed" t))
+           (doc (expand-file-name "seeded.org" dir)))
+      (push dir jetpacs-crud-tests--temp-dirs)
+      (with-temp-file doc
+        (insert "#+JETPACS_APP: seeded\n\n"
+                "* Flat\n:PROPERTIES:\n:KIND: records\n:SOURCE: flat.org\n"
+                ":SCHEMA: %ITEM(Task)\n:END:\n\n"
+                "** First task\n** Second task\n\n"
+                "* Nested\n:PROPERTIES:\n:KIND: records\n"
+                ":SOURCE: nested.org::*Inbox\n:SCHEMA: %ITEM(Task)\n:END:\n\n"
+                "** Third task\n"))
+      (jetpacs-crud-register-file doc)
+      (let ((flat (jetpacs-crud-tests--slurp (expand-file-name "flat.org" dir))))
+        (should (string-match-p "^\\* First task" flat))
+        (should-not (string-match-p "^\\*\\* First task" flat)))
+      (let ((nested (jetpacs-crud-tests--slurp
+                     (expand-file-name "nested.org" dir))))
+        (should (string-match-p "^\\* Inbox" nested))
+        (should (string-match-p "^\\*\\* Third task" nested)))))))
+
+(ert-deftest jetpacs-crud-scaffold-seeds-vault-notes ()
+  "A missing vault dir scaffolds one id'd note file per record heading;
+prose outside records stays in the document; an existing dir is never
+touched (create-once)."
+  (jetpacs-crud-tests--offline
+   (jetpacs-crud-tests--with-clean-state
+    (let* ((dir (make-temp-file "jetpacs-crud-seed" t))
+           (doc (expand-file-name "seeded.org" dir))
+           (vault (expand-file-name "vault/" dir)))
+      (push dir jetpacs-crud-tests--temp-dirs)
+      (with-temp-file doc
+        (insert "#+JETPACS_APP: seeded\n\n"
+                "* Notes\n:PROPERTIES:\n:KIND: notes\n:SOURCE: vault/\n"
+                ":SCHEMA: %ITEM(Title) %CATEGORY(Category)\n:END:\n\n"
+                "Prose about this view — documentation, not data.\n\n"
+                "** Monstera care\n:PROPERTIES:\n:CATEGORY: Plants\n:END:\n\n"
+                "Water weekly.\n\n"
+                "** Sourdough starter\n:PROPERTIES:\n:CATEGORY: Kitchen\n:END:\n\n"
+                "Feed daily.\n"))
+      (let ((jetpacs-crud--vulpea nil))    ; scaffolding must not need the index
+        (jetpacs-crud-register-file doc))
+      (should (= 2 (length (directory-files vault nil "\\.org\\'"))))
+      (let ((monstera (jetpacs-crud-tests--slurp
+                       (expand-file-name "monstera-care.org" vault))))
+        (should (string-match-p "^:ID: +[0-9a-fA-F-]+" monstera))
+        (should (string-match-p "^:CATEGORY: Plants" monstera))
+        (should (string-match-p "^#\\+TITLE: Monstera care" monstera))
+        (should (string-match-p "Water weekly" monstera))
+        (should-not (string-match-p "documentation, not data" monstera)))
+      ;; Create-once: drop a file of our own, re-register, nothing rewrites.
+      (with-temp-file (expand-file-name "keep.org" vault) (insert "mine\n"))
+      (let ((jetpacs-crud--vulpea nil))
+        (jetpacs-crud-register-file doc))
+      (should (= 3 (length (directory-files vault nil "\\.org\\'"))))
+      (should (equal "mine\n" (jetpacs-crud-tests--slurp
+                               (expand-file-name "keep.org" vault))))))))
+
 ;; ─── Rendering ───────────────────────────────────────────────────────────────
 
 (ert-deftest jetpacs-crud-views-lint-clean ()
@@ -988,10 +1102,18 @@ fail-closed placeholder, and the app still lints clean end to end."
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "hello-world.org")))
       (should (equal (jetpacs-crud-register-file file) "hello-world"))
-      ;; The Shopping view scaffolded its relative external source.
-      (should (file-exists-p (expand-file-name
-                              "shopping-list.org"
-                              (file-name-directory file))))
+      ;; The Shopping view scaffolded its relative external source — WITH
+      ;; its authored sample rows (body-as-seed), not a bare header row.
+      (let ((shopping (expand-file-name "shopping-list.org"
+                                        (file-name-directory file))))
+        (should (file-exists-p shopping))
+        (should (string-match-p "| Bread"
+                                (jetpacs-crud-tests--slurp shopping))))
+      ;; The Notes vault scaffolded one id'd note per seed record.
+      (should (= 2 (length (directory-files
+                            (expand-file-name "vault/"
+                                              (file-name-directory file))
+                            nil "\\.org\\'"))))
       ;; Eleven views, but eight shell views: the four :GROUP: Tasks members
       ;; collapse into one tabulated destination; the rest (two of them
       ;; :NAV: drawer) each register their own.

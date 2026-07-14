@@ -166,7 +166,24 @@ DEADLINE: <2026-07-24 Fri>
 
 A vulpea vault directory: one .org note file per record.  Without
 vulpea installed the view degrades to a placeholder — the app still
-loads on a bare jetpacs-core.
+loads on a bare jetpacs-core.  The record headings below are this
+view's SEED (FORMAT.md "Body as seed"): on first load the runtime
+scaffolds vault/ with one id'd note file per record, so the view
+arrives pre-loaded; this prose stays here, it is not data.
+
+** Monstera care
+:PROPERTIES:
+:CATEGORY: Plants
+:END:
+
+Water weekly; bright indirect light.  Wipe the leaves monthly.
+
+** Sourdough starter
+:PROPERTIES:
+:CATEGORY: Kitchen
+:END:
+
+Feed every morning; keep at room temperature under a loose lid.
 
 * Shopping
 :PROPERTIES:
@@ -178,8 +195,13 @@ loads on a bare jetpacs-core.
 :COLTYPES: text number checkbox
 :END:
 
-An external relative source: the runtime scaffolds shopping-list.org
-(header row from :COLUMNS:) next to this document on first load.
+Sample rows for the household shopping run.
+
+| Item   | Qty | Done |
+|--------+-----+------|
+| Bread  |   1 | [ ]  |
+| Apples |   6 | [ ]  |
+| Coffee |   1 | [X]  |
 
 * Dashboard
 :PROPERTIES:
