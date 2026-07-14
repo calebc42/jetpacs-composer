@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material.icons.filled.Close
@@ -460,10 +462,12 @@ private fun RecordsSchemaEditor(
         }
     }
 
-    view.schema.forEachIndexed { i, field ->
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(vertical = 2.dp)) {
+    Column(Modifier.horizontalScroll(rememberScrollState())) {
+        view.schema.forEachIndexed { i, field ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(vertical = 4.dp)) {
             OutlinedTextField(
                 field.prop,
                 { v ->
@@ -510,21 +514,24 @@ private fun RecordsSchemaEditor(
                     }
                 },
             )
-            TextButton(
-                onClick = { edit { ModelOps.moveSchemaField(it, i, -1) } },
-                enabled = i > 0,
-            ) { Text("↑") }
-            TextButton(
-                onClick = { edit { ModelOps.moveSchemaField(it, i, 1) } },
-                enabled = i < view.schema.lastIndex,
-            ) { Text("↓") }
-            TextButton(onClick = {
-                edit {
-                    it.copy(schema = it.schema.filterIndexed { j, _ -> j != i },
-                            colTypes = it.colTypes.filterIndexed { j, _ -> j != i })
-                }
-            }, enabled = view.schema.size > 1) { Text("Remove") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    onClick = { edit { ModelOps.moveSchemaField(it, i, -1) } },
+                    enabled = i > 0,
+                ) { Text("↑") }
+                TextButton(
+                    onClick = { edit { ModelOps.moveSchemaField(it, i, 1) } },
+                    enabled = i < view.schema.lastIndex,
+                ) { Text("↓") }
+                TextButton(onClick = {
+                    edit {
+                        it.copy(schema = it.schema.filterIndexed { j, _ -> j != i },
+                                colTypes = it.colTypes.filterIndexed { j, _ -> j != i })
+                    }
+                }, enabled = view.schema.size > 1) { Text("Remove") }
+            }
         }
+    }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = {
@@ -811,40 +818,50 @@ private fun SourceEditor(
     edit: ViewEdit,
     editText: ViewTextEdit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Data lives:", style = MaterialTheme.typography.bodyMedium)
-        RadioButton(view.source == null,
-                    onClick = { edit { it.copy(source = null) } })
-        Text("inline (in the app document)")
-        RadioButton(view.source is SourceRef.File || view.source is SourceRef.Dir,
-                    onClick = {
-                        edit {
-                            it.copy(source = it.source as? SourceRef.File
-                                ?: it.source as? SourceRef.Dir
-                                ?: SourceRef.File("/sdcard/org/data.org", it.title))
-                        }
-                    })
-        Text("external org file")
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Data lives:", style = MaterialTheme.typography.bodyMedium)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(view.source == null,
+                        onClick = { edit { it.copy(source = null) } })
+            Text("inline (in the app document)")
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(view.source is SourceRef.File || view.source is SourceRef.Dir,
+                        onClick = {
+                            edit {
+                                it.copy(source = it.source as? SourceRef.File
+                                    ?: it.source as? SourceRef.Dir
+                                    ?: SourceRef.File("/sdcard/org/data.org", it.title))
+                            }
+                        })
+            Text("external org file")
+        }
         // Only offer a pack SOURCE when some installed manifest actually
         // declares a source — seeding a blank half (pack:id/) would write a
         // token both parsers reject, locking the document out on reopen.
         val sourcePacks = packs.manifests.filter { it.sources.isNotEmpty() }
         if (sourcePacks.isNotEmpty() || view.source is SourceRef.Pack) {
-            RadioButton(view.source is SourceRef.Pack,
-                        onClick = {
-                            edit {
-                                it.copy(source = it.source as? SourceRef.Pack
-                                    ?: (selectedPack?.takeIf { p -> p.sources.isNotEmpty() }
-                                        ?: sourcePacks.firstOrNull())
-                                        ?.let { pack ->
-                                            SourceRef.Pack(pack.pack_id,
-                                                           pack.sources.first().name)
-                                        }
-                                    ?: it.source)
-                            }
-                        })
-            Text("pack source")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(view.source is SourceRef.Pack,
+                            onClick = {
+                                edit {
+                                    it.copy(source = it.source as? SourceRef.Pack
+                                        ?: (selectedPack?.takeIf { p -> p.sources.isNotEmpty() }
+                                            ?: sourcePacks.firstOrNull())
+                                            ?.let { pack ->
+                                                SourceRef.Pack(pack.pack_id,
+                                                               pack.sources.first().name)
+                                            }
+                                        ?: it.source)
+                                }
+                            })
+                Text("pack source")
+            }
         }
     }
     when (val source = view.source) {
@@ -1014,10 +1031,12 @@ private fun InlineTableEditor(
     Spacer(Modifier.height(8.dp))
 
     // Schema: one editor block per column.
-    table.header.forEachIndexed { col, name ->
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(vertical = 2.dp)) {
+    Column(Modifier.horizontalScroll(rememberScrollState())) {
+        table.header.forEachIndexed { col, name ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(vertical = 4.dp)) {
             OutlinedTextField(
                 name, { v -> editText("column.$col.name") {
                     ModelOps.setColumnName(it, col, v)
@@ -1033,18 +1052,21 @@ private fun InlineTableEditor(
                     ModelOps.setColumnType(it, col, t)
                 } },
             )
-            TextButton(
-                onClick = { edit { ModelOps.moveColumn(it, col, -1) } },
-                enabled = col > 0,
-            ) { Text("↑") }
-            TextButton(
-                onClick = { edit { ModelOps.moveColumn(it, col, 1) } },
-                enabled = col < table.header.lastIndex,
-            ) { Text("↓") }
-            TextButton(onClick = { edit { ModelOps.removeColumn(it, col) } }) {
-                Text("Remove")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    onClick = { edit { ModelOps.moveColumn(it, col, -1) } },
+                    enabled = col > 0,
+                ) { Text("↑") }
+                TextButton(
+                    onClick = { edit { ModelOps.moveColumn(it, col, 1) } },
+                    enabled = col < table.header.lastIndex,
+                ) { Text("↓") }
+                TextButton(onClick = { edit { ModelOps.removeColumn(it, col) } }) {
+                    Text("Remove")
+                }
             }
         }
+    }
     }
     OutlinedButton(onClick = { edit { ModelOps.addColumn(it, "New column") } }) {
         Text("+ Column")
@@ -1052,10 +1074,11 @@ private fun InlineTableEditor(
 
     Spacer(Modifier.height(16.dp))
     Text("Rows", style = MaterialTheme.typography.titleMedium)
-    table.rows.forEachIndexed { r, row ->
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.padding(vertical = 2.dp)) {
+    Column(Modifier.horizontalScroll(rememberScrollState())) {
+        table.rows.forEachIndexed { r, row ->
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(vertical = 2.dp)) {
             row.forEachIndexed { c, cell ->
                 if (view.colTypes.getOrElse(c) { ColType.Text } == ColType.Checkbox) {
                     Checkbox(
@@ -1076,6 +1099,7 @@ private fun InlineTableEditor(
             TextButton(onClick = { edit { ModelOps.removeRow(it, r) } }) { Text("×") }
         }
     }
+    }
     OutlinedButton(onClick = { edit { ModelOps.addRow(it) } }) { Text("+ Row") }
 }
 
@@ -1091,10 +1115,12 @@ private fun ExternalColumnsEditor(
     Text("Columns (scaffolded on the device when the file is missing)",
          style = MaterialTheme.typography.titleMedium)
     Spacer(Modifier.height(8.dp))
-    view.columns.forEachIndexed { col, name ->
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(vertical = 2.dp)) {
+    Column(Modifier.horizontalScroll(rememberScrollState())) {
+        view.columns.forEachIndexed { col, name ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(vertical = 4.dp)) {
             OutlinedTextField(
                 name,
                 { v ->
@@ -1127,23 +1153,26 @@ private fun ExternalColumnsEditor(
                     }
                 },
             )
-            TextButton(
-                onClick = { edit { ModelOps.moveColumn(it, col, -1) } },
-                enabled = col > 0,
-            ) { Text("↑") }
-            TextButton(
-                onClick = { edit { ModelOps.moveColumn(it, col, 1) } },
-                enabled = col < view.columns.lastIndex,
-            ) { Text("↓") }
-            TextButton(onClick = {
-                edit {
-                    it.copy(
-                        columns = it.columns.filterIndexed { c, _ -> c != col },
-                        colTypes = it.colTypes.filterIndexed { c, _ -> c != col },
-                    )
-                }
-            }) { Text("Remove") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    onClick = { edit { ModelOps.moveColumn(it, col, -1) } },
+                    enabled = col > 0,
+                ) { Text("↑") }
+                TextButton(
+                    onClick = { edit { ModelOps.moveColumn(it, col, 1) } },
+                    enabled = col < view.columns.lastIndex,
+                ) { Text("↓") }
+                TextButton(onClick = {
+                    edit {
+                        it.copy(
+                            columns = it.columns.filterIndexed { c, _ -> c != col },
+                            colTypes = it.colTypes.filterIndexed { c, _ -> c != col },
+                        )
+                    }
+                }) { Text("Remove") }
+            }
         }
+    }
     }
     OutlinedButton(onClick = {
         edit { it.copy(columns = it.columns + "New column",
@@ -1220,7 +1249,6 @@ internal fun ColTypePicker(
         }
     }
     if (current is ColType.Enum) {
-        Spacer(Modifier.width(4.dp))
         OutlinedTextField(
             current.options.joinToString(","),
             { v ->
@@ -1232,7 +1260,6 @@ internal fun ColTypePicker(
             modifier = Modifier.width(200.dp),
         )
     } else if (current is ColType.Ref) {
-        Spacer(Modifier.width(4.dp))
         var targetOpen by remember { mutableStateOf(false) }
         val selectedTarget = referenceTargets.find { it.name == current.targetView }
         Box {
@@ -1252,7 +1279,6 @@ internal fun ColTypePicker(
             }
         }
         if (selectedTarget != null) {
-            Spacer(Modifier.width(4.dp))
             var displayOpen by remember { mutableStateOf(false) }
             Box {
                 OutlinedButton(onClick = { displayOpen = true }) {

@@ -2,10 +2,7 @@
 package com.calebc42.composer
 
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +23,7 @@ import com.calebc42.composer.ui.HomeScreen
 import com.calebc42.composer.ui.SettingsDialog
 import com.calebc42.composer.ui.UnsavedChangesDialog
 import com.calebc42.composer.ui.pickSaveFile
+import com.calebc42.composer.ui.theme.ComposerTheme
 import com.calebc42.composer.project.RecentFiles
 import com.calebc42.composer.project.ComposerConfig
 import com.calebc42.composer.project.ThemePreference
@@ -72,7 +70,7 @@ fun main() {
                 }
             },
             title = "jetpacs-composer",
-            icon = painterResource("icons/jetpacs-composer-icon-forground.svg"),
+            icon = painterResource("icons/jetpacs-composer-logo-foreground.svg"),
             state = windowState,
         ) {
             val isDark = when (appConfig.theme) {
@@ -80,9 +78,8 @@ fun main() {
                 ThemePreference.LIGHT -> false
                 ThemePreference.SYSTEM -> isSystemInDarkTheme()
             }
-            val colorScheme = if (isDark) darkColorScheme() else lightColorScheme()
-            MaterialTheme(colorScheme = colorScheme) { 
-                Surface { 
+            ComposerTheme(darkTheme = isDark) {
+                Surface {
                     App(
                         config = appConfig,
                         session = session,

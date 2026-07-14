@@ -45,7 +45,7 @@ compose.desktop {
                 iconFile.set(iconsRoot.resolve("jetpacs-composer-logo.icns"))
             }
             linux {
-                iconFile.set(iconsRoot.resolve("jetpacs-composer-icon-forground.svg"))
+                iconFile.set(iconsRoot.resolve("jetpacs-composer-logo-foreground.svg"))
             }
         }
     }
