@@ -12,7 +12,10 @@ fit or cut. Each larger item may still graduate to its own plan doc / PR.
 This is the composer-side companion to
 jetpacs' [PLAN-next-primitives.md](../../jetpacs/docs/PLAN-next-primitives.md);
 the framework asks it implies are collected under **The jetpacs
-frontier** below.
+frontier** below. The engine-pack model this doc's `pack:` tokens
+anticipate is now planned in
+[PLAN-pack-targeting.md](PLAN-pack-targeting.md) (binding-layer
+Stage 4).
 
 ## Why
 
