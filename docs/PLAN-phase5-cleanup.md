@@ -1,20 +1,23 @@
 # Plan: Phase 5 — module split, dead-code sweep, docs
 
-**STATUS (2026-07-13): not started; scope SHRUNK by the canonical
-consolidation.** Phases 0–4 of the vulpea rearchitecture
-([PLAN-vulpea-rearchitecture.md](PLAN-vulpea-rearchitecture.md)) have
-landed. Since this doc was written, the note-index FILTER matcher moved
-into the canonical core (jetpacs api 1.6.0, submodule `5c84a68` — see
-[PLAN-phase2-canonical-jetpacs-org.md](PLAN-phase2-canonical-jetpacs-org.md)):
-`--note-priority-char`, `--note-planning-match`, `--note-done-p`,
-`--note-matches-p`, `--index-filter-terms`, `--filter-index-supported-p`
-**no longer exist in `jetpacs-crud.el`** — strike them from §1's move
-list. What remains of §1 is the probe, ensure-source/reindex, the thin
-`--compile-filter` router, `--query-view-notes` (now a thin adapter over
-`jetpacs-org-vulpea-source-notes`), `--note-field`, and the extractor +
-readers; whether that still justifies a separate file is an open call
-(§1's "re-evaluate" note in the canonical plan). §§2–4 stand as written.
-This doc is the executable handoff for the remaining cleanup.
+**STATUS (2026-07-13): EXECUTED (§§1–4).** The split WAS still justified
+after the canonical consolidation shrank it: `jetpacs-crud-vulpea.el`
+now owns the engine layer (~470 lines — both probes, `:ID:` adoption +
+`--reindex`, the index reads, the FILTER router, the tables+checklist
+extractor + DB readers) and `jetpacs-crud.el` (~2620 lines) keeps
+rendering/actions/sources with declare-function stubs as the seam; the
+engine file requires `jetpacs-crud` (safe, never required back); the
+bundle inlines three parts (`build-app-bundle.el` +
+`BundleExporter.kt`/gradle include/exporter test). §2 also caught a
+bonus: two shadowing `--slug` definitions (the live one kept). §3's
+FORMAT.md pass landed (unified FILTER subset table, per-kind
+degradation matrix, TODO/DONE approximation, and the stale
+"positions never stale" preamble replaced by the real addressing
+contract). §4 guardrails all green: 74/74 + both smokes with bare-core
+degradation, byte-compile clean, BundleExporterTest, submodule core
+guard. **The three deferred items below remain deferred** (logical
+addressing, on-device smoke, the 3 red JVM `OrgCodecTest` cases).
+The original handoff follows as the design record.
 
 **Baseline to preserve:** `VULPEA_DIR=~/pkb/resources/emacs/vulpea sh
 elisp/test/run-tests.sh` → **74/74 ERT + pantry & hello-world bundle

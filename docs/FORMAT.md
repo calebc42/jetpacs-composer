@@ -83,6 +83,25 @@ lives in the heading's property drawer:
 | `:NAV:` | `tab` (default) or `drawer` — where the view lives in the chrome (see below). |
 | `:GROUP:` | A destination name; views sharing one collapse into a single tabbed bottom destination (see below). |
 
+### Engines and degradation — what each kind needs on the device
+
+Every data-bearing kind reads through the **vulpea** index (the
+composer's [device setup](#device-setup--what-installs-the-engines)
+installs it; declare it with `#+JETPACS_DEPENDS:`). The app bundle
+itself never *depends* on the engines — it always loads and its
+chrome/navigation always works on bare `jetpacs-core`; only the view
+bodies degrade:
+
+| Kind | Engine used | On a device without it |
+|---|---|---|
+| `table`, `checklist` | vulpea (the plugin extractor indexes tables and checkboxes) | a "needs vulpea" placeholder |
+| `records`, `board`, `calendar`, `gallery`, `tree`, `dashboard`, `gantt` | vulpea (records come from the note index) | a "needs vulpea" placeholder |
+| `notes` | vulpea (the vault **is** the datasource) | a "Notes need vulpea" placeholder |
+| a `:FILTER:` beyond the built-in subset | org-ql | a clear error naming org-ql — never a silently empty view |
+
+Installing an engine mid-session counts: pull to refresh and the views
+light up (the availability probes re-check on refresh).
+
 ### Navigation placement — `:NAV:` and `:GROUP:`
 
 A Material bottom bar holds only about five destinations comfortably, so
@@ -249,16 +268,30 @@ sexp. Three ways to write one, from most to least explicit:
 An empty `:FILTER:` shows every record; a malformed query is an error,
 so an empty result always means "nothing matched", never "didn't parse".
 
-The runtime carries a **built-in interpreter** for the common terms —
-`and` / `or` / `not`, `todo` / `done`, `tags`, `priority`, `heading`,
-`regexp`, `property`, `level`, `scheduled` / `deadline`. These work on
-every device with no extra packages. When the `org-ql` package **is**
-installed, a records filter that reaches beyond this subset is handed to
-org-ql wholesale, so its full query language becomes available; without
-org-ql such a term is a clear error naming the package, not a silent
-empty view. (Filtering applies to records and notes views; table views
-are unfiltered — see non-goals. Notes filter against the vulpea index,
-which carries its own subset — see below.)
+**One subset, every heading kind.** Records, notes, and every derived
+kind filter identically: the query is evaluated off the **vulpea index**
+(no file visit) by the canonical matcher in the jetpacs core
+(`jetpacs-org-note-matches-p`, api 1.6.0). Table views are unfiltered —
+see non-goals.
+
+| FILTER terms | Evaluated by |
+|---|---|
+| `and` `or` `not` · `todo` `done` · `tags` · `priority` · `heading` · `regexp` · `property` · `level` · `scheduled` `deadline` | the index — nothing needed beyond vulpea |
+| anything else (org-ql's full query language) | handed to **org-ql** wholesale over the source file |
+
+Index-subset semantics worth knowing:
+
+- `regexp` matches the heading title + properties — the index does not
+  carry entry bodies. A body-text filter is an org-ql term.
+- `todo` / `done` judge done-ness against the **global**
+  `org-done-keywords` (falling back to `DONE`) plus a `CLOSED` stamp.
+  A file-local `#+TODO:` line with exotic done keywords isn't visible
+  to the index — write such a filter as an org-ql term instead.
+- Without org-ql installed, an out-of-subset term is a clear error
+  naming the package, not a silent empty view. The org-ql arm visits
+  headings, so it applies to heading-per-record sources; file-per-record
+  notes (level-0 note files) have no heading for it to visit — narrow
+  the `:SOURCE:` instead.
 
 Rendering: one card per record — title line (`ITEM`, prefixed by the
 `TODO` keyword when in the schema), then one tappable row per remaining
@@ -337,12 +370,12 @@ Without it the view renders a "Notes need vulpea" placeholder and the
 rest of the app runs normally — the bundle never depends on vulpea, it
 uses it when present.
 
-`:SCHEMA:` works exactly as for records. `:FILTER:` is matched against
-the vulpea **index** (no file scan), so it covers `and` / `or` / `not`,
-`todo`, `tags`, `property`, `regexp`, `level` — other terms (and the
-org-ql extension available to records) do not apply here; narrow the
-`:SOURCE:` instead. Fields are org **properties** on each note, which
-vulpea indexes. The `:SOURCE:` picks one of two record shapes:
+`:SCHEMA:` works exactly as for records, and `:FILTER:` speaks the same
+one subset every heading kind does (see
+[`:FILTER:`](#filter--selecting-records)) — with the caveat that the
+org-ql extension only reaches heading-per-record sources. Fields are org
+**properties** on each note, which vulpea indexes. The `:SOURCE:` picks
+one of two record shapes:
 
 - `contacts/` (a trailing-slash directory) — **file-per-record**: every
   `.org` note file in the vault is one record. Adding a record writes a

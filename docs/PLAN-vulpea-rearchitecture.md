@@ -1,7 +1,8 @@
 # Plan: rearchitect jetpacs-composer on vulpea + MELPA engines
 
-**STATUS (2026-07-13): Phases 0–4 landed; Phase 5 (cleanup) remains —
-see [PLAN-phase5-cleanup.md](PLAN-phase5-cleanup.md).** The full ERT
+**STATUS (2026-07-13): ALL PHASES landed (0–5) —
+[PLAN-phase5-cleanup.md](PLAN-phase5-cleanup.md) records the cleanup;
+only its explicitly deferred items remain open.** The full ERT
 suite (74/74) and bundle smoke (pantry + hello-world) are green under
 `VULPEA_DIR`-enabled WSL. **Every datasource kind reads from vulpea:**
 heading-family kinds (records/board/calendar/gallery/tree/dashboard/
