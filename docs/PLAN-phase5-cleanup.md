@@ -1,11 +1,20 @@
 # Plan: Phase 5 — module split, dead-code sweep, docs
 
-**STATUS (2026-07-13): not started.** Phases 0–4 of the vulpea
-rearchitecture ([PLAN-vulpea-rearchitecture.md](PLAN-vulpea-rearchitecture.md))
-have landed and are pushed to `origin/main` (through commit `0a7267b`).
-Every datasource kind reads from vulpea; the composer's FILTER model and
-dependency computation are aligned. This doc is the executable handoff
-for the remaining cleanup.
+**STATUS (2026-07-13): not started; scope SHRUNK by the canonical
+consolidation.** Phases 0–4 of the vulpea rearchitecture
+([PLAN-vulpea-rearchitecture.md](PLAN-vulpea-rearchitecture.md)) have
+landed. Since this doc was written, the note-index FILTER matcher moved
+into the canonical core (jetpacs api 1.6.0, submodule `5c84a68` — see
+[PLAN-phase2-canonical-jetpacs-org.md](PLAN-phase2-canonical-jetpacs-org.md)):
+`--note-priority-char`, `--note-planning-match`, `--note-done-p`,
+`--note-matches-p`, `--index-filter-terms`, `--filter-index-supported-p`
+**no longer exist in `jetpacs-crud.el`** — strike them from §1's move
+list. What remains of §1 is the probe, ensure-source/reindex, the thin
+`--compile-filter` router, `--query-view-notes` (now a thin adapter over
+`jetpacs-org-vulpea-source-notes`), `--note-field`, and the extractor +
+readers; whether that still justifies a separate file is an open call
+(§1's "re-evaluate" note in the canonical plan). §§2–4 stand as written.
+This doc is the executable handoff for the remaining cleanup.
 
 **Baseline to preserve:** `VULPEA_DIR=~/pkb/resources/emacs/vulpea sh
 elisp/test/run-tests.sh` → **74/74 ERT + pantry & hello-world bundle

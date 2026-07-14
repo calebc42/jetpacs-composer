@@ -1,5 +1,28 @@
 # Plan: Phase 2 — CRUD read/mutate path onto the canonical `jetpacs-org.el`
 
+**STATUS (2026-07-13): EXECUTED.** History note: the master plan's Phase 2
+originally landed the vulpea read path *composer-side* (this doc's owner
+decision notwithstanding); the consolidation then happened as a follow-up.
+What shipped:
+- **Part A** — jetpacs `5c84a68` (api **1.6.0**): one grammar interpreter
+  (`jetpacs-org--matches-p`) over dual accessors — point
+  (`jetpacs-org-entry-matches-p`, behavior preserved) and `vulpea-note`
+  (`jetpacs-org-note-matches-p`) — plus `jetpacs-org-note-query-terms` /
+  `-supported-p` (the index/org-ql router) and the guarded vulpea scope
+  query (`jetpacs-org-vulpea-available-p` / `-source-notes` / `-query`).
+  vulpea stays optional; the core-load guard stays green.
+- **Part B** — the composer deleted `--note-matches-p`,
+  `--note-planning-match`, `--note-priority-char`, `--note-done-p`,
+  `--index-filter-terms`, `--filter-index-supported-p`; `--compile-filter`
+  routes through the canonical fns; `--query-view-notes` maps the view onto
+  `jetpacs-org-vulpea-source-notes`. Submodule bumped to `5c84a68`.
+  74/74 + both bundle smokes green.
+- **Not pursued from the original sketch:** the mutation reconcile stayed
+  option (a) (composer wraps, vulpea coupling out of the core macro), and
+  `jetpacs-crud-vulpea.el` as a separate file remains a Phase-5 call.
+
+The original handoff text follows, kept as the design record.
+
 **Handoff for a fresh chat (written 2026-07-13).** This REFINES Phase 2 of the
 pasted "rearchitect jetpacs-composer on vulpea + MELPA engines" plan. The pasted
 Phase 2 would have built the vulpea read path *inside* the composer

@@ -1,16 +1,25 @@
 # Plan: rearchitect jetpacs-composer on vulpea + MELPA engines
 
-**STATUS (2026-07-13): Phases 0–3 landed.** The full ERT suite (74/74)
-and bundle smoke (pantry + hello-world) are green under `VULPEA_DIR`-enabled
-WSL. **Every datasource kind now reads from vulpea:** heading-family kinds
-(records/board/calendar/gallery/tree/dashboard/gantt/notes) from the note
-index, and `table`/`checklist` from a plugin extractor. Registration
-id-adopts source files; writes re-index; all kinds degrade to a "needs
-vulpea" placeholder on bare core. Records address by their stable `:ID:`
-(resolved live, robust to offset shifts) and the record/note cards are
-unified. Phase 1 (M9) added `#+JETPACS_DEPENDS:` + the composer's
-engine-install bootstrap. Phases 4–5 (Kotlin alignment, module split +
-dead-code sweep) remain.
+**STATUS (2026-07-13): Phases 0–4 landed; Phase 5 (cleanup) remains —
+see [PLAN-phase5-cleanup.md](PLAN-phase5-cleanup.md).** The full ERT
+suite (74/74) and bundle smoke (pantry + hello-world) are green under
+`VULPEA_DIR`-enabled WSL. **Every datasource kind reads from vulpea:**
+heading-family kinds (records/board/calendar/gallery/tree/dashboard/
+gantt/notes) from the note index, and `table`/`checklist` from a plugin
+extractor. Registration id-adopts source files; writes re-index; all
+kinds degrade to a "needs vulpea" placeholder on bare core. Records
+address by their stable `:ID:` (resolved live, robust to offset shifts)
+and the record/note cards are unified. Phase 1 (M9) added
+`#+JETPACS_DEPENDS:` + the composer's engine-install bootstrap. Phase 4
+unified the Kotlin FILTER model + dependency computation.
+
+**Post-plan consolidation (2026-07-13):** the note-index FILTER matcher
+this plan built composer-side was **promoted into the canonical core**
+(jetpacs api 1.6.0, submodule `5c84a68`): `jetpacs-org-note-matches-p` /
+`jetpacs-org-note-query-supported-p` / `jetpacs-org-vulpea-source-notes`
+now own the grammar, and `jetpacs-crud.el` keeps only the thin
+`--compile-filter` router and the view→source adapter. See
+[PLAN-phase2-canonical-jetpacs-org.md](PLAN-phase2-canonical-jetpacs-org.md).
 
 Deferred (optional hardening, not blocking): table/checklist mutations
 address by a `pos` hint from the fresh index (reindex-on-write keeps it

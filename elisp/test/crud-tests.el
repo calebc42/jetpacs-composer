@@ -1423,7 +1423,10 @@ harness) so the run never touches the developer's real note database."
               :org-ql)))
 
 (ert-deftest jetpacs-crud-note-index-matcher-covers-subset ()
-  "The vulpea note-index matcher evaluates the extended subset off the struct."
+  "The canonical note matcher evaluates the FILTER subset off a REAL struct.
+The matcher itself lives in the core (`jetpacs-org-note-matches-p',
+api 1.6.0); this drives it against genuine `make-vulpea-note' structs —
+the accessor-contract check the core's mocked tests can't give."
   (skip-unless (require 'vulpea nil t))
   (let* ((org-done-keywords '("DONE"))
          (ada (make-vulpea-note
@@ -1435,7 +1438,7 @@ harness) so the run never touches the developer's real note database."
                :id "n2" :path "/x/bob.org" :level 1 :title "Bob"
                :todo "DONE" :tags '("home")
                :deadline "<2027-02-10 Wed>")))
-    (cl-flet ((m (tree note) (jetpacs-crud--note-matches-p tree note)))
+    (cl-flet ((m (tree note) (jetpacs-org-note-matches-p tree note)))
       ;; todo / done
       (should (m '(todo "NEXT") ada))
       (should-not (m '(todo "NEXT") bob))
@@ -1482,14 +1485,12 @@ end-to-end drive caught that a keyword-bound unit test had masked."
         (closed (make-vulpea-note :id "c" :path "/x/c.org" :level 1
                                   :title "Closed" :todo "NEXT"
                                   :closed "2027-01-01 12:00:00")))
-    (should (jetpacs-crud--note-done-p done))          ; via "DONE" fallback
-    (should (jetpacs-crud--note-done-p closed))        ; via CLOSED stamp
-    (should-not (jetpacs-crud--note-done-p open))
-    (should (jetpacs-crud--note-matches-p '(done) done))
-    (should-not (jetpacs-crud--note-matches-p '(done) open))
-    (should (jetpacs-crud--note-matches-p '(todo) open))     ; not done
-    (should-not (jetpacs-crud--note-matches-p '(todo) done)) ; DONE is not "todo"
-    (should-not (jetpacs-crud--note-matches-p '(todo) closed))))
+    (should (jetpacs-org-note-matches-p '(done) done))   ; via "DONE" fallback
+    (should (jetpacs-org-note-matches-p '(done) closed)) ; via CLOSED stamp
+    (should-not (jetpacs-org-note-matches-p '(done) open))
+    (should (jetpacs-org-note-matches-p '(todo) open))     ; not done
+    (should-not (jetpacs-org-note-matches-p '(todo) done)) ; DONE is not "todo"
+    (should-not (jetpacs-org-note-matches-p '(todo) closed))))
 
 (ert-deftest jetpacs-crud-vulpea-ensure-source-adopts-ids ()
   "ensure-source adds ids, indexes the records, is idempotent, and degrades.

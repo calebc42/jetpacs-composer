@@ -1114,20 +1114,15 @@ The one index scan every heading kind shares.  SOURCE dispatch:
  - a bare file / an inline source (the app document, scoped to the
    view's own heading) -> the id'd level-1 headings of that scope.
 Records must be id-adopted first (`jetpacs-crud-vulpea-ensure-source')
-for the index to see them."
+for the index to see them.  The scope query itself is canonical
+\(`jetpacs-org-vulpea-source-notes'); this only maps the view's
+plumbing onto the core's source shape."
   (let ((dir (plist-get (plist-get view :source) :dir)))
     (if dir
-        (vulpea-db-query-by-directory (directory-file-name dir) 0)
-      (let* ((fh (jetpacs-crud--view-source spec view))
-             (file (car fh))
-             (heading (cdr fh)))
-        (vulpea-db-query
-         (lambda (n)
-           (and (equal (expand-file-name (vulpea-note-path n))
-                       (expand-file-name file))
-                (if heading
-                    (equal (vulpea-note-outline-path n) (list heading))
-                  (= (vulpea-note-level n) 1)))))))))
+        (jetpacs-org-vulpea-source-notes (list :dir dir))
+      (let ((fh (jetpacs-crud--view-source spec view)))
+        (jetpacs-org-vulpea-source-notes
+         (list :file (car fh) :heading (cdr fh)))))))
 
 (defun jetpacs-crud--view-notes-records (spec view)
   "Unified records for heading-family VIEW: plists (:id :pos :fields :done).
@@ -1161,128 +1156,28 @@ records\" rather than calling into an absent index."
              (when (funcall keep n)
                (list :id (vulpea-note-id n)
                      :pos (vulpea-note-pos n)
-                     :done (jetpacs-crud--note-done-p n)
+                     :done (jetpacs-org-note-matches-p '(done) n)
                      :fields (mapcar (lambda (p)
                                        (cons p (jetpacs-crud--note-field n p)))
                                      props))))
            notes)))))
 
-(defun jetpacs-crud--note-done-p (note)
-  "Non-nil when vulpea NOTE is in a done state, judged off the index.
-The vulpea index does not record a note file's per-file DONE keyword set,
-so this approximates: the note's todo is a global done keyword (falling
-back to the near-universal \"DONE\" when `org-done-keywords' is unset —
-as it is in a headless scan with no org buffer live), or the note carries
-a CLOSED stamp.  Exotic per-file done keywords need the org-ql arm."
-  (let ((s (vulpea-note-todo note)))
-    (or (and s (member s (or org-done-keywords '("DONE"))) t)
-        (and (vulpea-note-closed note) t))))
-
-(defun jetpacs-crud--note-priority-char (note)
-  "The priority of vulpea NOTE as a character, or nil.
-`vulpea-note-priority' may be a char (org's native form) or a string."
-  (let ((p (vulpea-note-priority note)))
-    (cond ((null p) nil)
-          ((characterp p) p)
-          ((and (stringp p) (> (length p) 0)) (aref p 0))
-          (t (let ((s (format "%s" p))) (and (> (length s) 0) (aref s 0)))))))
-
-(defun jetpacs-crud--note-planning-match (note which args)
-  "Match NOTE's WHICH (`scheduled'/`deadline') stamp against org-ql ARGS.
-ARGS is a plist of :on / :from / :to date-specs (`today', an integer day
-offset, or a YYYY-MM-DD string); empty ARGS means mere presence."
-  (let ((stamp (if (eq which 'deadline)
-                   (vulpea-note-deadline note)
-                 (vulpea-note-scheduled note))))
-    (and (stringp stamp) (not (string-empty-p stamp))
-         (let ((day (time-to-days (org-time-string-to-time stamp)))
-               (on (plist-get args :on))
-               (from (plist-get args :from))
-               (to (plist-get args :to)))
-           (cl-flet ((as-day (s)
-                       (cond ((eq s 'today) (time-to-days (current-time)))
-                             ((integerp s) (+ (time-to-days (current-time)) s))
-                             ((stringp s) (time-to-days (org-time-string-to-time s)))
-                             (t nil))))
-             (and (or (not on) (equal day (as-day on)))
-                  (or (not from) (>= day (as-day from)))
-                  (or (not to) (<= day (as-day to)))))))))
-
-(defun jetpacs-crud--note-matches-p (tree note)
-  "Non-nil when vulpea NOTE matches org-ql sexp TREE (index-only subset).
-Evaluated entirely off the `vulpea-note' struct (no file visit): covers
-`and'/`or'/`not', `todo', `done', `tags', `priority', `heading',
-`regexp', `property', `level', `scheduled', `deadline'.  A term outside
-the subset signals `user-error' — `jetpacs-crud--compile-filter' checks
-`jetpacs-crud--filter-index-supported-p' first, so callers can route
-unsupported terms to org-ql instead of tripping this."
-  (pcase tree
-    (`(and . ,cs) (cl-every (lambda (c) (jetpacs-crud--note-matches-p c note)) cs))
-    (`(or . ,cs) (cl-some (lambda (c) (jetpacs-crud--note-matches-p c note)) cs))
-    (`(not ,c) (not (jetpacs-crud--note-matches-p c note)))
-    (`(todo . ,kws)
-     (let ((s (vulpea-note-todo note)))
-       (if kws (and s (member s kws) t)
-         (and s (not (jetpacs-crud--note-done-p note)) t))))
-    (`(done) (jetpacs-crud--note-done-p note))
-    (`(tags . ,tgs)
-     (let ((have (vulpea-note-tags note)))
-       (if tgs (and (cl-some (lambda (tg) (member tg have)) tgs) t) (and have t))))
-    (`(priority ,(and op (pred symbolp)) ,val)
-     (let ((pr (jetpacs-crud--note-priority-char note))
-           (want (if (stringp val) (string-to-char val) val)))
-       ;; org urgency runs A > B > C — the higher priority is the smaller
-       ;; character, so the comparator flips against the chars.
-       (and pr (pcase op
-                 ('< (> pr want)) ('<= (>= pr want))
-                 ('> (< pr want)) ('>= (<= pr want)) ('= (= pr want))
-                 (_ (user-error "Unsupported priority comparator %s" op))))))
-    (`(priority . ,ps)
-     (let ((pr (jetpacs-crud--note-priority-char note)))
-       (if ps (and pr (member (char-to-string pr) ps) t) (and pr t))))
-    (`(heading . ,texts)
-     (let ((hl (or (vulpea-note-title note) ""))
-           (case-fold-search t))
-       (cl-every (lambda (s) (string-match-p (regexp-quote s) hl)) texts)))
-    (`(property ,name . ,val)
-     (let ((got (cdr (assoc-string name (vulpea-note-properties note) t))))
-       (if val (equal got (car val)) (and got t))))
-    (`(regexp . ,res)
-     (let ((hay (concat (or (vulpea-note-title note) "") " "
-                        (mapconcat #'cdr (vulpea-note-properties note) " ")))
-           (case-fold-search t))
-       (cl-every (lambda (re) (string-match-p re hay)) res)))
-    (`(level ,n) (= (vulpea-note-level note) n))
-    (`(level ,lo ,hi) (<= lo (vulpea-note-level note) hi))
-    (`(scheduled . ,args) (jetpacs-crud--note-planning-match note 'scheduled args))
-    (`(deadline . ,args) (jetpacs-crud--note-planning-match note 'deadline args))
-    (_ (user-error "FILTER term %S isn't supported over the notes index" tree))))
-
-(defconst jetpacs-crud--index-filter-terms
-  '(and or not todo done tags priority heading regexp property level
-        scheduled deadline)
-  "org-ql head symbols `jetpacs-crud--note-matches-p' evaluates off the index.")
-
-(defun jetpacs-crud--filter-index-supported-p (tree)
-  "Non-nil when org-ql sexp TREE uses only index-evaluable terms.
-Empty (nil) TREE — no filter — is trivially supported."
-  (pcase tree
-    ('nil t)
-    (`(and . ,cs) (cl-every #'jetpacs-crud--filter-index-supported-p cs))
-    (`(or . ,cs) (cl-every #'jetpacs-crud--filter-index-supported-p cs))
-    (`(not ,c) (jetpacs-crud--filter-index-supported-p c))
-    (`(,head . ,_) (and (memq head jetpacs-crud--index-filter-terms) t))
-    (_ nil)))
+;; The note-index matcher is CANONICAL (jetpacs-org.el, api 1.6.0): one
+;; query grammar, two accessors — `jetpacs-org-entry-matches-p' at point,
+;; `jetpacs-org-note-matches-p' off the `vulpea-note' struct.  This file
+;; used to carry its own copy; never re-grow one.
 
 (defun jetpacs-crud--compile-filter (tree)
   "Compile org-ql sexp TREE for a vulpea-backed view.
-Returns (:pred CLOSURE) — a `vulpea-note' -> bool over the index-covered
-subset — or (:org-ql TREE) when a term needs org-ql over the source file.
-An empty TREE compiles to a predicate that admits every note."
+Returns (:pred CLOSURE) — a `vulpea-note' -> bool via the canonical
+`jetpacs-org-note-matches-p' — or (:org-ql TREE) when a term needs
+org-ql over the source file (`jetpacs-org-note-query-supported-p' is
+the router).  An empty TREE compiles to a predicate that admits every
+note."
   (cond
    ((null tree) (list :pred (lambda (_note) t)))
-   ((jetpacs-crud--filter-index-supported-p tree)
-    (list :pred (lambda (note) (jetpacs-crud--note-matches-p tree note))))
+   ((jetpacs-org-note-query-supported-p tree)
+    (list :pred (lambda (note) (jetpacs-org-note-matches-p tree note))))
    (t (list :org-ql tree))))
 
 (defun jetpacs-crud--notes-org-ql-ids (notes tree)
