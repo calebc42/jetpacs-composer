@@ -1,10 +1,19 @@
 # Handoff: Stage 4 — composer pack targeting (the engine-pack model, executable)
 
-**STATUS (2026-07-13): PLANNED, not started.** This is the binding-layer master's named
-companion deliverable (`jetpacs/docs/PLAN-binding-layer.md` § Stage 4 — read it first; its
-task clusters stay authoritative). This doc grounds a fresh chat: verified current state,
-the stage sequence, the FORMAT renumbering decision, and the discipline/gotchas recent
-sessions paid for. **Re-verify every anchor before editing — the owner develops live.**
+**STATUS (2026-07-13): EXECUTED — S4.0–S4.6 all landed** (branch
+`claude/stage-4-pack-targeting`: `5dc6b69` S4.0, `4a8d315` S4.1, `852c711` S4.2,
+`78246f7` S4.3, `1629ec2` S4.4, `ca8a62e` S4.5, `ef26579` S4.6; glasspane `b4f062f`
+= TESTING-ON-DEVICE §20). Batch gates green throughout: 94/94 ERT + 4 bundle smokes
+(pantry, hello-world, packdemo, glasspane-views — the last two on bare core), full
+JVM suite, and the exporter-equivalence run byte-identical for BOTH the pantry and
+packdemo bundles. S4.5's on-device rows are recorded pending hardware (glasspane
+`docs/TESTING-ON-DEVICE.md` §20). The current-state contract lives in FORMAT.md
+(v4 header, DEPENDS-vs-PACK, runtime binding, device setup) and
+`docs/AUDIT-engine-packs.md` (the S4.6 survey). With this, the binding-layer
+program (Stages 0–4) is complete; the master's Stage 4 section records the same.
+
+The stage plan below is kept as the executed record; the discipline and gotcha
+sections remain live guidance.
 
 Companion inputs: the pack thesis + vulpea reference engine =
 `Glasspane/docs/PLAN-vulpea-ecosystem-exploration.md`; the pack-shaped package survey
