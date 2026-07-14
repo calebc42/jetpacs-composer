@@ -54,11 +54,19 @@ emacs -Q --batch -l elisp/build-app-bundle.el -- elisp/test/fixtures/pantry.org 
 ../jetpacs/deploy.ps1 -Bundles jetpacs-app-pantry.el
 ```
 
-On the device, add `"jetpacs-app-pantry.el"` to the starter init's
-bundle list with a `(require 'jetpacs-app-pantry)` (see
-`jetpacs/docs/starter-init.el`), restart Emacs — a Pantry app with an
-editable inventory table and a shopping checklist appears in the
-Jetpacs launcher.
+On the device, add the app once to `~/.emacs.d/jetpacs/apps.el`:
+
+```elisp
+(add-to-list 'jetpacs-installed-bundles "jetpacs-app-pantry.el")
+```
+
+then restart Emacs — the foundation adopts the staged bundle
+(byte-compiling it) and a Pantry app with an editable inventory table
+and a shopping checklist appears in the Jetpacs launcher. Later
+re-deploys need no edits: every restart adopts the newest staged copy.
+The engines the views read through (org-ql, vulpea) install themselves
+from MELPA on first load — or on demand from the degraded view's
+Install button — so a fresh device needs no manual package setup.
 
 ## Tests
 

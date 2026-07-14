@@ -58,6 +58,33 @@ class DeployerTest {
     }
 
     @Test
+    fun installSnippetIsOneExplicitAppsElLinePerApp() {
+        // Phase G: one consenting line in the foundation's apps.el per app —
+        // no engine forms (the runtime self-provisions org-ql/vulpea) and no
+        // legacy ~/.emacs.d/elisp adopt loop (no wildcard auto-loading of
+        // whatever lands in shared storage).
+        val s = Deployer.installSnippet("jetpacs-app-pantry.el")
+        assertTrue(
+            "(add-to-list 'jetpacs-installed-bundles \"jetpacs-app-pantry.el\")" in s)
+        assertTrue("jetpacs-config-adopt" in s)     // the BYO-init escape hatch
+        assertTrue("package-install" !in s)
+        assertTrue("file-expand-wildcards" !in s)
+        assertTrue(".emacs.d/elisp" !in s)
+        assertEquals(s.count { it == '(' }, s.count { it == ')' })
+    }
+
+    @Test
+    fun liveDeployTargetsThePhaseGLibDir() {
+        // The live path writes where the foundation installs bundles
+        // (~/.emacs.d/jetpacs/lib/), never the legacy elisp/ layout — the
+        // boot path and the live path must agree on where the app lives.
+        // Steps stop at the failed adb forward in this offline test, so the
+        // assertion rides the declared step labels via a fake serial.
+        val steps = Deployer.liveDeploy("no-such-serial", File("jetpacs-app-x.el"))
+        assertTrue(steps.none { ".emacs.d/elisp" in it.label })
+    }
+
+    @Test
     fun bootstrapFormsStayBalancedAndIdempotentShaped() {
         val forms = Deployer.depBootstrapForms(
             Deployer.installList(OrgCodec.parse(fixture("packdemo.org")),

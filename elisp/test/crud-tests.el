@@ -1938,6 +1938,122 @@ the runtime still loads and builds on bare jetpacs-core."
         ;; The placeholder names the missing dependency.
         (should (string-match-p "vulpea" (format "%S" view)))))))
 
+;; ─── Engine self-provisioning ────────────────────────────────────────────────
+
+(ert-deftest jetpacs-crud-needs-vulpea-placeholder-offers-install ()
+  "The vulpea placeholder is actionable — an Install button dispatching
+the allowlisted crud.engines.install — and lints clean.  On a build that
+can never run vulpea (no SQLite) it explains that instead of offering a
+button that cannot help."
+  (let* ((body (jetpacs-crud--needs-vulpea-body "Board"))
+         (s (format "%S" body)))
+    (should (null (jetpacs-lint-spec body)))
+    (should (string-match-p "crud\\.engines\\.install" s))
+    (should (string-match-p "Install vulpea" s)))
+  (cl-letf (((symbol-function 'sqlite-available-p) (lambda () nil)))
+    (let* ((body (jetpacs-crud--needs-vulpea-body "Board"))
+           (s (format "%S" body)))
+      (should (null (jetpacs-lint-spec body)))
+      (should-not (string-match-p "crud\\.engines\\.install" s))
+      (should (string-match-p "SQLite" s)))))
+
+(ert-deftest jetpacs-crud-engines-install-action-registered ()
+  "crud.engines.install is an allowlisted handler (the button's target)."
+  (should (gethash "crud.engines.install" jetpacs-action-handlers)))
+
+(ert-deftest jetpacs-crud-engines-ensure-mocked-install-lights-up ()
+  "engines-ensure installs what's missing (mocked — batch never touches
+the network), then lights up: sources re-adopted, shell refreshed, t
+returned.  Already-satisfied engines skip installing but still light up."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((installed nil) (refreshed nil) (ensured nil) (present nil)
+          (jetpacs-crud--engines-installing nil))
+      (cl-letf (((symbol-function 'package-refresh-contents) #'ignore)
+                ((symbol-function 'package-initialize) #'ignore)
+                ((symbol-function 'package-installed-p) (lambda (_) present))
+                ((symbol-function 'package-install)
+                 (lambda (pkg) (push pkg installed) (setq present t)))
+                ;; The probes: absent until the mocked install lands.
+                ((symbol-function 'jetpacs-crud--org-ql-p) (lambda () present))
+                ((symbol-function 'jetpacs-crud--vulpea-p) (lambda () present))
+                ((symbol-function 'jetpacs-crud--engines-wire-vulpea) #'ignore)
+                ((symbol-function 'jetpacs-crud-vulpea-ensure-source)
+                 (lambda (_spec view) (push (plist-get view :name) ensured)))
+                ((symbol-function 'jetpacs-shell-refresh)
+                 (lambda (&rest _) (setq refreshed t))))
+        (jetpacs-crud-register-file (jetpacs-crud-tests--stage "contacts.org"))
+        (should (jetpacs-crud-engines-ensure))
+        (should installed)                       ; something was fetched
+        (should refreshed)                       ; views rebuilt live
+        (should (member "people" ensured))       ; sources id-adopted
+        ;; Second call: nothing missing — no install, still lights up.
+        (setq installed nil refreshed nil)
+        (should (jetpacs-crud-engines-ensure))
+        (should-not installed)
+        (should refreshed)))))
+
+(ert-deftest jetpacs-crud-engines-ensure-fails-soft ()
+  "Install failures never signal: nil returned, nothing half-wired.
+A build without SQLite refuses up front without touching package.el."
+  (let ((jetpacs-crud--engines-installing nil))
+    (cl-letf (((symbol-function 'jetpacs-crud--org-ql-p) (lambda () nil))
+              ((symbol-function 'jetpacs-crud--vulpea-p) (lambda () nil))
+              ((symbol-function 'package-initialize) #'ignore)
+              ((symbol-function 'package-refresh-contents)
+               (lambda (&rest _) (error "offline"))))
+      (should-not (jetpacs-crud-engines-ensure))
+      (should-not jetpacs-crud--engines-installing))   ; guard released
+    (let ((touched nil))
+      (cl-letf (((symbol-function 'sqlite-available-p) (lambda () nil))
+                ((symbol-function 'jetpacs-crud--org-ql-p) (lambda () nil))
+                ((symbol-function 'jetpacs-crud--vulpea-p) (lambda () nil))
+                ((symbol-function 'package-refresh-contents)
+                 (lambda (&rest _) (setq touched t))))
+        (should-not (jetpacs-crud-engines-ensure))
+        (should-not touched)))))
+
+(ert-deftest jetpacs-crud-engines-auto-install-schedules-once ()
+  "Registering an engine-needing app schedules the session's ONE idle
+install attempt — interactive sessions only (batch/CI never reaches for
+MELPA), once per session, and not at all when disabled."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((timers 0)
+          (jetpacs-crud--engines-attempted nil)
+          (noninteractive nil))          ; pretend to be the phone session
+      (cl-letf (((symbol-function 'run-with-idle-timer)
+                 ;; Count only the engine attempt (its 3 s signature);
+                 ;; the shell's own repush timers pass through as no-ops.
+                 (lambda (secs &rest _) (when (equal secs 3) (cl-incf timers)) nil))
+                ((symbol-function 'jetpacs-crud--org-ql-p) (lambda () nil))
+                ((symbol-function 'jetpacs-crud--vulpea-p) (lambda () nil)))
+        (jetpacs-crud-register-file (jetpacs-crud-tests--stage "contacts.org"))
+        (should (= timers 1))
+        ;; Same session: a second app does not re-schedule.
+        (jetpacs-crud-register-file (jetpacs-crud-tests--stage "pantry.org"))
+        (should (= timers 1)))))
+  ;; Batch stays offline: `noninteractive' is genuinely t right now.
+  (jetpacs-crud-tests--with-clean-state
+    (let ((timers 0)
+          (jetpacs-crud--engines-attempted nil))
+      (cl-letf (((symbol-function 'run-with-idle-timer)
+                 (lambda (secs &rest _) (when (equal secs 3) (cl-incf timers)) nil))
+                ((symbol-function 'jetpacs-crud--org-ql-p) (lambda () nil))
+                ((symbol-function 'jetpacs-crud--vulpea-p) (lambda () nil)))
+        (jetpacs-crud-register-file (jetpacs-crud-tests--stage "contacts.org"))
+        (should (= timers 0)))))
+  ;; Disabled by the user: no scheduling even interactively.
+  (jetpacs-crud-tests--with-clean-state
+    (let ((timers 0)
+          (jetpacs-crud--engines-attempted nil)
+          (jetpacs-crud-engines-auto-install nil)
+          (noninteractive nil))
+      (cl-letf (((symbol-function 'run-with-idle-timer)
+                 (lambda (secs &rest _) (when (equal secs 3) (cl-incf timers)) nil))
+                ((symbol-function 'jetpacs-crud--org-ql-p) (lambda () nil))
+                ((symbol-function 'jetpacs-crud--vulpea-p) (lambda () nil)))
+        (jetpacs-crud-register-file (jetpacs-crud-tests--stage "contacts.org"))
+        (should (= timers 0))))))
+
 (ert-deftest jetpacs-crud-notes-crud-roundtrip ()
   "End-to-end notes CRUD over a real vulpea vault (skipped without vulpea).
 Uses an isolated, temporary vulpea index (mirrors vulpea's own test

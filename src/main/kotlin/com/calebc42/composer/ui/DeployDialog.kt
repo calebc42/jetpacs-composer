@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.calebc42.composer.device.Adb
 import com.calebc42.composer.device.DeviceInfo
 import com.calebc42.composer.device.Deployer
+import com.calebc42.composer.export.BundleExporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,10 +46,11 @@ fun DeployDialog(session: EditorSession, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var showSnippet by remember { mutableStateOf(false) }
 
-    // The install list for THIS app: the selected pack manifest's depends
-    // when pack-backed, else the document's own (S4.4).
-    val installList = Deployer.installList(session.spec, session.exportManifest())
+    // Termux-binary warnings for THIS app (S4.4). MELPA engines no longer
+    // gate the deploy: the bundle runtime installs its own engine pair on
+    // the device (first load, or the degraded view's Install button).
     val binaryWarnings = Deployer.binaryWarnings(session.spec, session.exportManifest())
+    val bundleName = BundleExporter.bundleFileName(session.spec)
 
     fun refresh() = scope.launch {
         withContext(Dispatchers.IO) {
@@ -78,8 +80,10 @@ fun DeployDialog(session: EditorSession, onDismiss: () -> Unit) {
                                     "\n   ${s.result.stderr.ifBlank { s.result.stdout }.trim()}"
                                  else "")
                         } + if (!live && steps.all { it.result.ok })
-                            "\nStaged. Restart Emacs on the device (or run the " +
-                                "install snippet's adopt loop) to pick it up."
+                            "\nStaged. Restart Emacs on the device to adopt it " +
+                                "(the app must be listed in apps.el once — see " +
+                                "Install snippet). Engines install themselves " +
+                                "on first load."
                         else ""
                     },
                 )
@@ -149,9 +153,11 @@ fun DeployDialog(session: EditorSession, onDismiss: () -> Unit) {
                 }
                 if (showSnippet) {
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text("Add once to the device init, after (require 'jetpacs-core):",
+                    Text("Add this app once to ~/.emacs.d/jetpacs/apps.el — " +
+                             "later re-deploys need no edits, and the runtime " +
+                             "installs its own engines (org-ql, vulpea):",
                          style = MaterialTheme.typography.bodySmall)
-                    Text(Deployer.installSnippet(installList),
+                    Text(Deployer.installSnippet(bundleName),
                          fontFamily = FontFamily.Monospace,
                          style = MaterialTheme.typography.bodySmall)
                 }

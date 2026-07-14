@@ -10,12 +10,25 @@ import java.io.File
  * The two ways a bundle reaches the device (jetpacs deploy.ps1's exact
  * mechanics, reused):
  *
- * - STAGING: `adb push` to /sdcard/Download; the device init's adopt
- *   loop installs it on the next Emacs (re)start. Needs nothing but adb.
- * - LIVE: scp straight into ~/.emacs.d/elisp over Termux sshd
- *   (adb-forwarded port 8022), then `emacsclient -e '(load …)'` — the
- *   running Emacs re-registers the app and the phone updates in
- *   seconds. Needs `sshd` running inside Termux and an Emacs server.
+ * - STAGING: `adb push` to /sdcard/Download; the foundation's managed
+ *   init (Phase G: ~/.emacs.d/jetpacs/apps.el lists the bundle,
+ *   `jetpacs-config-adopt` copies + byte-compiles + requires it) installs
+ *   it on the next Emacs (re)start. Needs nothing but adb, plus the
+ *   one-time apps.el line from [installSnippet].
+ * - LIVE: scp straight into ~/.emacs.d/jetpacs/lib/ (the foundation's
+ *   installed-bundle dir) over Termux sshd (adb-forwarded port 8022),
+ *   then `emacsclient -e '(load …)'` — the running Emacs re-registers
+ *   the app and the phone updates in seconds. Needs `sshd` running
+ *   inside Termux and an Emacs server; persistence across restarts
+ *   still comes from the apps.el line.
+ *
+ * Engine dependencies are NOT part of either path anymore: the bundle
+ * runtime installs its own engine pair on first load and offers an
+ * Install button on the degraded view (jetpacs-crud-vulpea.el, engine
+ * self-provisioning). [bootstrapDeps] remains as an optional ssh
+ * pre-provisioning shortcut, and it is the only path that also installs
+ * an app's extra declared depends (app data must never trigger an
+ * install from the wire — the Stage 4 trust rule).
  */
 object Deployer {
 
@@ -35,25 +48,29 @@ object Deployer {
         steps += Step("adb forward tcp:$SSH_PORT", forward)
         if (!forward.ok) return steps
 
-        // Create the destination before scp — on a first-ever deploy to a fresh
-        // device ~/.emacs.d/elisp doesn't exist yet (deploy.sh/deploy.ps1 do this).
+        // Create the destination before scp — on a first-ever deploy to a
+        // fresh device the foundation's lib dir doesn't exist yet.  This is
+        // Phase G's installed-bundle location (~/.emacs.d/jetpacs/lib/), the
+        // same place `jetpacs-config-adopt` installs to, so the boot path and
+        // the live path can never disagree about where the app lives; the
+        // next restart re-byte-compiles it there (apps.el listing).
         val mkdir = Adb.exec(
             listOf("ssh", "-p", SSH_PORT.toString(),
                    "-o", "StrictHostKeyChecking=accept-new",
-                   SSH_TARGET, "mkdir -p .emacs.d/elisp"),
+                   SSH_TARGET, "mkdir -p .emacs.d/jetpacs/lib"),
             timeoutSeconds = 30,
         )
-        steps += Step("ssh mkdir -p .emacs.d/elisp", mkdir)
+        steps += Step("ssh mkdir -p .emacs.d/jetpacs/lib", mkdir)
         if (!mkdir.ok) return steps
 
         val scp = Adb.exec(
             listOf("scp", "-P", SSH_PORT.toString(),
                    "-o", "StrictHostKeyChecking=accept-new",
                    bundle.absolutePath,
-                   "$SSH_TARGET:.emacs.d/elisp/${bundle.name}"),
+                   "$SSH_TARGET:.emacs.d/jetpacs/lib/${bundle.name}"),
             timeoutSeconds = 120,
         )
-        steps += Step("scp → ~/.emacs.d/elisp/${bundle.name}", scp)
+        steps += Step("scp → ~/.emacs.d/jetpacs/lib/${bundle.name}", scp)
         if (!scp.ok) return steps
 
         steps += Step(
@@ -62,7 +79,7 @@ object Deployer {
                 listOf("ssh", "-p", SSH_PORT.toString(),
                        "-o", "StrictHostKeyChecking=accept-new",
                        SSH_TARGET,
-                       "emacsclient -e '(load \"~/.emacs.d/elisp/${bundle.name}\")'"),
+                       "emacsclient -e '(load \"~/.emacs.d/jetpacs/lib/${bundle.name}\")'"),
                 timeoutSeconds = 60,
             ),
         )
@@ -115,10 +132,15 @@ object Deployer {
     /**
      * The engine-bootstrap forms: install [depends] from MELPA and wire
      * vulpea's autosync over the org vault AND the installed-apps
-     * directory (composer apps keep their inline sources there). Mirrors
-     * Glasspane's docs/starter-init.el. Every step is wrapped so an
-     * offline launch never breaks startup — installs are retried each
-     * launch until they succeed. Idempotent (package-installed-p, a
+     * directory (composer apps keep their inline sources there).
+     * Since the runtime learned to self-provision its engine pair
+     * (jetpacs-crud-vulpea.el), these forms are no longer part of the
+     * pasted [installSnippet]; they remain the [bootstrapDeps] ssh
+     * pre-provisioning payload — the one path that also installs an
+     * app's EXTRA declared depends (org-super-agenda-class packages the
+     * runtime deliberately never installs from the wire). Every step is
+     * wrapped so an offline run never breaks anything — installs are
+     * retried on the next run. Idempotent (package-installed-p, a
      * once-only full-scan marker, and autosync-mode being a no-op when
      * on). The vulpea wiring stays even when vulpea isn't in [depends] —
      * `(require 'vulpea nil t)` makes it a no-op then.
@@ -152,30 +174,27 @@ object Deployer {
     """.trimIndent()
 
     /**
-     * The one-time addition to the device init that makes staged
-     * composer bundles install themselves — the starter-init adopt
-     * pattern, generalized from a fixed list to the composer's
-     * jetpacs-app-*.el naming convention — preceded by the engine
-     * bootstrap (per-app [depends]). Place it AFTER `(require 'jetpacs-core)`.
+     * The once-per-app install line for the device: list the bundle in the
+     * foundation's create-once ~/.emacs.d/jetpacs/apps.el. Every restart
+     * then adopts the newest staged copy from /sdcard (Download or
+     * Documents), byte-compiles it, and requires it — re-deploys of the
+     * same app need no further edits. This replaced the old
+     * paste-a-whole-adopt-loop snippet: one explicit line per app keeps
+     * the user consenting to each bundle that gets to run (the same
+     * allowlist instinct as SPEC §5 — no wildcard auto-loading of
+     * whatever lands in shared storage), and the legacy
+     * ~/.emacs.d/elisp/ layout it targeted predated Phase G. Engine
+     * installs are gone from the snippet too: the bundle runtime
+     * self-provisions org-ql/vulpea on first load and offers an Install
+     * button on the degraded view.
      */
-    fun installSnippet(depends: List<String> = DEFAULT_ENGINES): String =
-        depBootstrapForms(depends) + "\n\n" + """
-        ;; jetpacs-composer apps: adopt newer staged bundles, then load all.
-        (let ((dir (expand-file-name "elisp" user-emacs-directory)))
-          (dolist (staged (append
-                           (file-expand-wildcards "/sdcard/Download/jetpacs-app-*.el")
-                           (file-expand-wildcards "/sdcard/Documents/jetpacs-app-*.el")))
-            (let ((installed (expand-file-name (file-name-nondirectory staged) dir)))
-              (when (or (not (file-exists-p installed))
-                        (file-newer-than-file-p staged installed))
-                (make-directory dir t)
-                (copy-file staged installed t)
-                (message "%s: adopted from %s"
-                         (file-name-nondirectory staged)
-                         (file-name-directory staged)))))
-          (dolist (bundle (file-expand-wildcards
-                           (expand-file-name "jetpacs-app-*.el" dir)))
-            (load bundle)))
+    fun installSnippet(bundleName: String): String = """
+        ;; In ~/.emacs.d/jetpacs/apps.el, add this app to the installed list:
+        (add-to-list 'jetpacs-installed-bundles "$bundleName")
+
+        ;; (No managed apps.el — a BYO init?  Use the foundation seam
+        ;;  directly, after (require 'jetpacs-core):
+        ;;    (require (jetpacs-config-adopt "$bundleName")))
     """.trimIndent()
 
     /**

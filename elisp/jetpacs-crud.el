@@ -1325,12 +1325,27 @@ absent, and all have their source files id-adopted + indexed on register.")
 
 (defun jetpacs-crud--needs-vulpea-body (&optional what)
   "A lazy-column placeholder shown when a heading-family view needs vulpea.
-WHAT names the view in the title."
-  (jetpacs-lazy-column
-   (jetpacs-empty-state
-    :icon "extension_off"
-    :title (format "%s needs vulpea" (or what "This view"))
-    :caption "Install the vulpea package on this device to use this view.")))
+WHAT names the view in the title.  Not a dead end: it carries an Install
+button dispatching `crud.engines.install' (the runtime provisions its
+own engines — see jetpacs-crud-vulpea.el).  When the Emacs build can
+never run vulpea (no SQLite), it says that instead of offering an
+install that cannot help."
+  (let ((blocked (and (fboundp 'jetpacs-crud-engines-blocked-reason)
+                      (jetpacs-crud-engines-blocked-reason)))
+        (title (format "%s needs vulpea" (or what "This view"))))
+    (jetpacs-lazy-column
+     (if blocked
+         (jetpacs-empty-state
+          :icon "extension_off"
+          :title title
+          :caption (concat "Cannot be installed: " blocked "."))
+       (jetpacs-empty-state
+        :icon "extension_off"
+        :title title
+        :caption "Jetpacs can install it from MELPA (needs network); views refresh when done."
+        :action-label "Install vulpea"
+        :on-tap (jetpacs-action "crud.engines.install"
+                                :when-offline "drop"))))))
 
 ;; ─── Pack binding (manifest-backed engine packs; SPEC §5, fail closed) ──────
 ;;
@@ -1795,6 +1810,11 @@ The default is one bottom tab per view.  Returns the app id."
                          :on-tap (jetpacs-action
                                   "crud.capture.add" :args `((app . ,id)))))))
     (jetpacs-crud--sync-reminders)
+    ;; A fresh device provisions itself: when this app's views need the
+    ;; engines and they're missing, schedule the session's one automatic
+    ;; install attempt (idle; the placeholder button is the retry path).
+    (when (fboundp 'jetpacs-crud--engines-maybe-auto-install)
+      (jetpacs-crud--engines-maybe-auto-install spec))
     id))
 
 (defun jetpacs-crud-unregister (id)
@@ -3045,6 +3065,21 @@ Re-renders the add-record dialog to reflect the picked value."
     (jetpacs-ui-state-put (format "search_%s" (plist-get view :name)) value)
     (jetpacs-shell-push)))
 
+(defun jetpacs-crud-action-engines-install (_args _payload)
+  "The \"needs vulpea\" placeholder's Install button.
+Fetches the closed engine pair from MELPA (`jetpacs-crud-engines-ensure',
+jetpacs-crud-vulpea.el) and lights every registered view up on success —
+no restart.  package.el is synchronous, so feedback rides toasts around
+the (possibly long) install; the wire carries no package names, ever —
+the vocabulary is the runtime's own."
+  (if (not (fboundp 'jetpacs-crud-engines-ensure))
+      (message "jetpacs-crud: engine installer not loaded")
+    (jetpacs-send "toast.show" '((text . "Installing org-ql + vulpea…")))
+    (if (jetpacs-crud-engines-ensure)
+        (jetpacs-send "toast.show" '((text . "Engines installed — views refreshed")))
+      (jetpacs-send "toast.show"
+                    '((text . "Install failed — check *Messages* in Emacs"))))))
+
 (with-jetpacs-owner "jetpacs-crud"
   (jetpacs-defaction "crud.cell.edit"       #'jetpacs-crud-action-cell-edit)
   (jetpacs-defaction "crud.cell.toggle"     #'jetpacs-crud-action-cell-toggle)
@@ -3070,7 +3105,8 @@ Re-renders the add-record dialog to reflect the picked value."
   (jetpacs-defaction "crud.view.import-csv" #'jetpacs-crud-action-view-import-csv)
   (jetpacs-defaction "crud.node.move"       #'jetpacs-crud-action-node-move)
   (jetpacs-defaction "crud.capture.add"     #'jetpacs-crud-action-capture-add)
-  (jetpacs-defaction "crud.dialog.dismiss"  #'jetpacs-crud-action-dialog-dismiss))
+  (jetpacs-defaction "crud.dialog.dismiss"  #'jetpacs-crud-action-dialog-dismiss)
+  (jetpacs-defaction "crud.engines.install" #'jetpacs-crud-action-engines-install))
 
 (provide 'jetpacs-crud)
 ;;; jetpacs-crud.el ends here

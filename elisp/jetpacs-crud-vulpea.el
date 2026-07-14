@@ -96,6 +96,167 @@ registered (`jetpacs-crud-vulpea--register-extractor')."
 (add-hook 'jetpacs-shell-refresh-hook
           (lambda () (setq jetpacs-crud--vulpea 'unknown)))
 
+;; ─── Engine self-provisioning ────────────────────────────────────────────────
+;;
+;; A freshly deployed app on a fresh device used to dead-end on the
+;; "needs vulpea" placeholder until the user hand-installed packages: the
+;; engine bootstrap lived only in a deploy snippet that was easy to skip.
+;; The runtime now provisions its OWN engines: one automatic attempt per
+;; session when a registered app needs them (idle, never blocking boot),
+;; plus the placeholder's Install button (`crud.engines.install') as the
+;; on-demand/retry path.  Success lights views up live — probes reset,
+;; sources id-adopted, autosync wired, shell refreshed — no restart.
+;;
+;; Trust boundary (locked in Stage 4): app data can never trigger an
+;; install.  Only this closed, runtime-owned engine pair is ever
+;; installed here — a document's `#+JETPACS_DEPENDS:'/pack extras stay on
+;; the explicit deploy paths (ssh bootstrap, dialog warnings).
+
+(declare-function vulpea-db-autosync-mode "vulpea-db" (&optional arg))
+(declare-function vulpea-db-sync-full-scan "vulpea-db" ())
+
+(defvar jetpacs-crud-engines-auto-install t
+  "When non-nil, registering an app that needs missing engines schedules
+one automatic install attempt for this session (on an idle timer, so
+boot is never blocked).  The placeholder's Install button works
+regardless.  Set to nil in user.el to manage packages yourself.")
+
+(defconst jetpacs-crud--engine-packages '(org-ql vulpea)
+  "The closed MELPA engine pair the runtime's views read through.
+Mirrors the Deployer's DEFAULT_ENGINES.  Deliberately not extensible
+from app data — see the trust note above.")
+
+(defvar jetpacs-crud--engines-attempted nil
+  "Non-nil once this session has scheduled its automatic install attempt.")
+
+(defvar jetpacs-crud--engines-installing nil
+  "Non-nil while an engine install is in flight.
+Load-bearing re-entrancy guard: `package-refresh-contents' pumps the
+event loop (`accept-process-output'), so a second button tap could
+otherwise re-enter mid-install.")
+
+(defun jetpacs-crud-engines-blocked-reason ()
+  "A human-readable reason installing engines cannot help, or nil.
+vulpea's index rides `emacsql-sqlite-builtin', which needs an Emacs
+built with SQLite — no package install can supply a missing build
+feature, so the placeholder says this instead of offering a dead button."
+  (unless (and (fboundp 'sqlite-available-p) (sqlite-available-p))
+    "this Emacs build lacks SQLite, which vulpea's index needs — use an Emacs built --with-sqlite3"))
+
+(defun jetpacs-crud--engines-missing ()
+  "The engine packages not currently loadable, freshly probed."
+  (setq jetpacs-crud--org-ql 'unknown
+        jetpacs-crud--vulpea 'unknown)
+  (let (missing)
+    (unless (jetpacs-crud--org-ql-p) (push 'org-ql missing))
+    (unless (jetpacs-crud--vulpea-p) (push 'vulpea missing))
+    (nreverse missing)))
+
+(defun jetpacs-crud--engines-wire-vulpea ()
+  "Wire vulpea's autosync over the vault and the app-source dir, additively.
+The bootstrap the deploy snippet used to carry, now runtime-owned so a
+device provisions itself.  Additive on purpose: the user's own
+`vulpea-db-sync-directories' entries are kept, autosync stays the single
+index (never a second one — battery rule), and the initial full scan
+runs once per device (marker file)."
+  (when (require 'vulpea nil t)
+    (defvar vulpea-db-sync-directories)
+    (dolist (dir (list org-directory
+                       (expand-file-name "jetpacs-crud/" user-emacs-directory)))
+      (when (and (stringp dir) (file-directory-p dir))
+        (add-to-list 'vulpea-db-sync-directories dir)))
+    (when (fboundp 'vulpea-db-autosync-mode)
+      (vulpea-db-autosync-mode 1))
+    (let ((marker (expand-file-name "jetpacs-crud/.vulpea-scanned"
+                                    user-emacs-directory)))
+      (unless (file-exists-p marker)
+        (ignore-errors (vulpea-db-sync-full-scan))
+        (make-directory (file-name-directory marker) t)
+        (write-region "" nil marker nil 'silent)))))
+
+(defun jetpacs-crud--engines-light-up ()
+  "The moment the engines are loadable: make the views real, live.
+Wires autosync, id-adopts every registered vulpea view's source (the
+step that ran as a no-op when the app registered engine-less), and
+refreshes the shell — which re-probes and rebuilds every pushed view."
+  (jetpacs-crud--engines-wire-vulpea)
+  (dolist (cell jetpacs-crud--apps)
+    (let ((spec (cdr cell)))
+      (dolist (view (plist-get spec :views))
+        (when (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
+          (ignore-errors (jetpacs-crud-vulpea-ensure-source spec view))))))
+  (when (fboundp 'jetpacs-shell-refresh)
+    (jetpacs-shell-refresh)))
+
+(defun jetpacs-crud-engines-ensure ()
+  "Install any missing engine package from MELPA, then light views up.
+Synchronous (package.el is), idempotent, and never signals: returns
+non-nil when every engine is loadable afterwards, else nil with the
+reason in *Messages*.  The retry story is simply calling this again —
+each restart's automatic attempt and every Install-button tap do."
+  (cond
+   (jetpacs-crud--engines-installing
+    (message "jetpacs-crud: engine install already in progress")
+    nil)
+   ((null (jetpacs-crud--engines-missing))
+    (jetpacs-crud--engines-light-up)
+    t)
+   ((jetpacs-crud-engines-blocked-reason)
+    (message "jetpacs-crud: %s" (jetpacs-crud-engines-blocked-reason))
+    nil)
+   (t
+    (setq jetpacs-crud--engines-installing t)
+    (unwind-protect
+        (condition-case err
+            (progn
+              (require 'package)
+              (defvar package-archives)
+              (add-to-list 'package-archives
+                           '("melpa" . "https://melpa.org/packages/") t)
+              (unless (bound-and-true-p package--initialized)
+                (package-initialize))
+              (package-refresh-contents)
+              (dolist (pkg (jetpacs-crud--engines-missing))
+                (unless (package-installed-p pkg)
+                  (message "jetpacs-crud: installing %s…" pkg)
+                  (package-install pkg)))
+              (let ((still (jetpacs-crud--engines-missing)))
+                (if still
+                    (progn
+                      (message "jetpacs-crud: %s installed but not loadable — see *Messages*"
+                               (mapconcat #'symbol-name still ", "))
+                      nil)
+                  (jetpacs-crud--engines-light-up)
+                  (message "jetpacs-crud: engines ready — views refreshed")
+                  t)))
+          (error
+           (message "jetpacs-crud: engine install failed: %s"
+                    (error-message-string err))
+           nil))
+      (setq jetpacs-crud--engines-installing nil)))))
+
+(defun jetpacs-crud--engines-maybe-auto-install (spec)
+  "Schedule this session's one automatic engine install when SPEC needs it.
+Called at app registration; fires on an idle timer so boot cost is zero.
+Skipped when disabled, already attempted, nothing is missing, no view of
+SPEC is engine-backed, the build can never run vulpea anyway — or Emacs
+is batch (`noninteractive'): a CI/test run must never reach for MELPA."
+  (when (and jetpacs-crud-engines-auto-install
+             (not noninteractive)
+             (not jetpacs-crud--engines-attempted)
+             (cl-some (lambda (v) (memq (plist-get v :kind)
+                                        jetpacs-crud--vulpea-kinds))
+                      (plist-get spec :views))
+             (not (jetpacs-crud-engines-blocked-reason))
+             (jetpacs-crud--engines-missing))
+    (setq jetpacs-crud--engines-attempted t)
+    (run-with-idle-timer
+     3 nil
+     (lambda ()
+       (message "jetpacs-crud: engines missing — attempting install (%s)…"
+                (mapconcat #'symbol-name jetpacs-crud--engine-packages ", "))
+       (jetpacs-crud-engines-ensure)))))
+
 (defun jetpacs-crud-vulpea-ensure-source (spec view)
   "Give VIEW's source file and record headings stable `:ID:'s, then reindex.
 vulpea only indexes a heading that carries an `:ID:', so a heading-family
