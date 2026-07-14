@@ -404,11 +404,14 @@ commands, which normalize what they touch:
   end of the source subtree.
 
 Every record write is followed by a vulpea re-index of the file, so the
-view refreshes against the current contents. A device **without vulpea**
-renders these kinds as a "needs vulpea" placeholder rather than reading
-them — install the dependency (`#+JETPACS_DEPENDS: vulpea`, see
-[Device setup](#device-setup--what-installs-the-engines)). Table and
-checklist kinds still read org directly and work without vulpea.
+view refreshes against the current contents. This applies to **every
+datasource kind**, including `table` and `checklist`: those have no
+`:ID:` to hang on, so a vulpea *plugin extractor* indexes their org
+tables and checkbox items from the id-adopted source file instead. A
+device **without vulpea** renders every kind as a "needs vulpea"
+placeholder rather than reading it — install the dependency
+(`#+JETPACS_DEPENDS: vulpea`, see
+[Device setup](#device-setup--what-installs-the-engines)).
 
 Text *outside* managed records (prose, other headings, the source
 heading's own body) is never touched, and record body text survives

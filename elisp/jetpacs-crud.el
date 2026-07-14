@@ -226,16 +226,17 @@ The buffer is the source of truth (unsaved edits included)."
      (org-with-wide-buffer ,@body)))
 
 (defun jetpacs-crud--source-table (spec view)
-  "Scan VIEW's source table: (FILE . TABLE) where TABLE is a scan plist.
-Returns (FILE . nil) when the source file or table doesn't exist."
+  "VIEW's source table from the vulpea index: (FILE . TABLE), TABLE a scan plist.
+The plugin extractor indexes org tables, so this reads the first table in
+the source scope from the index (`jetpacs-crud-vulpea-tables').  Returns
+(FILE . nil) without vulpea or when no table is indexed for the scope —
+callers gate on `jetpacs-crud--vulpea-p' and degrade."
   (let* ((source (jetpacs-crud--view-source spec view))
          (file (car source))
          (heading (cdr source)))
     (cons file
-          (when (file-readable-p file)
-            (jetpacs-crud--with-source file
-              (when (jetpacs-crud--find-table heading)
-                (jetpacs-crud--scan-table)))))))
+          (when (jetpacs-crud--vulpea-p)
+            (car (jetpacs-crud-vulpea-tables file heading))))))
 
 ;; ─── Scaffolding missing sources ─────────────────────────────────────────────
 
@@ -441,12 +442,10 @@ STATE is the checkbox character; POS the item's line start."
        :align "center"))))
 
 (defun jetpacs-crud--checklist-body (spec view)
-  "The body node for checklist VIEW of SPEC."
+  "The body node for checklist VIEW of SPEC (read from the vulpea index)."
   (let* ((source (jetpacs-crud--view-source spec view))
          (file (car source))
-         (items (when (file-readable-p file)
-                  (jetpacs-crud--with-source file
-                    (jetpacs-crud--scan-checklist (cdr source))))))
+         (items (jetpacs-crud-vulpea-checklist file (cdr source))))
     (apply #'jetpacs-lazy-column
            (or (mapcar (lambda (item)
                          (jetpacs-crud--checklist-item-node spec view item))
@@ -1817,10 +1816,11 @@ action string the add-FAB fires.")
            :content-description "Quick capture"))))
 
 (defconst jetpacs-crud--vulpea-kinds
-  '(records notes board calendar gallery tree dashboard gantt)
-  "Heading-family kinds whose datasource is the vulpea index.
-They degrade to a placeholder when vulpea is absent; `table' and
-`checklist' still read org directly (until the Phase 3 extractor).")
+  '(records notes board calendar gallery tree dashboard gantt table checklist)
+  "Kinds whose datasource is the vulpea index.
+The heading-family kinds read notes; `table' and `checklist' read the
+plugin extractor's tables.  All degrade to a placeholder when vulpea is
+absent, and all have their source files id-adopted + indexed on register.")
 
 (defun jetpacs-crud--needs-vulpea-body (&optional what)
   "A lazy-column placeholder shown when a heading-family view needs vulpea.
@@ -2115,6 +2115,13 @@ as-is.  Signals `user-error' on anything unknown."
       (user-error "Source file missing: %s" file))
     (list spec view file pos)))
 
+(defun jetpacs-crud--reindex (file)
+  "Re-index FILE in vulpea after a write so index-backed reads stay fresh.
+A no-op without vulpea (table/checklist reads then come from nowhere, but
+those kinds already require vulpea to render)."
+  (when (jetpacs-crud--vulpea-p)
+    (vulpea-db-update-file (expand-file-name file))))
+
 (defun jetpacs-crud--table-mutate (file pos fn)
   "Run FN with point at POS inside FILE's table; align, recalc, save, push.
 The jetpacs-crud port of the proven Glasspane table-mutation shape: after
@@ -2139,6 +2146,7 @@ phone are refreshed before the user can tap again."
            (org-table-recalculate t)))))
     (let ((save-silently t))
       (save-buffer)))
+  (jetpacs-crud--reindex file)
   (jetpacs-shell-push))
 
 (defun jetpacs-crud--cell-context (file pos)
@@ -2235,6 +2243,7 @@ phone are refreshed before the user can tap again."
        (org-toggle-checkbox))
       (let ((save-silently t))
         (save-buffer)))
+    (jetpacs-crud--reindex file)
     (jetpacs-shell-push)))
 
 (defun jetpacs-crud--action-apply-at-point (token options)
@@ -2373,7 +2382,8 @@ PAYLOAD contains `from_pos', `after_pos', and `new_level'."
            (set-marker from-m nil)
            (when after-m (set-marker after-m nil)))))
       (with-current-buffer (find-file-noselect file)
-        (let ((save-silently t)) (save-buffer))))
+        (let ((save-silently t)) (save-buffer)))
+      (jetpacs-crud--reindex file))
     (jetpacs-shell-push)))
 
 (defun jetpacs-crud-action-item-add (args _payload)
@@ -2396,7 +2406,8 @@ PAYLOAD contains `from_pos', `after_pos', and `new_level'."
              (unless (bolp) (insert "\n"))
              (insert "- [ ] " text "\n"))))
         (let ((save-silently t))
-          (save-buffer))))
+          (save-buffer)))
+      (jetpacs-crud--reindex file))
     (jetpacs-shell-push)))
 
 ;; ─── Record actions ──────────────────────────────────────────────────────────

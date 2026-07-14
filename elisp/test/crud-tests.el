@@ -589,8 +589,11 @@ as an `unknown' marker (rendered as text) instead of erroring."
             (should (member "Board" titles))
             (should-not (member "Notes" titles))))))))
 
-(ert-deftest jetpacs-crud-install-first-time-writes-verbatim ()
-  "The first install of an id writes the document text unchanged."
+(ert-deftest jetpacs-crud-install-first-time-preserves-document ()
+  "The first install writes the document, adopting ids for the index.
+It skips the merge dance (no data loss) but does normalize the source with
+`:ID:'s so the vulpea extractor can index the table — structure and data
+are preserved verbatim around them."
   (jetpacs-crud-tests--with-clean-state
     (jetpacs-crud-tests--with-apps-dir dir
       (let ((file (expand-file-name "shop.org" dir))
@@ -598,7 +601,13 @@ as an `unknown' marker (rendered as text) instead of erroring."
                           "* Items\n:PROPERTIES:\n:COLTYPES: text\n:END:\n\n"
                           "| Item |\n|------|\n| Milk |\n")))
         (jetpacs-crud-install "shop" text)
-        (should (equal (jetpacs-crud-orgapp--slurp file) text))))))
+        (let ((written (jetpacs-crud-orgapp--slurp file)))
+          (should (string-match-p "#\\+JETPACS_APP: shop" written))
+          (should (string-match-p "^\\* Items" written))
+          (should (string-match-p ":COLTYPES: text" written))
+          (should (string-match-p "| Milk |" written))    ; table data intact
+          (when (jetpacs-crud--vulpea-p)                   ; ids adopted for the index
+            (should (string-match-p ":ID:" written))))))))
 
 (ert-deftest jetpacs-crud-install-keeps-old-on-bad-merge ()
   "A structurally invalid redeploy leaves the on-device document intact."
