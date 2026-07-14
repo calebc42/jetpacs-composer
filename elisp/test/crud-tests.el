@@ -126,22 +126,31 @@
             (push fields cases))))
       (nreverse cases))))
 
-(defun jetpacs-crud-tests--cell-pos (id view-name data-row col)
-  "Buffer position of DATA-ROW (1-based, header excluded) / COL's cell."
+(defun jetpacs-crud-tests--cell-args (id view-name data-row col)
+  "Wire args addressing DATA-ROW (1-based, header excluded) / COL's cell.
+The shape the renderer's cell nodes carry: logical (line, col) — the
+header is table line 1, so DATA-ROW n is line n+1 — plus the index pos
+as the optimistic hint."
   (let* ((spec (jetpacs-crud--app id))
          (view (jetpacs-crud--view spec view-name))
          (table (cdr (jetpacs-crud--source-table spec view)))
          (rows (cl-remove 'hline (plist-get table :rows))))
-    (cdr (nth (1- col) (nth data-row rows)))))
+    `((app . ,id) (view . ,view-name)
+      (line . ,(1+ data-row)) (col . ,col)
+      (pos . ,(cdr (nth (1- col) (nth data-row rows)))))))
 
-(defun jetpacs-crud-tests--item-pos (id view-name text)
-  "Position of the checklist item whose text is TEXT."
+(defun jetpacs-crud-tests--item-args (id view-name text)
+  "Wire args addressing the checklist item whose text is TEXT.
+The shape the renderer's toggle carries: (idx, text) + the pos hint."
   (let* ((spec (jetpacs-crud--app id))
          (view (jetpacs-crud--view spec view-name))
-         (source (jetpacs-crud--view-source spec view)))
-    (jetpacs-crud--with-source (car source)
-      (nth 2 (cl-find text (jetpacs-crud--scan-checklist (cdr source))
-                      :key #'cadr :test #'equal)))))
+         (source (jetpacs-crud--view-source spec view))
+         (items (jetpacs-crud--with-source (car source)
+                  (jetpacs-crud--scan-checklist (cdr source))))
+         (idx (cl-position text items :key #'cadr :test #'equal)))
+    `((app . ,id) (view . ,view-name)
+      (idx . ,idx) (text . ,text)
+      (pos . ,(nth 2 (nth idx items))))))
 
 (defun jetpacs-crud-tests--body-json (id view-name)
   "The serialized wire JSON of ID's VIEW-NAME body, as multibyte text.
@@ -674,10 +683,10 @@ Only for intentional wire changes; review the diff."
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--cell-pos "pantry" "inventory" 1 2)))
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 1 2)))
         (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "5")))
           (jetpacs-crud-action-cell-edit
-           `((app . "pantry") (view . "inventory") (pos . ,pos)) nil)))
+           args nil)))
       (should (string-match-p "| *Rice *| *5 *|"
                               (jetpacs-crud-tests--slurp file))))))
 
@@ -685,11 +694,11 @@ Only for intentional wire changes; review the diff."
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--cell-pos "pantry" "inventory" 1 2)))
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 1 2)))
         (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "many")))
           (should-error
            (jetpacs-crud-action-cell-edit
-            `((app . "pantry") (view . "inventory") (pos . ,pos)) nil)
+            args nil)
            :type 'user-error))
         ;; Unchanged on rejection.
         (should (string-match-p "| *Rice *| *2 *|"
@@ -699,23 +708,23 @@ Only for intentional wire changes; review the diff."
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--cell-pos "pantry" "inventory" 1 3)))
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 1 3)))
         (cl-letf (((symbol-function 'read-string)
                    (lambda (&rest _) "next tuesday")))
           (should-error
            (jetpacs-crud-action-cell-edit
-            `((app . "pantry") (view . "inventory") (pos . ,pos)) nil)
+            args nil)
            :type 'user-error))))))
 
 (ert-deftest jetpacs-crud-cell-edit-enum ()
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--cell-pos "pantry" "inventory" 1 4)))
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 1 4)))
         (cl-letf (((symbol-function 'completing-read)
                    (lambda (&rest _) "High")))
           (jetpacs-crud-action-cell-edit
-           `((app . "pantry") (view . "inventory") (pos . ,pos)) nil)))
+           args nil)))
       (should (string-match-p "| *Rice *| *2 *| *2026-09-01 *| *High *|"
                               (jetpacs-crud-tests--slurp file))))))
 
@@ -723,9 +732,9 @@ Only for intentional wire changes; review the diff."
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--cell-pos "pantry" "inventory" 1 5)))
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 1 5)))
         (jetpacs-crud-action-cell-toggle
-         `((app . "pantry") (view . "inventory") (pos . ,pos)) nil))
+         args nil))
       (should (string-match-p "| *Rice *|.*| *\\[X\\] *|"
                               (jetpacs-crud-tests--slurp file))))))
 
@@ -748,21 +757,21 @@ Only for intentional wire changes; review the diff."
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--cell-pos "pantry" "inventory" 2 1)))
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 2 1)))
         (cl-letf (((symbol-function 'completing-read)
                    (lambda (&rest _) "Delete row")))
           (jetpacs-crud-action-row-menu
-           `((app . "pantry") (view . "inventory") (pos . ,pos)) nil)))
+           args nil)))
       (should-not (string-match-p "Milk" (jetpacs-crud-tests--slurp file))))))
 
 (ert-deftest jetpacs-crud-checkbox-toggle ()
   (jetpacs-crud-tests--with-clean-state
     (let ((file (jetpacs-crud-tests--stage "pantry.org")))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--item-pos "pantry" "shopping"
+      (let ((args (jetpacs-crud-tests--item-args "pantry" "shopping"
                                                "Olive oil")))
         (jetpacs-crud-action-checkbox-toggle
-         `((app . "pantry") (view . "shopping") (pos . ,pos)) nil))
+         args nil))
       (should (string-match-p "- \\[X\\] Olive oil"
                               (jetpacs-crud-tests--slurp file))))))
 
@@ -775,6 +784,87 @@ Only for intentional wire changes; review the diff."
          '((app . "pantry") (view . "shopping")) nil))
       (should (string-match-p "- \\[X\\] Coffee\n- \\[ \\] Bread"
                               (jetpacs-crud-tests--slurp file))))))
+
+(defun jetpacs-crud-tests--edit-under (file fn)
+  "Simulate an external edit landing between a render and a tap:
+run FN in FILE's visiting buffer and save.  Positions any earlier
+render carried are stale afterwards; the index has NOT been refreshed."
+  (with-current-buffer (find-file-noselect file)
+    (org-with-wide-buffer (funcall fn))
+    (let ((save-silently t)) (save-buffer))))
+
+(ert-deftest jetpacs-crud-cell-edit-relocates-after-external-edit ()
+  "A stale tap edits the same LOGICAL cell after the table moved.
+The render-time args (their pos hint now pointing at prose) must land
+on Rice's Qty via live re-location, not on whatever sits at the old
+offset."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "pantry.org")))
+      (jetpacs-crud-register-file file)
+      (let ((args (jetpacs-crud-tests--cell-args "pantry" "inventory" 1 2)))
+        ;; The external edit: prose above the table shifts every offset.
+        (jetpacs-crud-tests--edit-under file
+          (lambda ()
+            (goto-char (point-min))
+            (search-forward "* Inventory")
+            (forward-line 1)
+            (insert "Some prose the phone has never seen.\n\n")))
+        (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "7")))
+          (jetpacs-crud-action-cell-edit args nil)))
+      (should (string-match-p "| *Rice *| *7 *|"
+                              (jetpacs-crud-tests--slurp file))))))
+
+(ert-deftest jetpacs-crud-cell-edit-vanished-row-errors-cleanly ()
+  "A tap addressing a row that no longer exists is a clean user-error.
+The file must be untouched — never a write to the wrong place."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "pantry.org")))
+      (jetpacs-crud-register-file file)
+      (let ((before (jetpacs-crud-tests--slurp file)))
+        (should-error
+         (jetpacs-crud-action-cell-edit
+          '((app . "pantry") (view . "inventory") (line . 99) (col . 2)) nil)
+         :type 'user-error)
+        (should (equal before (jetpacs-crud-tests--slurp file)))))))
+
+(ert-deftest jetpacs-crud-checkbox-toggle-relocates-after-external-edit ()
+  "A stale toggle finds its item by text after the list gained a row.
+An item inserted above shifts idx and pos; the carried text singles
+out the intended item — the new neighbour must stay untouched."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "pantry.org")))
+      (jetpacs-crud-register-file file)
+      (let ((args (jetpacs-crud-tests--item-args "pantry" "shopping"
+                                                 "Olive oil")))
+        (jetpacs-crud-tests--edit-under file
+          (lambda ()
+            (goto-char (point-min))
+            (search-forward "- [ ] Olive oil")
+            (beginning-of-line)
+            (insert "- [ ] Salt\n")))
+        (jetpacs-crud-action-checkbox-toggle args nil))
+      (let ((text (jetpacs-crud-tests--slurp file)))
+        (should (string-match-p "- \\[X\\] Olive oil" text))
+        (should (string-match-p "- \\[ \\] Salt" text))))))
+
+(ert-deftest jetpacs-crud-checkbox-toggle-moved-item-errors-cleanly ()
+  "A toggle whose item vanished (renamed underneath) is a clean error.
+Neither the renamed line nor any other item may flip."
+  (jetpacs-crud-tests--with-clean-state
+    (let ((file (jetpacs-crud-tests--stage "pantry.org")))
+      (jetpacs-crud-register-file file)
+      (let ((args (jetpacs-crud-tests--item-args "pantry" "shopping"
+                                                 "Olive oil")))
+        (jetpacs-crud-tests--edit-under file
+          (lambda ()
+            (goto-char (point-min))
+            (while (search-forward "Olive oil" nil t)
+              (replace-match "Olive oil (extra virgin)" t t))))
+        (should-error (jetpacs-crud-action-checkbox-toggle args nil)
+                      :type 'user-error))
+      (let ((text (jetpacs-crud-tests--slurp file)))
+        (should (string-match-p "- \\[ \\] Olive oil (extra virgin)" text))
+        (should (string-match-p "- \\[X\\] Coffee" text))))))
 
 (ert-deftest jetpacs-crud-row-add-into-scaffolded-backend ()
   (jetpacs-crud-tests--with-clean-state

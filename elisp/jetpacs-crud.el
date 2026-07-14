@@ -16,14 +16,16 @@
 ;; the closed `crud.*' action set below, and handlers resolve every file
 ;; from the registered spec rather than trusting paths off the wire.
 ;;
-;; Addressing contract: heading-family records address by their stable
-;; org `:ID:' (resolved live at mutation time — robust to offset shifts).
-;; Table cells and checklist items address by a position HINT from the
-;; fresh index: reads come from the vulpea index and every mutation ends
-;; in save + re-index + repush, so hints stay current between renders —
-;; but an external edit landing between a render and a tap can still
-;; stale one (full logical re-location is the documented deferred
-;; hardening in docs/PLAN-phase5-cleanup.md).
+;; Addressing contract: nothing on the wire is a raw offset anyone
+;; trusts.  Heading-family records address by their stable org `:ID:'
+;; (resolved live at mutation time).  Table cells address by org-table's
+;; own (line, col) coordinates, re-located live through the view's
+;; source table (`jetpacs-crud--table-cell-pos'); checklist items by
+;; (idx, text), verified before toggling
+;; (`jetpacs-crud--checklist-item-pos').  Index positions ride along as
+;; optimistic hints only.  A stale tap after an external edit either
+;; lands on the same logical cell/item or fails with a clean
+;; "pull to refresh" `user-error' — never a write to the wrong place.
 
 ;;; Code:
 
@@ -328,14 +330,21 @@ never the target source path."
          (picked (completing-read "Reference: " choices nil t nil nil initial)))
     (or (cdr (assoc picked choices)) "")))
 
-(defun jetpacs-crud--cell-node (spec view col cell &optional header)
-  "Build the table-cell node for CELL (TEXT . POS) at data column COL.
-HEADER cells are inert; body cells tap-edit (or tap-toggle for checkbox
-columns) and long-press for the row menu."
+(defun jetpacs-crud--cell-node (spec view line col cell &optional header)
+  "Build the table-cell node for CELL (TEXT . POS) at LINE / COL.
+LINE and COL are org-table's own coordinates (1-based; LINE counts
+non-rule rows, the header included) — the LOGICAL address the mutation
+side re-locates live (`jetpacs-crud--table-cell-pos'), so an external
+edit between a render and a tap can shift bytes without misdirecting
+the write.  POS rides along as an optimistic hint only.  HEADER cells
+are inert; body cells tap-edit (or tap-toggle for checkbox columns)
+and long-press for the row menu."
   (let* ((text (car cell))
          (pos (cdr cell))
          (args `((app . ,(plist-get spec :id))
                  (view . ,(plist-get view :name))
+                 (line . ,line)
+                 (col . ,col)
                  (pos . ,pos))))
     (jetpacs-table-cell
      (list (jetpacs-span (if header text
@@ -364,18 +373,20 @@ nil when every column is start-aligned (no wire noise)."
 The first non-rule row renders as the header."
   (let ((add-args `((app . ,(plist-get spec :id))
                     (view . ,(plist-get view :name))))
-        (header-seen nil))
+        (header-seen nil)
+        (line 0))
     (jetpacs-table
      (mapcar (lambda (row)
                (if (eq row 'hline)
                    (jetpacs-table-rule)
                  (let ((header (not header-seen)))
                    (setq header-seen t)
+                   (setq line (1+ line))
                    (jetpacs-table-row
                     (cl-loop for cell in row
                              for col from 1
                              collect (jetpacs-crud--cell-node
-                                      spec view col cell header))
+                                      spec view line col cell header))
                     :header header))))
              (plist-get table :rows))
      :aligns (jetpacs-crud--table-aligns view (plist-get table :ncols))
@@ -412,8 +423,13 @@ STATE is the checkbox character; POS the item's line start."
               items)))
     (nreverse items)))
 
-(defun jetpacs-crud--checklist-item-node (spec view item)
-  "The row node for checklist ITEM (STATE TEXT POS) of VIEW in SPEC."
+(defun jetpacs-crud--checklist-item-node (spec view idx item)
+  "The row node for checklist ITEM (STATE TEXT POS) of VIEW in SPEC.
+The toggle carries the LOGICAL address — IDX (the item's 0-based place
+in the scope's document order) plus its TEXT — with POS as an
+optimistic hint; the mutation side verifies before toggling
+\(`jetpacs-crud--checklist-item-pos'), so an external edit can never
+misdirect a toggle."
   (pcase-let ((`(,state ,text ,pos) item))
     (let ((done (member state '("x" "X"))))
       (jetpacs-row
@@ -425,6 +441,8 @@ STATE is the checkbox character; POS the item's line start."
         :on-tap (jetpacs-action "crud.checkbox.toggle"
                              :args `((app . ,(plist-get spec :id))
                                      (view . ,(plist-get view :name))
+                                     (idx . ,idx)
+                                     (text . ,text)
                                      (pos . ,pos)))
         :padding 4)
        (jetpacs-box
@@ -438,9 +456,10 @@ STATE is the checkbox character; POS the item's line start."
          (file (car source))
          (items (jetpacs-crud-vulpea-checklist file (cdr source))))
     (apply #'jetpacs-lazy-column
-           (or (mapcar (lambda (item)
-                         (jetpacs-crud--checklist-item-node spec view item))
-                       items)
+           (or (cl-loop for item in items
+                        for idx from 0
+                        collect (jetpacs-crud--checklist-item-node
+                                 spec view idx item))
                (list (jetpacs-empty-state
                       :icon "checklist"
                       :title "Nothing here yet"
@@ -1570,8 +1589,10 @@ The file comes from the registered spec, never from the wire, so a
 handler can only ever touch a declared source.  A record `id' on the wire
 is resolved to a live position in that source
 \(`jetpacs-crud--resolve-id-pos'), which is robust to external edits that
-shifted offsets; a bare `pos' (table cells, or an id-less caller) is used
-as-is.  Signals `user-error' on anything unknown."
+shifted offsets; a bare `pos' (an id-less caller) is used as-is — table
+cells and checklist items carry logical addresses instead and resolve
+through `jetpacs-crud--cell-args-pos' / `--checklist-item-pos'.
+Signals `user-error' on anything unknown."
   (let* ((appid (alist-get 'app args))
          (name (alist-get 'view args))
          (nid (alist-get 'id args))
@@ -1633,8 +1654,10 @@ phone are refreshed before the user can tap again."
     (or (car (nth (1- col) header)) (format "Column %d" col))))
 
 (defun jetpacs-crud-action-cell-edit (args _payload)
-  "Edit the table field at the tapped cell, typed by its column."
-  (pcase-let* ((`(,spec ,view ,file ,pos) (jetpacs-crud--resolve args t))
+  "Edit the table field at the tapped cell, typed by its column.
+The cell is addressed logically (line, col) and re-located live."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args))
+               (pos (jetpacs-crud--cell-args-pos spec view file args))
                (`(,col . ,current) (jetpacs-crud--cell-context file pos))
                (type (jetpacs-crud--coltype view col)))
     (if (eq type 'checkbox)
@@ -1646,8 +1669,10 @@ phone are refreshed before the user can tap again."
             (org-table-get-field nil (jetpacs-crud--sanitize-field input))))))))
 
 (defun jetpacs-crud-action-cell-toggle (args _payload)
-  "Toggle the checkbox-column field at the tapped cell."
-  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t))
+  "Toggle the checkbox-column field at the tapped cell.
+The cell is addressed logically (line, col) and re-located live."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args))
+               (pos (jetpacs-crud--cell-args-pos spec view file args))
                (`(,_col . ,current) (jetpacs-crud--cell-context file pos)))
     (let ((new (if (string-match-p "\\`\\[[xX]\\]\\'" current) "[ ]" "[X]")))
       (jetpacs-crud--table-mutate file pos
@@ -1659,6 +1684,44 @@ phone are refreshed before the user can tap again."
         (jetpacs-crud--find-table (cdr (jetpacs-crud--view-source spec view))))
       (user-error "No source table for %s.%s"
                   (plist-get spec :id) (plist-get view :name))))
+
+(defun jetpacs-crud--table-cell-pos (spec view file line col)
+  "Buffer position of the cell at LINE / COL in VIEW's source table.
+The logical-addressing resolver: the table is re-located LIVE at
+mutation time (`jetpacs-crud--locate-table' — the index positions the
+phone rendered from may be stale), then walked to its LINE-th non-rule
+row and that row's COL-th field.  LINE and COL are org-table's own
+1-based coordinates, the header row counting as line 1.  Signals a
+clean `user-error' when the addressed row or column no longer exists —
+a stale tap can never write to the wrong place."
+  (let ((table-pos (jetpacs-crud--locate-table spec view file)))
+    (jetpacs-crud--with-source file
+      (goto-char table-pos)
+      (let ((end (org-table-end))
+            (seen 0))
+        (while (and (< seen line) (< (point) end))
+          (unless (org-at-table-hline-p)
+            (setq seen (1+ seen)))
+          (when (< seen line) (forward-line 1)))
+        (unless (and (= seen line)
+                     (org-at-table-p)
+                     (not (org-at-table-hline-p)))
+          (user-error "Row moved — pull to refresh"))
+        (org-table-goto-column col)
+        (unless (= (org-table-current-column) col)
+          (user-error "Column moved — pull to refresh"))
+        (point)))))
+
+(defun jetpacs-crud--cell-args-pos (spec view file args)
+  "The buffer position wire ARGS address in VIEW's table.
+Logical (line, col) coordinates are authoritative and re-located live;
+a bare `pos' (an id-less legacy caller) is trusted as-is, as before."
+  (let ((line (alist-get 'line args))
+        (col (alist-get 'col args)))
+    (if (and (integerp line) (integerp col))
+        (jetpacs-crud--table-cell-pos spec view file line col)
+      (or (alist-get 'pos args)
+          (user-error "Missing cell address in %S" args)))))
 
 (defun jetpacs-crud-action-row-add (args _payload)
   "Append a row: one typed prompt per column, checkbox columns default [ ]."
@@ -1689,31 +1752,74 @@ phone are refreshed before the user can tap again."
                    (org-table-get-field nil value)))))))
 
 (defun jetpacs-crud-action-row-menu (args _payload)
-  "Long-press row menu: insert above, delete, or edit the cell."
-  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t)))
+  "Long-press row menu: insert above, delete, or edit the cell.
+The row is addressed logically (line, col) and re-located live."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args)))
     (pcase (completing-read "Row: "
                             '("Insert row above" "Delete row" "Edit cell")
                             nil t)
       ("Insert row above"
-       (jetpacs-crud--table-mutate file pos #'org-table-insert-row))
+       (jetpacs-crud--table-mutate
+        file (jetpacs-crud--cell-args-pos spec view file args)
+        #'org-table-insert-row))
       ("Delete row"
-       (jetpacs-crud--table-mutate file pos #'org-table-kill-row))
+       (jetpacs-crud--table-mutate
+        file (jetpacs-crud--cell-args-pos spec view file args)
+        #'org-table-kill-row))
       ("Edit cell"
        (jetpacs-crud-action-cell-edit args nil)))))
 
+(defun jetpacs-crud--checklist-item-pos (spec view file args)
+  "Position of the checklist item wire ARGS address in FILE, verified.
+The logical-addressing resolver: the `pos' hint is trusted only while
+its line still holds the carried TEXT; otherwise the scope is
+re-scanned live and the item found by its IDX (same text), then by a
+unique text match.  A miss is a clean `user-error' — a stale tap can
+never toggle the wrong item."
+  (let* ((idx (alist-get 'idx args))
+         (text (alist-get 'text args))
+         (pos (alist-get 'pos args))
+         (heading (cdr (jetpacs-crud--view-source spec view))))
+    (jetpacs-crud--with-source file
+      (or
+       ;; Fast path: the hint still points at the very item.
+       (and (integerp pos) (stringp text)
+            (<= (point-min) pos (point-max))
+            (save-excursion
+              (goto-char pos)
+              (beginning-of-line)
+              (and (looking-at jetpacs-crud--checkbox-item-re)
+                   (equal (match-string-no-properties 2) text)
+                   (line-beginning-position))))
+       ;; Re-locate: the item at the same index, bearing the same text.
+       (and (stringp text)
+            (progn (goto-char (point-min)) t)
+            (let ((items (jetpacs-crud--scan-checklist heading)))
+              (or (let ((cand (and (integerp idx) (nth idx items))))
+                    (and cand (equal (cadr cand) text) (caddr cand)))
+                  ;; The item moved but its text is unambiguous in scope.
+                  (let ((matches (cl-remove-if-not
+                                  (lambda (it) (equal (cadr it) text))
+                                  items)))
+                    (and (= (length matches) 1) (caddr (car matches)))))))
+       ;; An id-less legacy caller carrying only a raw pos: as before.
+       (and (integerp pos) (not (stringp text)) pos)
+       (user-error "Item moved — pull to refresh")))))
+
 (defun jetpacs-crud-action-checkbox-toggle (args _payload)
-  "Toggle the checklist item at the tapped position."
-  (pcase-let* ((`(,_spec ,_view ,file ,pos) (jetpacs-crud--resolve args t)))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (goto-char pos)
-       (unless (looking-at-p jetpacs-crud--checkbox-item-re)
-         (user-error "No checkbox item at position %s" pos))
-       (org-toggle-checkbox))
-      (let ((save-silently t))
-        (save-buffer)))
-    (jetpacs-crud--reindex file)
-    (jetpacs-shell-push)))
+  "Toggle the addressed checklist item (logical, verified addressing)."
+  (pcase-let* ((`(,spec ,view ,file ,_pos) (jetpacs-crud--resolve args)))
+    (let ((pos (jetpacs-crud--checklist-item-pos spec view file args)))
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (goto-char pos)
+         (unless (looking-at-p jetpacs-crud--checkbox-item-re)
+           (user-error "No checkbox item at position %s" pos))
+         (org-toggle-checkbox))
+        (let ((save-silently t))
+          (save-buffer)))
+      (jetpacs-crud--reindex file)
+      (jetpacs-shell-push))))
 
 (defun jetpacs-crud--action-apply-at-point (token options)
   "Apply closed action TOKEN with OPTIONS at the current org entry."

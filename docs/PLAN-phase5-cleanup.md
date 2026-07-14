@@ -142,15 +142,15 @@ degradation, `#+JETPACS_DEPENDS:`, device setup). Do a consolidated pass:
 
 ## Deferred items (decide whether to pull into Phase 5 or leave)
 
-1. **Table/checklist logical addressing.** Today cell/checkbox mutations
-   address by a `pos` hint from the fresh index (reindex-on-write keeps it
-   current), which is robust between renders but not against an external
-   edit landing between a render and a tap. The plan's full design carries
-   `(view, tbl-index, heading, row, col)` and re-locates via
-   `jetpacs-crud--locate-table` + `org-table-goto-line/column`, with the
-   checklist verifying `(ordinal, text)`. Wire shape would change →
-   regenerate goldens. Records already have the analogous id-hardening
-   (`jetpacs-crud--resolve-id-pos`); this is the table equivalent.
+1. ~~**Table/checklist logical addressing.**~~ **RESOLVED 2026-07-13.**
+   Cells carry org-table's own `(line, col)` (header = line 1) and are
+   re-located live at mutation time (`jetpacs-crud--table-cell-pos` over
+   `--locate-table`; the view renders the first table in scope, so no
+   tbl-index is needed); checklist toggles carry `(idx, text)` verified
+   by `--checklist-item-pos` (pos fast-path → idx+text re-scan → unique
+   text match → clean "Item moved — pull to refresh"). Index positions
+   ride as hints only. Goldens regenerated (diff = arg shape only);
+   four staleness tests pin relocation and the clean-error paths.
 
 2. **On-device smoke (Phase 4 leftover — needs hardware).** Documented
    procedure for a fresh device: composer "Setup device" (the Phase-1
