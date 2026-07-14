@@ -1023,11 +1023,15 @@ Reset on `jetpacs-shell-refresh-hook' so installing vulpea mid-session
 and pulling to refresh lights notes views up without a restart.")
 
 (defun jetpacs-crud--vulpea-p ()
-  "Non-nil when vulpea is installed and its note database is usable."
+  "Non-nil when vulpea is installed and its note database is usable.
+The first time vulpea is detected, the tables+checklist extractor is
+registered (`jetpacs-crud-vulpea--register-extractor')."
   (when (eq jetpacs-crud--vulpea 'unknown)
     (setq jetpacs-crud--vulpea (and (require 'vulpea nil t)
                                     (fboundp 'vulpea-db-query)
-                                    t)))
+                                    t))
+    (when jetpacs-crud--vulpea
+      (jetpacs-crud-vulpea--register-extractor)))
   jetpacs-crud--vulpea)
 
 (add-hook 'jetpacs-shell-refresh-hook
@@ -1390,6 +1394,205 @@ Taps carry the stable note `:ID:' and fire the `crud.note.*' actions."
                         :caption (if (plist-get view :filter)
                                      "Nothing matches the view's filter"
                                    "Tap + to add the first note"))))))))
+
+;; ─── Tables & checklists: the vulpea extractor ──────────────────────────────
+;;
+;; `table' and `checklist' kinds have no org `:ID:' to hang on, so they ride
+;; a vulpea PLUGIN EXTRACTOR instead: when vulpea indexes a source file, the
+;; extractor walks its AST once (on the file-level note pass) and records
+;; every org table and checkbox item into two plugin tables keyed to the
+;; file-level note id.  The `:on-delete :cascade' foreign key means a
+;; re-index (which deletes and re-inserts the file's notes) drops the old
+;; rows for free.  The readers below return the exact shapes the table and
+;; checklist renderers already consume, so the bodies just swap their file
+;; scan for a DB read.  Requires a file-level `:ID:' on the source (vulpea
+;; only indexes files that have one) — `jetpacs-crud-vulpea-ensure-source'
+;; adopts it.
+
+(declare-function vulpea-db "vulpea-db" ())
+(declare-function vulpea-db-register-extractor "vulpea-db-extract"
+                  (extractor-or-name &optional fn))
+(declare-function make-vulpea-extractor "vulpea-db-extract" (&rest slots))
+(declare-function vulpea-parse-ctx-ast "vulpea-db-extract" (ctx))
+(declare-function vulpea-parse-ctx-file-node "vulpea-db-extract" (ctx))
+(declare-function emacsql "emacsql" (db sql &rest args))
+
+(defconst jetpacs-crud-vulpea--extractor-version 1
+  "Schema/behaviour version of the jetpacs tables+checklist extractor.
+Bump to force a rebuild of the plugin tables on the next sync.")
+
+(defvar jetpacs-crud-vulpea--extractor-registered nil
+  "Non-nil once the jetpacs extractor is registered in this session.")
+
+(defun jetpacs-crud-vulpea--ancestor-heading (element)
+  "The nearest ancestor headline's raw title for org-element ELEMENT, or nil."
+  (let ((hl (org-element-lineage element '(headline))))
+    (and hl (org-element-property :raw-value hl))))
+
+(defun jetpacs-crud-vulpea--plain (s)
+  "S trimmed and stripped of text properties.
+`org-element-interpret-data' returns propertized strings whose properties
+reference AST nodes — unreadable `#<…>' objects that break emacsql's
+prin1/read storage.  Store plain text only."
+  (substring-no-properties (string-trim (or s ""))))
+
+(defun jetpacs-crud-vulpea--cell-text (cell)
+  "The trimmed, property-free text of org-element table-CELL, from the AST."
+  (jetpacs-crud-vulpea--plain
+   (org-element-interpret-data (org-element-contents cell))))
+
+(defun jetpacs-crud-vulpea--table-rows (table)
+  "Rows of org-element TABLE: `hline', or a list of (TEXT . POS) cells.
+POS is the cell's content start (a hint; mutation re-locates by row/col)."
+  (org-element-map table 'table-row
+    (lambda (row)
+      (if (eq (org-element-property :type row) 'rule)
+          'hline
+        (org-element-map row 'table-cell
+          (lambda (cell)
+            (cons (jetpacs-crud-vulpea--cell-text cell)
+                  (org-element-property :contents-begin cell))))))))
+
+(defun jetpacs-crud-vulpea--item-text (item)
+  "The trimmed, property-free text of a checkbox org-element ITEM."
+  (let ((para (org-element-map item 'paragraph #'identity nil t)))
+    (if para
+        (jetpacs-crud-vulpea--plain
+         (org-element-interpret-data (org-element-contents para)))
+      "")))
+
+(defun jetpacs-crud-vulpea--encode-rows (rows)
+  "Encode ROWS (`hline' / (TEXT . POS) lists) to JSON via the native encoder.
+Each row is the string \"hline\" or an array of [text, pos] pairs.  Uses
+`json-serialize' (a subr — no `json' library, and consistent with the
+`json-parse-string' decoder)."
+  (json-serialize
+   (vconcat
+    (mapcar (lambda (r)
+              (if (eq r 'hline) "hline"
+                (vconcat (mapcar (lambda (c) (vector (car c) (cdr c))) r))))
+            rows))))
+
+(defun jetpacs-crud-vulpea--decode-rows (json)
+  "Decode JSON (from `jetpacs-crud-vulpea--encode-rows') back to :rows shape."
+  (mapcar (lambda (r)
+            (if (stringp r) 'hline
+              (mapcar (lambda (c) (cons (nth 0 c) (nth 1 c))) r)))
+          (json-parse-string json :array-type 'list)))
+
+(defun jetpacs-crud-vulpea--extract (ctx data)
+  "vulpea extractor: index this file's org tables and checkbox items.
+Acts once per file — on the file-level note pass, detected by DATA's id
+matching the context's file node — and keys every row to that file-level
+note id.  Returns DATA unchanged (a side-effecting extractor)."
+  (let* ((file-node (vulpea-parse-ctx-file-node ctx))
+         (file-id (plist-get file-node :id)))
+    (when (and file-id (equal (plist-get data :id) file-id))
+      (let ((db (vulpea-db))
+            (ast (vulpea-parse-ctx-ast ctx))
+            (tbl-index -1)
+            (ordinal -1))
+        (org-element-map ast 'table
+          (lambda (table)
+            (when (eq (org-element-property :type table) 'org)
+              (let* ((rows (jetpacs-crud-vulpea--table-rows table))
+                     (ncols (apply #'max 0
+                                   (mapcar (lambda (r) (if (listp r) (length r) 0))
+                                           rows))))
+                (cl-incf tbl-index)
+                (emacsql db [:insert :into jetpacs-tables :values $v1]
+                         (vector file-id
+                                 (jetpacs-crud-vulpea--ancestor-heading table)
+                                 tbl-index
+                                 (org-element-property :begin table)
+                                 ncols
+                                 (jetpacs-crud-vulpea--encode-rows rows)))))))
+        (org-element-map ast 'item
+          (lambda (item)
+            (when (org-element-property :checkbox item)
+              (cl-incf ordinal)
+              (emacsql db [:insert :into jetpacs-checklist :values $v1]
+                       (vector file-id
+                               (jetpacs-crud-vulpea--ancestor-heading item)
+                               ordinal
+                               (pcase (org-element-property :checkbox item)
+                                 ('on "X") ('trans "-") (_ " "))
+                               (jetpacs-crud-vulpea--item-text item)
+                               (org-element-property :begin item))))))))
+    data))
+
+(defun jetpacs-crud-vulpea--register-extractor ()
+  "Register the jetpacs tables+checklist extractor with vulpea (idempotent).
+Creates the plugin tables (via the extractor `:schema') and installs the
+extractor; re-registering the same name replaces it, so this is safe to
+call repeatedly (e.g. after a refresh-hook re-probe)."
+  (when (and (fboundp 'vulpea-db-register-extractor)
+             (not jetpacs-crud-vulpea--extractor-registered))
+    (vulpea-db-register-extractor
+     (make-vulpea-extractor
+      :name 'jetpacs-crud
+      :version jetpacs-crud-vulpea--extractor-version
+      :priority 100
+      :schema '((jetpacs-tables
+                 [(note-id :not-null) heading tbl-index begin ncols rows-json]
+                 (:foreign-key [note-id] :references notes [id]
+                  :on-delete :cascade))
+                (jetpacs-checklist
+                 [(note-id :not-null) heading ordinal state item-text pos]
+                 (:foreign-key [note-id] :references notes [id]
+                  :on-delete :cascade)))
+      :extract-fn #'jetpacs-crud-vulpea--extract))
+    (setq jetpacs-crud-vulpea--extractor-registered t)))
+
+(defun jetpacs-crud-vulpea--file-note-id (file)
+  "The vulpea id of FILE's file-level note, or nil.
+The plugin rows are keyed to this id; resolving it first keeps the plugin
+queries simple (no nested subquery) and correctly parameterized."
+  (caar (emacsql (vulpea-db)
+                 [:select id :from notes
+                  :where (and (= path $s1) (= level 0))]
+                 (expand-file-name file))))
+
+(defun jetpacs-crud-vulpea-tables (file heading)
+  "Org tables indexed for FILE under HEADING (nil = file scope).
+Returns a list of scan plists (:begin :ncols :rows) — the shape
+`jetpacs-crud--table-node' consumes — in document order."
+  (when-let (((jetpacs-crud--vulpea-p))
+             (nid (jetpacs-crud-vulpea--file-note-id file)))
+    (let ((rows (if heading
+                    (emacsql (vulpea-db)
+                             [:select [begin ncols rows-json] :from jetpacs-tables
+                              :where (and (= note-id $s1) (= heading $s2))
+                              :order-by [(asc tbl-index)]]
+                             nid heading)
+                  (emacsql (vulpea-db)
+                           [:select [begin ncols rows-json] :from jetpacs-tables
+                            :where (and (= note-id $s1) (is heading nil))
+                            :order-by [(asc tbl-index)]]
+                           nid))))
+      (mapcar (lambda (r)
+                (list :begin (nth 0 r)
+                      :ncols (nth 1 r)
+                      :rows (jetpacs-crud-vulpea--decode-rows (nth 2 r))))
+              rows))))
+
+(defun jetpacs-crud-vulpea-checklist (file heading)
+  "Checkbox items indexed for FILE under HEADING (nil = file scope).
+Returns a list of (STATE TEXT POS), the shape
+`jetpacs-crud--checklist-item-node' consumes, in document order."
+  (when-let (((jetpacs-crud--vulpea-p))
+             (nid (jetpacs-crud-vulpea--file-note-id file)))
+    (if heading
+        (emacsql (vulpea-db)
+                 [:select [state item-text pos] :from jetpacs-checklist
+                  :where (and (= note-id $s1) (= heading $s2))
+                  :order-by [(asc ordinal)]]
+                 nid heading)
+      (emacsql (vulpea-db)
+               [:select [state item-text pos] :from jetpacs-checklist
+                :where (and (= note-id $s1) (is heading nil))
+                :order-by [(asc ordinal)]]
+               nid))))
 
 ;; ─── Datasource kinds (the dispatch registry) ────────────────────────────────
 ;;

@@ -1528,6 +1528,58 @@ Drives the register-time normalization over a real, isolated vulpea index
         (when (and (boundp 'vulpea-db--connection) vulpea-db--connection)
           (vulpea-db-close))))))
 
+(ert-deftest jetpacs-crud-vulpea-extractor-indexes-tables-and-checklists ()
+  "The plugin extractor indexes org tables and checkboxes into readable rows.
+Drives a real index over an isolated vulpea db (skipped without vulpea)."
+  (skip-unless (require 'vulpea nil t))
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((jetpacs-crud--vulpea 'unknown)
+           (jetpacs-crud-vulpea--extractor-registered nil)
+           (root (make-temp-file "jetpacs-ex" t))
+           (vault (expand-file-name "vault/" root))
+           (vulpea-directory vault)
+           (vulpea-db-location (expand-file-name "vulpea.db" root))
+           (vulpea-db--connection nil)
+           (src (expand-file-name "app.org" vault)))
+      (push root jetpacs-crud-tests--temp-dirs)
+      (make-directory vault t)
+      (with-temp-file src
+        (insert ":PROPERTIES:\n:ID: aaaaaaaa-0000-0000-0000-000000000001\n:END:\n"
+                "#+TITLE: Demo\n\n"
+                "* Inventory\n"
+                "| Item | Qty |\n|------+-----|\n| Rice | 2 |\n| Milk | 1 |\n\n"
+                "* Shopping\n- [ ] eggs\n- [X] bread\n"))
+      (unwind-protect
+          (progn
+            (vulpea-db)
+            (should (jetpacs-crud--vulpea-p))      ; registers the extractor
+            (vulpea-db-update-file src)
+            ;; Tables: the reader returns the scan-plist shape, cells intact.
+            (let* ((tables (jetpacs-crud-vulpea-tables src "Inventory"))
+                   (tbl (car tables))
+                   (rows (plist-get tbl :rows)))
+              (should (= (length tables) 1))
+              (should (= (plist-get tbl :ncols) 2))
+              (should (equal (mapcar #'car (nth 0 rows)) '("Item" "Qty")))  ; header
+              (should (eq (nth 1 rows) 'hline))
+              (should (equal (mapcar #'car (nth 2 rows)) '("Rice" "2")))
+              ;; The pos hint points at the cell text in the file.
+              (let ((cell (car (nth 2 rows))))
+                (with-temp-buffer
+                  (insert-file-contents src)
+                  (goto-char (cdr cell))
+                  (should (looking-at-p "Rice")))))
+            ;; Checklist: (STATE TEXT POS) tuples in document order.
+            (let ((items (jetpacs-crud-vulpea-checklist src "Shopping")))
+              (should (equal (mapcar (lambda (i) (list (nth 0 i) (nth 1 i))) items)
+                             '((" " "eggs") ("X" "bread")))))
+            ;; Degrades: readers yield nil when vulpea is absent.
+            (let ((jetpacs-crud--vulpea nil))
+              (should-not (jetpacs-crud-vulpea-tables src "Inventory"))
+              (should-not (jetpacs-crud-vulpea-checklist src "Shopping"))))
+        (when (and (boundp 'vulpea-db--connection) vulpea-db--connection)
+          (vulpea-db-close))))))
+
 (ert-deftest jetpacs-crud-test-app-parity ()
   "Parse the shared app-parity.org fixture to ensure parser parity."
   (jetpacs-crud-tests--with-clean-state
