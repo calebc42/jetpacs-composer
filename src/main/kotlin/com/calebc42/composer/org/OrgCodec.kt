@@ -9,7 +9,9 @@ import com.calebc42.composer.model.ChecklistItem
 import com.calebc42.composer.model.ColType
 import com.calebc42.composer.model.DateReminderRule
 import com.calebc42.composer.model.DashboardMetric
+import com.calebc42.composer.model.PackRef
 import com.calebc42.composer.model.SchemaField
+import com.calebc42.composer.model.usesPackFeatures
 import com.calebc42.composer.model.SourceRef
 import com.calebc42.composer.model.TodoKeyword
 import com.calebc42.composer.model.ViewKind
@@ -28,14 +30,23 @@ import com.calebc42.composer.model.ContractManifest
  */
 object OrgCodec : OrgAppCodec {
 
-    const val FORMAT_VERSION = 3
+    /** Highest accepted format; anything above is a clear rejection. */
+    const val FORMAT_VERSION = 4
+
+    /**
+     * What the writer stamps: [BASE_FORMAT_VERSION] for documents with no
+     * pack feature (they keep opening on pre-pack runtimes),
+     * [FORMAT_VERSION] exactly when a `#+JETPACS_PACK:` declaration or a
+     * `pack:` source/action is present.
+     */
+    const val BASE_FORMAT_VERSION = 3
 
     class FormatException(message: String) : Exception(message)
 
     // ─── Parsing ─────────────────────────────────────────────────────────
 
     private val KEYWORD_RE =
-        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|JETPACS_INBOX|JETPACS_DEPENDS|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
+        Regex("""^#\+(JETPACS_APP|JETPACS_ICON|JETPACS_ORDER|JETPACS_APP_FORMAT|JETPACS_INBOX|JETPACS_DEPENDS|JETPACS_PACK|TITLE|TODO|TAGS):\s*(.*?)\s*$""",
               RegexOption.IGNORE_CASE)
     private val HEADING_RE = Regex("""^\* +(.*?)\s*$""")
     private val DRAWER_START_RE = Regex("""^\s*:PROPERTIES:\s*$""", RegexOption.IGNORE_CASE)
@@ -80,6 +91,13 @@ object OrgCodec : OrgAppCodec {
         val depends = keywords["JETPACS_DEPENDS"]?.let { raw ->
             raw.split(Regex("\\s+")).filter { it.isNotEmpty() }
         } ?: emptyList()
+        val pack = keywords["JETPACS_PACK"]?.let { raw ->
+            val parts = raw.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (parts.isEmpty() || parts.size > 2 || !AppSpec.ID_RE.matches(parts[0]))
+                throw FormatException(
+                    "JETPACS_PACK must be \"<pack-id> [min-version]\", got \"$raw\"")
+            PackRef(parts[0], parts.getOrNull(1))
+        }
 
         val views = mutableListOf<ViewSpec>()
         var i = 0
@@ -110,6 +128,7 @@ object OrgCodec : OrgAppCodec {
             tags = tags,
             inbox = keywords["JETPACS_INBOX"]?.trim()?.ifEmpty { null },
             depends = depends,
+            pack = pack,
             views = views,
         )
     }
@@ -414,13 +433,18 @@ object OrgCodec : OrgAppCodec {
 
     override fun write(spec: AppSpec): String = buildString {
         appendLine("#+JETPACS_APP: ${spec.id}")
-        appendLine("#+JETPACS_APP_FORMAT: $FORMAT_VERSION")
+        appendLine("#+JETPACS_APP_FORMAT: ${
+            if (spec.usesPackFeatures()) FORMAT_VERSION else BASE_FORMAT_VERSION}")
         spec.label?.let { appendLine("#+TITLE: $it") }
         spec.icon?.let { appendLine("#+JETPACS_ICON: $it") }
         spec.order?.let { appendLine("#+JETPACS_ORDER: $it") }
         spec.inbox?.let { appendLine("#+JETPACS_INBOX: $it") }
         if (spec.depends.isNotEmpty())
             appendLine("#+JETPACS_DEPENDS: ${spec.depends.joinToString(" ")}")
+        spec.pack?.let {
+            appendLine("#+JETPACS_PACK: ${it.packId}" +
+                       (it.minVersion?.let { v -> " $v" } ?: ""))
+        }
         if (spec.todoSequence.isNotEmpty()) {
             val active = spec.todoSequence.filter { !it.isDone }.joinToString(" ") { it.keyword }
             val done = spec.todoSequence.filter { it.isDone }.joinToString(" ") { it.keyword }

@@ -296,15 +296,28 @@ as an `unknown' marker (rendered as text) instead of erroring."
 ;; ─── Pack + unknown sources (S4.0: preserve, degrade, fail closed) ──────────
 
 (ert-deftest jetpacs-crud-parse-pack-source ()
-  "A well-formed pack: source parses to its (:pack ID :source NAME) shape."
+  "A well-formed pack: source parses to its (:pack ID :source NAME) shape,
+and the FORMAT-4 `#+JETPACS_PACK:' declaration lands on the spec."
   (let* ((spec (jetpacs-crud-parse-app
                 (expand-file-name "parser-parity-pack.org"
                                   jetpacs-crud-tests--fixtures)))
          (view (car (plist-get spec :views))))
+    (should (equal (plist-get spec :pack)
+                   '(:id "glasspane" :min-version "1.0.0")))
     (should (equal (plist-get view :source)
                    '(:pack "glasspane" :source "glasspane.notes")))
     (should (equal (plist-get view :actions)
                    "pack:glasspane/heading.todo-cycle todo(DONE)"))))
+
+(ert-deftest jetpacs-crud-parse-pack-keyword-without-min-version ()
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir _dir
+      (jetpacs-crud-install
+       "packless"
+       (concat "#+JETPACS_APP: packless\n#+JETPACS_PACK: somepack\n\n"
+               "* V\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM\n:END:\n"))
+      (should (equal (plist-get (jetpacs-crud--app "packless") :pack)
+                     '(:id "somepack" :min-version nil))))))
 
 (ert-deftest jetpacs-crud-parse-unknown-source-scheme ()
   "A source scheme this runtime doesn't know is preserved, not rejected."

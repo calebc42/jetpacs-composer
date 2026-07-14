@@ -412,6 +412,8 @@ class OrgCodecTest {
     fun packReferencesRoundTripByteFaithfully() {
         val text = fixture("parser-parity-pack.org")
         val spec = OrgCodec.parse(text)
+        assertEquals(com.calebc42.composer.model.PackRef("glasspane", "1.0.0"),
+                     spec.pack)
         val view = spec.views.single()
         assertEquals(
             com.calebc42.composer.model.SourceRef.Pack("glasspane", "glasspane.notes"),
@@ -470,9 +472,49 @@ class OrgCodecTest {
         val spec = OrgCodec.parse(fixture("pantry.org"))
         val text = OrgCodec.write(spec)
         assertTrue(text.startsWith("#+JETPACS_APP: pantry\n"))
-        assertTrue("#+JETPACS_APP_FORMAT: ${OrgCodec.FORMAT_VERSION}\n" in text)
+        assertTrue("#+JETPACS_APP_FORMAT: ${OrgCodec.BASE_FORMAT_VERSION}\n" in text)
         assertTrue(":COLTYPES: text number date enum(Low,Mid,High) checkbox" in text)
         assertTrue("| Rice | 2   | 2026-09-01 | Mid   | [ ]     |" in text)
+    }
+
+    /**
+     * Emit-gating: a pack-free document stays at the base version so it
+     * keeps opening on pre-pack runtimes; any pack feature — the
+     * declaration, a pack source, or a pack action — bumps the stamp to 4.
+     */
+    @Test
+    fun writerStampsFormat4ExactlyOnPackBackedDocuments() {
+        fun stampOf(text: String): String =
+            Regex("""#\+JETPACS_APP_FORMAT: (\d+)""")
+                .find(OrgCodec.write(OrgCodec.parse(text)))!!.groupValues[1]
+
+        assertEquals("3", stampOf(fixture("pantry.org")))
+        assertEquals("3", stampOf(fixture("hello-world.org")))
+        assertEquals("4", stampOf(fixture("parser-parity-pack.org")))
+        // Each pack feature alone is enough.
+        val body = "\n* V\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM\n:END:\n"
+        assertEquals("4", stampOf(
+            "#+JETPACS_APP: a\n#+JETPACS_PACK: somepack$body"))
+        assertEquals("4", stampOf(
+            "#+JETPACS_APP: b\n\n* V\n:PROPERTIES:\n:KIND: records\n" +
+                ":SOURCE: pack:p/s\n:SCHEMA: %ITEM\n:END:\n"))
+        assertEquals("4", stampOf(
+            "#+JETPACS_APP: c\n\n* V\n:PROPERTIES:\n:KIND: records\n" +
+                ":SCHEMA: %ITEM\n:ACTIONS: pack:p/a.b\n:END:\n"))
+    }
+
+    @Test
+    fun packDeclarationParsesWithAndWithoutMinVersion() {
+        val body = "\n* V\n:PROPERTIES:\n:KIND: records\n:SCHEMA: %ITEM\n:END:\n"
+        assertEquals(
+            com.calebc42.composer.model.PackRef("glasspane", "1.0.0"),
+            OrgCodec.parse("#+JETPACS_APP: a\n#+JETPACS_PACK: glasspane 1.0.0$body").pack)
+        assertEquals(
+            com.calebc42.composer.model.PackRef("glasspane"),
+            OrgCodec.parse("#+JETPACS_APP: a\n#+JETPACS_PACK: glasspane$body").pack)
+        assertFailsWith<OrgCodec.FormatException> {
+            OrgCodec.parse("#+JETPACS_APP: a\n#+JETPACS_PACK: Bad Id Extra$body")
+        }
     }
 
     /**
@@ -490,6 +532,10 @@ class OrgCodecTest {
             "#+JETPACS_APP: one\n#+JETPACS_APP_FORMAT: 1$body").id)
         assertEquals("two", OrgCodec.parse(
             "#+JETPACS_APP: two\n#+JETPACS_APP_FORMAT: 2$body").id)
+        assertEquals("three", OrgCodec.parse(
+            "#+JETPACS_APP: three\n#+JETPACS_APP_FORMAT: 3$body").id)
+        assertEquals("four", OrgCodec.parse(
+            "#+JETPACS_APP: four\n#+JETPACS_APP_FORMAT: 4$body").id)
         assertFailsWith<OrgCodec.FormatException> {
             OrgCodec.parse(
                 "#+JETPACS_APP: future\n#+JETPACS_APP_FORMAT: ${OrgCodec.FORMAT_VERSION + 1}$body")

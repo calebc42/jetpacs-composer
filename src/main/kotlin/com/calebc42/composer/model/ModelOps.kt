@@ -98,6 +98,26 @@ object ModelOps {
             if (i == index) transform(v) else v
         })
 
+    /**
+     * Give a document that references a pack its `#+JETPACS_PACK:`
+     * declaration when it has none: the first referenced pack id, with the
+     * installed manifest's version as the minimum when one is available.
+     * A document with an explicit declaration is left alone; so is one
+     * with no pack references. The editor runs this after every edit so a
+     * picker-inserted (or hand-typed) reference always exports declared.
+     */
+    fun autoDeclarePack(spec: AppSpec, packs: PackRegistry): AppSpec {
+        if (spec.pack != null) return spec
+        val referenced = spec.views.firstNotNullOfOrNull { view ->
+            (view.source as? SourceRef.Pack)?.packId
+                ?: view.actions.filterIsInstance<ActionDef.PackAction>()
+                    .firstOrNull()?.packId
+        } ?: return spec
+        if (!AppSpec.ID_RE.matches(referenced)) return spec
+        return spec.copy(
+            pack = PackRef(referenced, packs.byId(referenced)?.pack_version))
+    }
+
     // ─── The view's datasource table ─────────────────────────────────────
 
     fun firstTable(view: ViewSpec): BodyElement.Table? =
@@ -310,6 +330,23 @@ object ModelOps {
             add(Problem("Quick-capture inbox cannot be blank"))
         if (spec.inbox?.replace('\\', '/')?.endsWith('/') == true)
             add(Problem("Quick-capture inbox must be an org file, not a directory"))
+        if (spec.pack == null && spec.usesPackFeatures())
+            add(Problem(
+                "This app uses pack: references but declares no " +
+                    "#+JETPACS_PACK: — declare the pack (id + minimum " +
+                    "version) so devices know what to install",
+                severity = Severity.Warning,
+            ))
+        packs?.let { registry ->
+            spec.pack?.let { declared ->
+                if (registry.byId(declared.packId) == null)
+                    add(Problem(
+                        "No installed pack manifest for the declared pack " +
+                            "\"${declared.packId}\"",
+                        severity = Severity.Warning,
+                    ))
+            }
+        }
         val slugs = spec.views.map { it.name }
         val liveViews = slugs.toSet()
         slugs.groupBy { it }.filter { it.value.size > 1 }.keys.forEach {

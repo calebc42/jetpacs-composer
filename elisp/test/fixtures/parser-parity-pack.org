@@ -1,5 +1,6 @@
 #+JETPACS_APP: packdemo
-#+JETPACS_APP_FORMAT: 3
+#+JETPACS_APP_FORMAT: 4
+#+JETPACS_PACK: glasspane 1.0.0
 
 * Linked notes
 :PROPERTIES:

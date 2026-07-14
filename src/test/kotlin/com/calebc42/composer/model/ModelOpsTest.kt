@@ -405,10 +405,11 @@ class ModelOpsTest {
     fun packReferencesAreCheckedAgainstInstalledManifestsAsWarnings() {
         val registry = PackRegistry.load(null)  // the vendored glasspane manifest
 
-        // A reference the manifest declares: silent.
+        // A declared reference the manifest also declares: silent.
         assertTrue(ModelOps.validate(
             packApp(source = SourceRef.Pack("glasspane", "glasspane.notes"),
-                    action = ActionDef.PackAction("glasspane", "heading.schedule")),
+                    action = ActionDef.PackAction("glasspane", "heading.schedule"))
+                .copy(pack = PackRef("glasspane", "1.0.0")),
             packs = registry,
         ).none { "pack" in it.message.lowercase() })
 
@@ -430,5 +431,34 @@ class ModelOpsTest {
         assertTrue(ModelOps.validate(
             packApp(source = SourceRef.Pack("glasspane", "glasspane.bogus")),
         ).none { "glasspane.bogus" in it.message })
+    }
+
+    @Test
+    fun autoDeclarePackDeclaresTheReferencedPackOnce() {
+        val registry = PackRegistry.load(null)
+        val undeclared = packApp(source = SourceRef.Pack("glasspane", "glasspane.notes"))
+        // The editor's post-edit pass declares the referenced pack with the
+        // installed manifest's version as the minimum.
+        val declared = ModelOps.autoDeclarePack(undeclared, registry)
+        assertEquals(PackRef("glasspane", "1.0.0"), declared.pack)
+        // Idempotent; an explicit declaration is never overwritten.
+        val pinned = declared.copy(pack = PackRef("glasspane", "0.9"))
+        assertEquals(pinned, ModelOps.autoDeclarePack(pinned, registry))
+        // No references, no declaration.
+        assertEquals(base, ModelOps.autoDeclarePack(base, registry))
+        // An uninstalled pack still gets declared, just without a version.
+        assertEquals(PackRef("elsewhere", null), ModelOps.autoDeclarePack(
+            packApp(action = ActionDef.PackAction("elsewhere", "a.b")), registry).pack)
+    }
+
+    @Test
+    fun undeclaredPackUsageWarns() {
+        val undeclared = packApp(source = SourceRef.Pack("glasspane", "glasspane.notes"))
+        val warning = ModelOps.validate(undeclared)
+            .single { "#+JETPACS_PACK:" in it.message }
+        assertEquals(ModelOps.Severity.Warning, warning.severity)
+        val declared = undeclared.copy(pack = PackRef("glasspane", "1.0.0"))
+        assertTrue(ModelOps.validate(declared)
+            .none { "#+JETPACS_PACK:" in it.message })
     }
 }

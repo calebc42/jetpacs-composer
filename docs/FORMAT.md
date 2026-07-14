@@ -1,4 +1,4 @@
-# The Jetpacs CRUD app format, v3 — `app.org`
+# The Jetpacs CRUD app format, v4 — `app.org`
 
 **STATUS: current format.** This document is the contract between the
 composer (the desktop editor), `jetpacs-crud-orgapp.el` (the on-device
@@ -6,6 +6,15 @@ parser), and `jetpacs-crud.el` (the runtime). Anything not listed here
 is not part of the format; adding a keyword, drawer property, column
 type, or action requires a deliberate format change. A missing version
 means the current version.
+
+Version 4 is the **pack-reference surface**: `#+JETPACS_PACK:`
+declarations and `pack:` sources/actions. Both parsers accept every
+version up to 4 and reject anything above; the canonical writer stamps
+**3 on documents that use no pack feature** (they keep opening on
+pre-pack runtimes) and **4 exactly when a pack feature is present**.
+New *vocabulary* inside the format — source schemes, column types,
+action tokens, view kinds — is forward-lenient on both parsers and
+never needs a version bump; only structural changes do.
 
 An app is **one org file**. Everything the runtime needs is in it; the
 data it manages lives in org tables — either inline in this file or in
@@ -21,9 +30,10 @@ Case-insensitive, like all org keywords.
 | `#+TITLE:` | no | Launcher label (default: capitalized id). |
 | `#+JETPACS_ICON:` | no | Material icon name for the launcher card (default `apps`). |
 | `#+JETPACS_ORDER:` | no | Integer sort key for the launcher home (default 100). |
-| `#+JETPACS_APP_FORMAT:` | no | Format version; default and valid values are up to `3`. The canonical writer always emits it. |
+| `#+JETPACS_APP_FORMAT:` | no | Format version; valid values are up to `4`. The canonical writer always emits it: `3` for pack-free documents, `4` when any pack feature is used. |
 | `#+JETPACS_INBOX:` | no | App-scoped quick-capture destination; relative paths resolve beside the app document. |
 | `#+JETPACS_DEPENDS:` | no | Space-separated Emacs packages the device installs for this app (each a slug matching `[a-z][a-z0-9-]*`), e.g. `vulpea org-ql`. Deployment metadata — see below. |
+| `#+JETPACS_PACK:` | no | `<pack-id> [min-version]` — the manifest-backed engine pack this app's `pack:` references resolve against. See *DEPENDS vs PACK*. |
 | `#+TODO:` | no | Org TODO keyword sequence used by TODO fields and actions. |
 | `#+TAGS:` | no | File tag vocabulary offered by the composer. |
 
@@ -42,6 +52,28 @@ and the runtime *records* the list but never acts on it — an app whose
 device is missing a dependency still loads and simply degrades the
 affected views (see per-kind notes). This keeps old bundles, and bundles
 on a bare core, valid.
+
+### DEPENDS vs PACK
+
+Two different declarations, deliberately:
+
+- `#+JETPACS_DEPENDS:` names **raw Emacs package slugs** the device
+  installs (vulpea, org-ql). No contract beyond "install this".
+- `#+JETPACS_PACK: <pack-id> [min-version]` names a **manifest-backed
+  engine pack** — one whose author publishes a `<pack-id>-pack.json`
+  contract (generated from `jetpacs-source-catalog` +
+  `jetpacs-action-catalog`; Glasspane's `glasspane-pack.json` is the
+  reference). The declaration is what the document's
+  `pack:<pack-id>/<name>` sources and actions resolve against: the
+  composer drives its pickers and validation from the installed
+  manifest, the deployer installs the manifest's `depends`, and the
+  runtime requires the pack's feature before binding (fail-closed —
+  a device without the pack renders those views unavailable and
+  dispatches nothing).
+
+The composer declares the pack automatically when a view references
+one. Like `DEPENDS`, the declaration itself never blocks an app from
+loading anywhere.
 
 ### Device setup — what installs the engines
 

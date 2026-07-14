@@ -145,6 +145,27 @@ fun AppForm(session: EditorSession) {
             label = { Text("quick-capture inbox (optional org path)") },
             singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
+        spec.pack?.let { declared ->
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Engine pack: ${declared.packId}" +
+                        (declared.minVersion?.let { " ≥ $it" } ?: "") +
+                        "  (#+JETPACS_PACK:)",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                TextButton(onClick = {
+                    session.update { it.copy(pack = null) }
+                }) { Text("Remove") }
+            }
+            Text(
+                "Declared automatically when a view references the pack; " +
+                    "removing it without removing the references leaves the " +
+                    "document undeclared (a validation warning).",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 
     FormSection("TODO Keywords") {
@@ -239,9 +260,13 @@ fun ViewForm(session: EditorSession, index: Int, packs: PackRegistry = PackRegis
         it.kind == ViewKind.RECORDS || it.kind == ViewKind.NOTES
     }
     fun edit(transform: (ViewSpec) -> ViewSpec) =
-        session.update { ModelOps.updateView(it, index, transform) }
+        session.update {
+            ModelOps.autoDeclarePack(ModelOps.updateView(it, index, transform), packs)
+        }
     fun editText(key: String, transform: (ViewSpec) -> ViewSpec) =
-        session.update("view.$index.$key") { ModelOps.updateView(it, index, transform) }
+        session.update("view.$index.$key") {
+            ModelOps.autoDeclarePack(ModelOps.updateView(it, index, transform), packs)
+        }
 
     Text("View Detail", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(12.dp))

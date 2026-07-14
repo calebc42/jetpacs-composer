@@ -28,6 +28,13 @@ data class AppSpec(
      * name must match [DEPEND_RE].
      */
     val depends: List<String> = emptyList(),
+    /**
+     * The manifest-backed engine pack this app targets
+     * (`#+JETPACS_PACK: <id> [min-version]`). Raw package slugs stay in
+     * [depends]; a pack declaration additionally names the `*-pack.json`
+     * contract the document's `pack:` references resolve against.
+     */
+    val pack: PackRef? = null,
     val views: List<ViewSpec> = emptyList(),
 ) {
     init {
@@ -44,6 +51,28 @@ data class AppSpec(
         val DEPEND_RE = Regex("[a-z][a-z0-9-]*")
     }
 }
+
+/** One `#+JETPACS_PACK:` declaration: the pack id and its minimum version. */
+@Serializable
+data class PackRef(val packId: String, val minVersion: String? = null) {
+    init {
+        require(AppSpec.ID_RE.matches(packId)) {
+            "JETPACS_PACK id must match [a-z][a-z0-9-]*, got \"$packId\""
+        }
+    }
+}
+
+/**
+ * Whether this document uses any pack feature — a `#+JETPACS_PACK:`
+ * declaration, a `pack:` source, or a `pack:` action. The writer emits
+ * FORMAT 4 exactly for these documents and 3 for everything else, so a
+ * pack-free app keeps opening on older runtimes.
+ */
+fun AppSpec.usesPackFeatures(): Boolean =
+    pack != null || views.any { view ->
+        view.source is SourceRef.Pack ||
+            view.actions.any { it is ActionDef.PackAction }
+    }
 
 /**
  * The engine packages this app needs installed on the device, for

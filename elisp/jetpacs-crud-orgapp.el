@@ -16,13 +16,16 @@
 (require 'jetpacs-crud)
 (require 'jetpacs-crud-vulpea)
 
-(defconst jetpacs-crud-orgapp-format-version "3"
-  "The only app.org format version accepted by this runtime.")
+(defconst jetpacs-crud-orgapp-format-version "4"
+  "The highest app.org format version accepted by this runtime.
+Every past version parses (old documents keep opening); a future one is
+a clear rejection, never a misparse.  4 is the pack-reference surface —
+the composer's writer stamps 3 on documents with no pack feature.")
 
 ;; ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 (defconst jetpacs-crud-orgapp--keyword-re
-  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|JETPACS_INBOX\\|JETPACS_DEPENDS\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
+  "^#\\+\\(JETPACS_APP\\|JETPACS_ICON\\|JETPACS_ORDER\\|JETPACS_APP_FORMAT\\|JETPACS_INBOX\\|JETPACS_DEPENDS\\|JETPACS_PACK\\|TITLE\\|TODO\\|TAGS\\):[ \t]*\\(.*?\\)[ \t]*$"
   "File-level keywords of the format (docs/FORMAT.md), case-insensitive.")
 
 (defun jetpacs-crud-orgapp--keywords ()
@@ -168,6 +171,20 @@ and preserved; other unknown future tokens warn and are preserved."
                (list 'unknown token)))
           (setq pos end))))
     (string-trim value)))
+
+(defun jetpacs-crud-orgapp--parse-pack (value file)
+  "Parse a `#+JETPACS_PACK:' VALUE — \"<pack-id> [min-version]\".
+Returns (:id ID :min-version V-or-nil).  The declaration names the
+manifest-backed engine pack the document's `pack:' references resolve
+against; the runtime records it and the S4.3 binding layer consults it.
+Raw package slugs are `#+JETPACS_DEPENDS:', not this."
+  (let ((parts (split-string (or value "") "[ \t]+" t))
+        (case-fold-search nil))
+    (unless (and parts (<= (length parts) 2)
+                 (string-match-p "\\`[a-z][a-z0-9-]*\\'" (car parts)))
+      (user-error "%s: JETPACS_PACK must be \"<pack-id> [min-version]\", got %S"
+                  file value))
+    (list :id (car parts) :min-version (cadr parts))))
 
 (defun jetpacs-crud-orgapp--parse-depends (value file)
   "Parse a `#+JETPACS_DEPENDS:' VALUE into a list of package-name strings.
@@ -413,6 +430,8 @@ Signals `user-error' with FILE and a reason on any format violation."
                          (expand-file-name path (file-name-directory file)))))
             :depends (when-let ((raw (cdr (assoc "JETPACS_DEPENDS" keywords))))
                        (jetpacs-crud-orgapp--parse-depends raw file))
+            :pack (when-let ((raw (cdr (assoc "JETPACS_PACK" keywords))))
+                    (jetpacs-crud-orgapp--parse-pack raw file))
             :file file
             :views views))))
 

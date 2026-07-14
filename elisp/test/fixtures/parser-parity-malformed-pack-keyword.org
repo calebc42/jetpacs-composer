@@ -1,0 +1,8 @@
+#+JETPACS_APP: badpackkw
+#+JETPACS_PACK: Not A Valid Declaration
+
+* Tasks
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM
+:END:
