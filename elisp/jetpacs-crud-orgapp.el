@@ -14,6 +14,7 @@
 (require 'cl-lib)
 (require 'org)
 (require 'jetpacs-crud)
+(require 'jetpacs-crud-vulpea)
 
 (defconst jetpacs-crud-orgapp-format-version "3"
   "The only app.org format version accepted by this runtime.")

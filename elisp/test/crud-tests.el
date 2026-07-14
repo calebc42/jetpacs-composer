@@ -36,6 +36,7 @@
 (require 'ert)
 (require 'jetpacs-lint)
 (require 'jetpacs-crud)
+(require 'jetpacs-crud-vulpea)
 (require 'jetpacs-crud-orgapp)
 
 ;; Isolate the vulpea index for the whole run.  Registration now adopts

@@ -57,7 +57,7 @@ compose.desktop {
 tasks.processResources {
     from(rootDir.resolve("elisp")) {
         into("runtime")
-        include("jetpacs-crud.el", "jetpacs-crud-orgapp.el")
+        include("jetpacs-crud.el", "jetpacs-crud-vulpea.el", "jetpacs-crud-orgapp.el")
     }
     // The canonical kitchen-sink fixture doubles as the gallery's demo
     // template — one document, shared with the ERT suite verbatim.

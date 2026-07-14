@@ -64,7 +64,7 @@ that parses.  Returns the output path."
               ";; Requires the Jetpacs foundation: (require 'jetpacs-core) before loading.\n"
               ";;\n"
               ";;; Code:\n\n")
-      (dolist (part '("jetpacs-crud.el" "jetpacs-crud-orgapp.el"))
+      (dolist (part '("jetpacs-crud.el" "jetpacs-crud-vulpea.el" "jetpacs-crud-orgapp.el"))
         (insert ";;; ==================================================================\n"
                 (format ";;; BEGIN %s (the jetpacs-composer runtime)\n" part)
                 ";;; ==================================================================\n\n")

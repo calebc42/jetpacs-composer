@@ -22,10 +22,12 @@ class BundleExporterTest {
         assertTrue(bundle.startsWith(
             ";;; jetpacs-app-pantry.el --- Pantry, a Jetpacs CRUD app"))
         assertTrue(";; Jetpacs-App: pantry" in bundle)
-        // Both runtime parts ship inside the bundle.
+        // All three runtime parts ship inside the bundle.
         assertTrue("BEGIN jetpacs-crud.el" in bundle)
+        assertTrue("BEGIN jetpacs-crud-vulpea.el" in bundle)
         assertTrue("BEGIN jetpacs-crud-orgapp.el" in bundle)
         assertTrue("(provide 'jetpacs-crud)" in bundle)
+        assertTrue("(provide 'jetpacs-crud-vulpea)" in bundle)
         assertTrue("(provide 'jetpacs-crud-orgapp)" in bundle)
         // The install call carries the document verbatim.
         assertTrue("(jetpacs-crud-install \"pantry\" " in bundle)

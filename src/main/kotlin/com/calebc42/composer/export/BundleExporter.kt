@@ -12,7 +12,8 @@ import com.calebc42.composer.model.AppSpec
  */
 object BundleExporter {
 
-    private val RUNTIME_PARTS = listOf("jetpacs-crud.el", "jetpacs-crud-orgapp.el")
+    private val RUNTIME_PARTS =
+        listOf("jetpacs-crud.el", "jetpacs-crud-vulpea.el", "jetpacs-crud-orgapp.el")
 
     fun bundleFileName(spec: AppSpec) = "jetpacs-app-${spec.id}.el"
 
