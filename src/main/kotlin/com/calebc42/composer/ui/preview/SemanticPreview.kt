@@ -145,12 +145,17 @@ fun SemanticPreview(
         }
     }
 
+    // A flat surface color reads as part of the editor canvas behind it (see
+    // the surfaceContainerLowest backdrop in EditorScreen) — the highest
+    // container tone plus a real outline/shadow makes the device frame read
+    // as a floating panel instead of blending in.
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(28.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 3.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 10.dp,
     ) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {

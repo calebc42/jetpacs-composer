@@ -36,6 +36,14 @@ private val LightColorScheme = lightColorScheme(
     inverseOnSurface = ParchmentLightest,
     inversePrimary = EmacsPurpleLight,
     surfaceTint = EmacsPurpleVivid,
+    // A floating panel (e.g. the device preview) needs a fill that reads as
+    // distinct from the flat app canvas, not just a 1dp border away from it —
+    // so the ramp ends on a tan+purple tint rather than repeating a neutral.
+    surfaceContainerLowest = ParchmentLightest,
+    surfaceContainerLow = ParchmentLight,
+    surfaceContainer = ParchmentMuted,
+    surfaceContainerHigh = lerp(ParchmentMuted, ParchmentTan, 0.60f),
+    surfaceContainerHighest = lerp(ParchmentTan, EmacsPurpleVivid, 0.14f),
 )
 
 private val DarkColorScheme = darkColorScheme(
@@ -58,11 +66,23 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = lerp(InkNeutral, EmacsPurpleDeep, 0.30f),
     onSurfaceVariant = ParchmentTan,
     outline = lerp(ParchmentTan, InkNeutral, 0.55f),
-    outlineVariant = InkNeutral,
+    // InkWarm and InkNeutral sit only ~0.01 apart in luminance, so a divider
+    // color equal to either of them is invisible against a surface painted
+    // in the other. Lean on the tan instead.
+    outlineVariant = lerp(ParchmentTan, InkNeutral, 0.78f),
     inverseSurface = ParchmentLightest,
     inverseOnSurface = InkWarm,
     inversePrimary = EmacsPurpleVivid,
     surfaceTint = EmacsPurpleLight,
+    // The two dark neutrals (InkWarm, InkNeutral) are nearly identical in
+    // luminance, so an elevation ramp built only from them would be
+    // invisible too — climb toward EmacsPurpleLight instead, which is the
+    // only palette color with real headroom above them.
+    surfaceContainerLowest = InkWarm,
+    surfaceContainerLow = InkNeutral,
+    surfaceContainer = lerp(InkNeutral, EmacsPurpleLight, 0.18f),
+    surfaceContainerHigh = lerp(InkNeutral, EmacsPurpleLight, 0.32f),
+    surfaceContainerHighest = lerp(InkNeutral, EmacsPurpleLight, 0.46f),
 )
 
 @Composable

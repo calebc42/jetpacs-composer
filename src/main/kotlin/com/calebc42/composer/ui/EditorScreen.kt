@@ -213,7 +213,11 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
                 }
             },
             previewContent = {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                    contentAlignment = Alignment.Center,
+                ) {
                     SemanticPreview(
                         spec = session.spec,
                         selectedViewIndex = (selection as? Selection.View)?.index,
