@@ -10,7 +10,7 @@ import java.io.File
  * The two ways a bundle reaches the device (jetpacs deploy.ps1's exact
  * mechanics, reused):
  *
- * - STAGING: `adb push` to /sdcard/Download; the foundation's managed
+ * - STAGING: `adb push` to /sdcard/Documents/jetpacs; the foundation's managed
  *   init (Phase G: ~/.emacs.d/jetpacs/apps.el lists the bundle,
  *   `jetpacs-config-adopt` copies + byte-compiles + requires it) installs
  *   it on the next Emacs (re)start. Needs nothing but adb, plus the
@@ -35,12 +35,27 @@ object Deployer {
     const val SSH_PORT = 8022
     const val SSH_TARGET = "termux@127.0.0.1"
 
+    /**
+     * The foundation's single shared-storage staging slot
+     * (`jetpacs-staging-dirs`): a dedicated subfolder of Documents that the
+     * managed init adopts newest-wins on restart.
+     */
+    const val STAGING_DIR = "/sdcard/Documents/jetpacs"
+
     data class Step(val label: String, val result: CmdResult)
 
-    fun stagingDeploy(serial: String, bundle: File): List<Step> = listOf(
-        Step("adb push → /sdcard/Download/${bundle.name}",
-             Adb.push(serial, bundle, "/sdcard/Download/${bundle.name}")),
-    )
+    fun stagingDeploy(serial: String, bundle: File): List<Step> {
+        val steps = mutableListOf<Step>()
+        // Create the slot first — a fresh device has no Documents/jetpacs yet,
+        // and unlike the old Download root it won't already exist.
+        val mkdir = Adb.run("-s", serial, "shell", "mkdir", "-p", STAGING_DIR,
+                            timeoutSeconds = 15)
+        steps += Step("adb shell mkdir -p $STAGING_DIR", mkdir)
+        if (!mkdir.ok) return steps
+        steps += Step("adb push → $STAGING_DIR/${bundle.name}",
+                      Adb.push(serial, bundle, "$STAGING_DIR/${bundle.name}"))
+        return steps
+    }
 
     fun liveDeploy(serial: String, bundle: File): List<Step> {
         val steps = mutableListOf<Step>()
@@ -176,8 +191,8 @@ object Deployer {
     /**
      * The once-per-app install line for the device: list the bundle in the
      * foundation's create-once ~/.emacs.d/jetpacs/apps.el. Every restart
-     * then adopts the newest staged copy from /sdcard (Download or
-     * Documents), byte-compiles it, and requires it — re-deploys of the
+     * then adopts the newest staged copy from /sdcard/Documents/jetpacs,
+     * byte-compiles it, and requires it — re-deploys of the
      * same app need no further edits. This replaced the old
      * paste-a-whole-adopt-loop snippet: one explicit line per app keeps
      * the user consenting to each bundle that gets to run (the same

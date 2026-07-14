@@ -50,7 +50,7 @@ backend and Emacs as the brain. No code in the app document, ever.
 # Build the bundle from the example app:
 emacs -Q --batch -l elisp/build-app-bundle.el -- elisp/test/fixtures/pantry.org .
 
-# Ship it with the jetpacs deploy script (stages to /sdcard/Download):
+# Ship it with the jetpacs deploy script (stages to /sdcard/Documents/jetpacs):
 ../jetpacs/deploy.ps1 -Bundles jetpacs-app-pantry.el
 ```
 
