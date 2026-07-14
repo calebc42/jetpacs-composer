@@ -43,16 +43,36 @@ class FilterQueryTest {
     }
 
     @Test
-    fun notesExposeOnlyTheirRuntimeSubset() {
-        assertTrue(FilterQuery.Term.Priority !in FilterQuery.allowedTerms(ViewKind.NOTES))
-        assertIs<FilterQuery.ParseResult.Invalid>(
+    fun notesShareTheFullRecordSubset() {
+        // The note index matcher now covers the same subset as records, so
+        // notes accept every term (and level ranges), not a reduced set.
+        assertTrue(FilterQuery.Term.Priority in FilterQuery.allowedTerms(ViewKind.NOTES))
+        assertIs<FilterQuery.ParseResult.Guided>(
             FilterQuery.parse("(priority \"A\")", ViewKind.NOTES))
         assertIs<FilterQuery.ParseResult.Guided>(
             FilterQuery.parse("(property \"Tier\" \"Gold\")", ViewKind.NOTES))
-        assertIs<FilterQuery.ParseResult.Invalid>(
+        assertIs<FilterQuery.ParseResult.Guided>(
             FilterQuery.parse("(level 1 3)", ViewKind.NOTES))
-        assertIs<FilterQuery.ParseResult.Invalid>(
+        // Nested boolean expressions still round-trip in raw mode, both kinds.
+        assertIs<FilterQuery.ParseResult.Raw>(
             FilterQuery.parse("(not (priority \"A\"))", ViewKind.NOTES))
+    }
+
+    @Test
+    fun requiredDependsReflectsKindsAndFilters() {
+        val app = AppSpec(id = "a", views = listOf(
+            ViewSpec(title = "T", kind = ViewKind.TABLE),
+            ViewSpec(title = "R", kind = ViewKind.RECORDS, filter = "(todo \"NEXT\")"),
+        ))
+        // Any real view needs vulpea; a guided FILTER does not pull in org-ql.
+        assertEquals(listOf("vulpea"), app.requiredDepends())
+        // A raw/org-ql-only FILTER adds org-ql.
+        val withOrgQl = app.copy(views = app.views + ViewSpec(
+            title = "X", kind = ViewKind.RECORDS, filter = "(clocked :on today)"))
+        assertEquals(listOf("vulpea", "org-ql"), withOrgQl.requiredDepends())
+        // An UNKNOWN-only app needs nothing.
+        assertTrue(AppSpec(id = "u", views = listOf(
+            ViewSpec(title = "U", kind = ViewKind.UNKNOWN))).requiredDepends().isEmpty())
     }
 
     @Test
@@ -73,7 +93,8 @@ class FilterQueryTest {
         val range = listOf(
             FilterQuery.Clause(FilterQuery.Term.Level, values = listOf("1", "3")))
         assertTrue(FilterQuery.validate(range, ViewKind.RECORDS).isEmpty())
-        assertTrue(FilterQuery.validate(range, ViewKind.NOTES).isNotEmpty())
+        // Level ranges are valid in notes now too (shared subset).
+        assertTrue(FilterQuery.validate(range, ViewKind.NOTES).isEmpty())
     }
 
     @Test

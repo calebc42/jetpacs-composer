@@ -38,13 +38,14 @@ object FilterQuery {
         data class Invalid(val message: String) : ParseResult
     }
 
-    private val recordTerms = Term.entries
-    private val noteTerms = listOf(
-        Term.Todo, Term.Tags, Term.Regexp, Term.Property, Term.Level,
-    )
-
-    fun allowedTerms(kind: ViewKind): List<Term> =
-        if (kind == ViewKind.NOTES) noteTerms else recordTerms
+    /**
+     * Every heading-family kind — records AND notes — now shares one term
+     * set: the runtime evaluates the same subset off the `vulpea-note'
+     * struct (`jetpacs-crud--note-matches-p'), and a term beyond it falls to
+     * org-ql over the source files. [kind] is retained for API stability but
+     * no longer restricts the allowed terms.
+     */
+    fun allowedTerms(kind: ViewKind): List<Term> = Term.entries.toList()
 
     fun parse(query: String, kind: ViewKind): ParseResult {
         val trimmed = query.trim()
@@ -66,7 +67,7 @@ object FilterQuery {
         else "(and ${encoded.joinToString(" ")})"
     }
 
-    fun validate(clauses: List<Clause>, kind: ViewKind): List<String> = buildList {
+    fun validate(clauses: List<Clause>, @Suppress("UNUSED_PARAMETER") kind: ViewKind): List<String> = buildList {
         clauses.forEachIndexed { index, clause ->
             val prefix = "Clause ${index + 1} (${clause.term.label})"
             if (clause.term == Term.Property && clause.subject.isBlank())
@@ -74,9 +75,6 @@ object FilterQuery {
             if (clause.term == Term.Level &&
                 (clause.values.size !in 1..2 || clause.values.any { it.toIntOrNull() == null }))
                 add("$prefix needs one level or a min,max pair")
-            else if (kind == ViewKind.NOTES && clause.term == Term.Level &&
-                clause.values.size != 1)
-                add("$prefix supports one exact level in notes views")
         }
     }
 
@@ -97,15 +95,10 @@ object FilterQuery {
                 return ParseResult.Invalid("${clause.term.label} needs at least one value")
             clauses += clause
         }
-        val unsupported = clauses.firstOrNull { it.term !in allowedTerms(kind) }
-        return if (unsupported == null) ParseResult.Guided(clauses)
-        else ParseResult.Invalid("${unsupported.term.label} is not supported for notes views")
+        return ParseResult.Guided(clauses)
     }
 
-    private fun parseSexp(root: Sexp, kind: ViewKind): ParseResult {
-        if (kind == ViewKind.NOTES) {
-            validateNoteTree(root)?.let { return ParseResult.Invalid(it) }
-        }
+    private fun parseSexp(root: Sexp, @Suppress("UNUSED_PARAMETER") kind: ViewKind): ParseResult {
         val forms = when {
             root is Sexp.ListForm && root.head == "and" -> root.items.drop(1)
             root is Sexp.ListForm && root.head in setOf("or", "not") ->
@@ -114,44 +107,12 @@ object FilterQuery {
         }
         val clauses = mutableListOf<Clause>()
         for (form in forms) {
-            val parsed = parseClause(form) ?: run {
-                val head = (form as? Sexp.ListForm)?.head
-                if (kind == ViewKind.NOTES && head !in setOf("and", "or", "not"))
-                    return ParseResult.Invalid(
-                        "FILTER term ${head ?: form} is not supported for notes views")
-                return ParseResult.Raw(
+            val parsed = parseClause(form)
+                ?: return ParseResult.Raw(
                     "This expression uses nesting or a term that needs raw/org-ql mode")
-            }
-            if (parsed.term !in allowedTerms(kind))
-                return ParseResult.Invalid(
-                    "${parsed.term.label} is not supported for notes views")
-            if (kind == ViewKind.NOTES && parsed.term == Term.Level &&
-                parsed.values.size != 1)
-                return ParseResult.Invalid("Level ranges are not supported for notes views")
             clauses += parsed
         }
         return ParseResult.Guided(clauses)
-    }
-
-    private fun validateNoteTree(form: Sexp): String? {
-        if (form !is Sexp.ListForm)
-            return "Notes FILTER clauses must be lists"
-        return when (form.head) {
-            "and", "or" -> form.items.drop(1).firstNotNullOfOrNull(::validateNoteTree)
-            "not" -> if (form.items.size != 2) "not needs exactly one clause"
-                else validateNoteTree(form.items[1])
-            else -> {
-                val clause = parseClause(form)
-                    ?: return "FILTER term ${form.head ?: form} is not supported for notes views"
-                when {
-                    clause.term !in noteTerms ->
-                        "${clause.term.label} is not supported for notes views"
-                    clause.term == Term.Level && clause.values.size != 1 ->
-                        "Level ranges are not supported for notes views"
-                    else -> null
-                }
-            }
-        }
     }
 
     private fun parseClause(form: Sexp): Clause? {

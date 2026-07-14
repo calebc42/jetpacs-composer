@@ -45,6 +45,22 @@ data class AppSpec(
     }
 }
 
+/**
+ * The engine packages this app needs installed on the device, for
+ * `#+JETPACS_DEPENDS:`. Every datasource kind now reads from the vulpea
+ * index, so any real (non-[ViewKind.UNKNOWN]) view needs **vulpea**; a
+ * `:FILTER:` that only org-ql can evaluate (parses to [FilterQuery.ParseResult.Raw])
+ * additionally needs **org-ql**. The composer auto-populates the keyword
+ * from this so a deployed app installs exactly what it uses.
+ */
+fun AppSpec.requiredDepends(): List<String> = buildList {
+    if (views.any { it.kind != ViewKind.UNKNOWN }) add("vulpea")
+    if (views.any { v ->
+            val f = v.filter?.trim().orEmpty()
+            f.isNotEmpty() && FilterQuery.parse(f, v.kind) is FilterQuery.ParseResult.Raw
+        }) add("org-ql")
+}
+
 /** One keyword in a `#+TODO:` sequence. */
 @Serializable
 data class TodoKeyword(val keyword: String, val isDone: Boolean)
