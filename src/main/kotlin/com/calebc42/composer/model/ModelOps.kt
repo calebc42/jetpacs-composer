@@ -366,6 +366,13 @@ object ModelOps {
                     add(Problem("Source directory cannot be blank", i))
                 is SourceRef.Pack -> if (source.source.isBlank() || source.packId.isBlank())
                     add(Problem("Pack source cannot be blank", i))
+                is SourceRef.Unknown -> add(Problem(
+                    "Source \"${source.raw}\" uses a scheme this composer doesn't " +
+                        "know — kept as written, but the view will be unavailable " +
+                        "on today's runtimes",
+                    i,
+                    Severity.Warning,
+                ))
                 null -> {}
             }
             view.colTypes.filterIsInstance<ColType.Enum>().forEach { enum ->

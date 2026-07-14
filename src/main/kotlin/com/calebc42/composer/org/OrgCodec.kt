@@ -46,7 +46,12 @@ object OrgCodec : OrgAppCodec {
     private val CHECKBOX_RE = Regex("""^\s*[-+*] +\[([ xX-])\] +(.*)$""")
     private val COLTYPE_RE = Regex("""([a-z]+)(\(([^)]*)\))?""")
     private val SCHEMA_RE = Regex("""%([A-Za-z_][A-Za-z_0-9-]*)(\(([^)]*)\))?""")
-    private val ACTION_TOKEN_RE = Regex("""([a-z][a-z0-9:/_.-]*)(?:\(([^)]*)\))?""", RegexOption.IGNORE_CASE)
+    // Case-sensitive, like the elisp oracle: action tokens are lowercase slugs
+    // (pack tokens carry ':' '/' '.' '_' '-' — pack:glasspane/heading.schedule).
+    private val ACTION_TOKEN_RE = Regex("""([a-z][a-z0-9:/_.-]*)(?:\(([^)]*)\))?""")
+    // A :SOURCE: value carrying a scheme prefix (pack: or a future one).
+    // "::"-continuations are excluded so file::*Heading stays a file source.
+    private val SOURCE_SCHEME_RE = Regex("""^[a-z][a-z0-9-]*:(?!:)""")
 
     override fun parse(text: String): AppSpec {
         val lines = text.lines()
@@ -214,10 +219,8 @@ object OrgCodec : OrgAppCodec {
             val options = match.groups[2]?.value
             
             actions += if (token.startsWith("pack:")) {
-                val slash = token.indexOf('/')
-                if (slash == -1) throw FormatException("malformed pack action token: $token")
-                val packId = token.substring(5, slash)
-                val action = token.substring(slash + 1)
+                val (packId, action) = splitPackToken(token)
+                    ?: throw FormatException("malformed pack action token: $token")
                 ActionDef.PackAction(packId, action, options?.trim()?.ifEmpty { null })
             } else if (token !in ContractManifest.actions) {
                 ActionDef.Unknown(token)
@@ -249,16 +252,30 @@ object OrgCodec : OrgAppCodec {
         return actions
     }
 
+    /**
+     * Split a `pack:<packId>/<name>` token at the FIRST slash after the
+     * prefix; both halves must be non-empty. null on a malformed token —
+     * a pack reference with no addressable pack or name is structural
+     * breakage, not future vocabulary, so both parsers reject it.
+     */
+    private fun splitPackToken(token: String): Pair<String, String>? {
+        val rest = token.substring("pack:".length)
+        val slash = rest.indexOf('/')
+        if (slash <= 0 || slash == rest.length - 1) return null
+        return rest.substring(0, slash) to rest.substring(slash + 1)
+    }
+
     private fun parseSource(value: String): SourceRef? {
         val v = value.trim()
         if (v.equals("inline", ignoreCase = true)) return null
         if (v.startsWith("pack:", ignoreCase = true)) {
-            val slash = v.indexOf('/')
-            if (slash == -1) throw FormatException("malformed pack source: $v")
-            val packId = v.substring(5, slash)
-            val source = v.substring(slash + 1)
+            val (packId, source) = splitPackToken(v)
+                ?: throw FormatException("malformed pack source: $v")
             return SourceRef.Pack(packId, source)
         }
+        // Any other scheme prefix is future source vocabulary: preserved
+        // verbatim, never a rejection (the view degrades instead).
+        if (SOURCE_SCHEME_RE.containsMatchIn(v)) return SourceRef.Unknown(v)
         // A trailing slash marks a note vault directory, not a file::*heading.
         if (v.endsWith("/")) return SourceRef.Dir(v.removeSuffix("/"))
         val parts = v.split("::", limit = 2)
@@ -450,6 +467,7 @@ object OrgCodec : OrgAppCodec {
                     is SourceRef.File -> it.file + (it.heading?.let { h -> "::*$h" } ?: "")
                     is SourceRef.Dir -> it.dir + "/"
                     is SourceRef.Pack -> "pack:${it.packId}/${it.source}"
+                    is SourceRef.Unknown -> it.raw
                 })
             }
             if (view.schema.isNotEmpty())

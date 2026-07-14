@@ -62,6 +62,15 @@ unknown-kind accept parser-parity-unknown-kind.org
 unknown-coltype accept malformed-coltype.org
 unknown-action accept parser-parity-unknown-action.org
 
+# Pack references (S4.0): a well-formed pack:<id>/<name> source or action
+# token is accepted whether or not any such pack exists — the view degrades
+# at render time instead of the document being rejected.  A source scheme
+# neither parser knows is future vocabulary: accepted and preserved
+# verbatim, with the view unavailable.
+pack-source accept parser-parity-pack.org
+pack-action accept parser-parity-pack.org
+unknown-source-scheme accept parser-parity-unknown-source.org
+
 # FORMAT-2 structural rejection cases: structure stays strict even
 # though vocabulary is lenient.
 missing-app reject malformed-no-app.org
@@ -75,3 +84,5 @@ duplicate-schema reject parser-parity-duplicate-schema.org
 records-missing-schema reject parser-parity-records-missing-schema.org
 notes-missing-source reject parser-parity-notes-missing-source.org
 ref-too-many-arguments reject parser-parity-ref-too-many-arguments.org
+malformed-pack-source reject parser-parity-malformed-pack-source.org
+malformed-pack-action reject parser-parity-malformed-pack-action.org

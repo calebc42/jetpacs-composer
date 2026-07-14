@@ -1137,8 +1137,12 @@ action string the add-FAB fires.")
 ;; ─── The view builder ────────────────────────────────────────────────────────
 
 (defun jetpacs-crud--export-matrix (spec view)
-  "Return VIEW data as a rectangular list of string rows."
-  (pcase (plist-get view :kind)
+  "Return VIEW data as a rectangular list of string rows.
+nil when VIEW's source is unserved (pack without a binding / unknown
+scheme) — there is no data to export, and the export affordances drop
+to match the placeholder body's degradation."
+  (unless (jetpacs-crud--source-unserved-p view)
+    (pcase (plist-get view :kind)
     ('table
      (let* ((table (cdr (jetpacs-crud--source-table spec view)))
             (rows (delq 'hline (copy-sequence (plist-get table :rows)))))
@@ -1165,7 +1169,7 @@ action string the add-FAB fires.")
                                                   nil nil #'equal) ""))
                                  props))
                        (jetpacs-crud--scan-notes spec view))))))
-    (_ nil)))
+    (_ nil))))
 
 (defun jetpacs-crud--csv-cell (value)
   "Encode VALUE as a spreadsheet-safe RFC 4180-style CSV field."
@@ -1292,14 +1296,16 @@ action string the add-FAB fires.")
                               :content-description "Import pasted CSV")))))))
 
 (defun jetpacs-crud--fab (spec view)
-  "The add FAB for VIEW of SPEC."
-  (let ((args `((app . ,(plist-get spec :id))
-                (view . ,(plist-get view :name)))))
-    (jetpacs-fab "add"
-              :on-tap (jetpacs-action
-                       (or (plist-get (jetpacs-crud--kind-plist view) :fab)
-                           "crud.row.add")
-                       :args args))))
+  "The add FAB for VIEW of SPEC; nil when VIEW's source is unserved
+\(an unavailable view offers no mutation affordance — fail closed)."
+  (unless (jetpacs-crud--source-unserved-p view)
+    (let ((args `((app . ,(plist-get spec :id))
+                  (view . ,(plist-get view :name)))))
+      (jetpacs-fab "add"
+                :on-tap (jetpacs-action
+                         (or (plist-get (jetpacs-crud--kind-plist view) :fab)
+                             "crud.row.add")
+                         :args args)))))
 
 (defun jetpacs-crud--capture-actions (spec)
   "Top-bar capture action when SPEC declares an inbox."
@@ -1326,15 +1332,56 @@ WHAT names the view in the title."
     :title (format "%s needs vulpea" (or what "This view"))
     :caption "Install the vulpea package on this device to use this view.")))
 
+(defun jetpacs-crud--source-unserved-p (view)
+  "Non-nil when VIEW declares a `:SOURCE:' this runtime cannot serve.
+That is a `pack:' source with no live binding (see
+`jetpacs-crud--pack-source-served-p', the S4.3 seam) or an unknown
+future source scheme.  Such a view degrades to a diagnostic body and
+every mutation path fails closed — the app itself still loads."
+  (let ((source (plist-get view :source)))
+    (or (plist-get source :unknown)
+        (and (plist-get source :pack)
+             (not (jetpacs-crud--pack-source-served-p view))))))
+
+(defun jetpacs-crud--pack-source-served-p (_view)
+  "Non-nil when VIEW's `pack:' source resolves to a live runtime binding.
+The base runtime serves none; the pack binding layer (jetpacs-crud-pack)
+overrides this when a selected manifest provides the source."
+  nil)
+
+(defun jetpacs-crud--unavailable-source-body (view)
+  "The diagnostic placeholder body for a VIEW whose source is unserved.
+The unavailable-view degradation pattern: name what is missing, render a
+valid empty-state, dispatch nothing."
+  (let* ((source (plist-get view :source))
+         (caption
+          (cond
+           ((plist-get source :pack)
+            (format "This view reads pack:%s/%s — that pack is not available on this device."
+                    (plist-get source :pack) (plist-get source :source)))
+           (t
+            (format "This view's source %s is not understood by this runtime version."
+                    (plist-get source :unknown))))))
+    (jetpacs-lazy-column
+     (jetpacs-empty-state
+      :icon "extension_off"
+      :title (format "%s is unavailable" (plist-get view :title))
+      :caption caption))))
+
 (defun jetpacs-crud--build-body (spec view)
   "Build VIEW's body node, gating vulpea-backed kinds on vulpea's presence.
 A vulpea-backed kind on a device without vulpea renders the placeholder
 rather than calling into an absent index — the bundle still loads and
-lints clean on bare jetpacs-core."
-  (if (and (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
-           (not (jetpacs-crud--vulpea-p)))
-      (jetpacs-crud--needs-vulpea-body (plist-get view :title))
-    (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view)))
+lints clean on bare jetpacs-core.  A view whose declared source this
+runtime cannot serve (a pack without a live binding, or an unknown
+source scheme) degrades the same way."
+  (cond
+   ((jetpacs-crud--source-unserved-p view)
+    (jetpacs-crud--unavailable-source-body view))
+   ((and (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
+         (not (jetpacs-crud--vulpea-p)))
+    (jetpacs-crud--needs-vulpea-body (plist-get view :title)))
+   (t (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view))))
 
 (defun jetpacs-crud--build-view (id name snackbar)
   "Build the full scaffold view for app ID's view NAME."
@@ -1399,6 +1446,7 @@ the first member's (all four of hello-world's Tasks members add records)."
   "Derive durable reminder wire objects for VIEW's declared rule."
   (when-let ((rule (and (memq (plist-get view :kind)
                               '(records notes board calendar gallery tree dashboard gantt))
+                         (not (jetpacs-crud--source-unserved-p view))
                          (plist-get view :reminder))))
     (let ((field (plist-get rule :date-field))
           (relative (plist-get rule :relative-days))
@@ -1601,6 +1649,11 @@ Signals `user-error' on anything unknown."
                    (user-error "Unknown CRUD app: %S" appid)))
          (view (or (jetpacs-crud--view spec name)
                    (user-error "Unknown view %S in app %s" name appid)))
+         ;; Fail closed before touching any file: an unserved source has
+         ;; no file to mutate, so no handler may proceed past this point.
+         (_ (when (jetpacs-crud--source-unserved-p view)
+              (user-error "View %s's source is not available on this device"
+                          name)))
          (file (car (jetpacs-crud--view-source spec view)))
          (pos (if (and (stringp nid) (not (string-empty-p nid))
                        (file-readable-p file))
@@ -1926,6 +1979,9 @@ PAYLOAD contains `from_pos', `after_pos', and `new_level'."
          (view-name (alist-get 'view args))
          (spec (jetpacs-crud--app app))
          (view (jetpacs-crud--view spec view-name))
+         (_ (when (jetpacs-crud--source-unserved-p view)
+              (user-error "View %s's source is not available on this device"
+                          view-name)))
          (source (jetpacs-crud--view-source spec view))
          (file (car source))
          (from-pos (round (alist-get 'from_pos payload)))
@@ -2478,6 +2534,8 @@ Regenerates the :ID: and strips volatile timestamps."
                    (user-error "Unknown CRUD app: %S" appid)))
          (view (or (jetpacs-crud--view spec name)
                    (user-error "Unknown view %S in app %s" name appid))))
+    (when (jetpacs-crud--source-unserved-p view)
+      (user-error "View %s's source is not available on this device" name))
     (unless (jetpacs-crud--vulpea-p) (user-error "vulpea is not installed"))
     (unless (stringp nid) (user-error "Missing note id in %S" args))
     (let ((note (or (vulpea-db-get-by-id nid)

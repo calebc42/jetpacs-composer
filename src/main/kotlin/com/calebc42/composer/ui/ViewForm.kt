@@ -819,6 +819,10 @@ private fun SourceEditor(view: ViewSpec, edit: ViewEdit, editText: ViewTextEdit)
             label = { Text("pack source") }, singleLine = true,
             modifier = Modifier.width(320.dp),
         )
+        is SourceRef.Unknown -> Text(
+            "Unknown source \"${source.raw}\" — kept as written",
+            style = MaterialTheme.typography.bodyMedium,
+        )
         null -> {}
     }
     if (view.source != null) {

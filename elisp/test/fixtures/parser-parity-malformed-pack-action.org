@@ -1,0 +1,8 @@
+#+JETPACS_APP: badaction
+
+* Tasks
+:PROPERTIES:
+:KIND: records
+:SCHEMA: %ITEM
+:ACTIONS: pack:glasspane
+:END:

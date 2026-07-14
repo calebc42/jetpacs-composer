@@ -1,0 +1,8 @@
+#+JETPACS_APP: badpack
+
+* Broken
+:PROPERTIES:
+:KIND: records
+:SOURCE: pack:glasspane
+:SCHEMA: %ITEM
+:END:

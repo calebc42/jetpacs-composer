@@ -114,9 +114,20 @@ case-insensitively anyway)."
         (user-error "%s: duplicate property in SCHEMA" file)))
     (nreverse fields)))
 
+(defun jetpacs-crud-orgapp--split-pack-token (token)
+  "Split a `pack:<packId>/<name>' TOKEN at the first slash after the prefix.
+Returns (PACK-ID . NAME), or nil when either half is empty or the slash
+is missing — a pack reference with no addressable pack or name is
+structural breakage, not future vocabulary, so both parsers reject it."
+  (let* ((rest (substring token (length "pack:")))
+         (slash (string-search "/" rest)))
+    (when (and slash (> slash 0) (< (1+ slash) (length rest)))
+      (cons (substring rest 0 slash) (substring rest (1+ slash))))))
+
 (defun jetpacs-crud-orgapp--parse-actions (value file)
   "Validate recognized `:ACTIONS:' tokens and return trimmed VALUE.
-Known tokens mirror `ActionDef'; unknown future tokens warn and are preserved."
+Known tokens mirror `ActionDef'; `pack:<id>/<name>' tokens are shape-checked
+and preserved; other unknown future tokens warn and are preserved."
   (let ((pos 0)
         (len (length value))
         (case-fold-search nil))
@@ -124,7 +135,8 @@ Known tokens mirror `ActionDef'; unknown future tokens warn and are preserved."
       (if (string-match-p "\\`[ \t]*\\'" (substring value pos))
           (setq pos len)
         (unless (and (string-match
-                      "[ \t]*\\([a-z]+\\)\\((\\([^)]*\\))\\)?" value pos)
+                      "[ \t]*\\([a-z][a-z0-9:/_.-]*\\)\\((\\([^)]*\\))\\)?"
+                      value pos)
                      (= (match-beginning 0) pos))
           (user-error "%s: malformed action near %S in ACTIONS"
                       file (substring value pos)))
@@ -145,6 +157,10 @@ Known tokens mirror `ActionDef'; unknown future tokens warn and are preserved."
              (when options-form
                (user-error "%s: %s takes no options in ACTIONS" file token)))
             ((or "tags" "priority" "refile" "archive") nil)
+            ((pred (string-prefix-p "pack:"))
+             (unless (jetpacs-crud-orgapp--split-pack-token token)
+               (user-error "%s: malformed pack action token %S in ACTIONS"
+                           file token)))
             (_ (display-warning 'jetpacs-crud
                                 (format "%s: unknown action %S in ACTIONS (ignoring)"
                                         file token)
@@ -186,19 +202,35 @@ loading."
 
 (defun jetpacs-crud-orgapp--parse-source (value app-file)
   "Parse a `:SOURCE:' VALUE.
-nil for inline; (:dir D) for a trailing-slash vault directory (notes
-views — one note file per record); else (:file F :heading H).  Relative
-paths resolve against APP-FILE's directory."
-  (let ((value (string-trim value)))
+nil for inline; (:pack ID :source NAME) for a `pack:' datasource;
+\(:unknown RAW) for a scheme this format version does not know (the view
+degrades — never a rejection); (:dir D) for a trailing-slash vault
+directory (notes views — one note file per record); else
+\(:file F :heading H).  Relative paths resolve against APP-FILE's
+directory."
+  (let ((value (string-trim value))
+        (case-fold-search nil))
     (unless (string-equal-ignore-case value "inline")
-      (if (string-prefix-p "pack:" value t)
-          (let* ((slash (string-search "/" value))
-                 (packId (substring value 5 slash))
-                 (source (substring value (1+ slash))))
-            (list :pack packId :source source))
-        (if (string-suffix-p "/" value)
-          (list :dir (file-name-as-directory
-                      (expand-file-name value (file-name-directory app-file))))
+      (cond
+       ((string-prefix-p "pack:" value t)
+        (let ((halves (jetpacs-crud-orgapp--split-pack-token value)))
+          (unless halves
+            (user-error "%s: malformed pack source %S" app-file value))
+          (list :pack (car halves) :source (cdr halves))))
+       ;; Any other scheme prefix is future source vocabulary: preserved
+       ;; verbatim, view unavailable.  "::"-continuations are excluded so
+       ;; file::*Heading stays a file source.
+       ((and (string-match-p "\\`[a-z][a-z0-9-]*:" value)
+             (not (string-match-p "\\`[a-z][a-z0-9-]*::" value)))
+        (display-warning 'jetpacs-crud
+                         (format "%s: unknown source type %S (the view will be unavailable)"
+                                 app-file value)
+                         :warning)
+        (list :unknown value))
+       ((string-suffix-p "/" value)
+        (list :dir (file-name-as-directory
+                    (expand-file-name value (file-name-directory app-file)))))
+       (t
         (let* ((split (split-string value "::" t "[ \t]+"))
                (path (car split))
                (target (cadr split))

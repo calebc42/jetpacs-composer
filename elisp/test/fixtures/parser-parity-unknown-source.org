@@ -1,0 +1,11 @@
+#+JETPACS_APP: mystery
+#+JETPACS_APP_FORMAT: 3
+
+* Feed
+:PROPERTIES:
+:ORDER: 10
+:KIND: records
+:SOURCE: zzz:mystery/feed
+:SCHEMA: %ITEM
+:COLTYPES: text
+:END:

@@ -189,6 +189,15 @@ sealed interface SourceRef {
     /** An external pack data source, formatted as pack:<packId>/<source> */
     @Serializable
     data class Pack(val packId: String, val source: String) : SourceRef
+
+    /**
+     * A scheme-prefixed source this format version does not know
+     * (`scheme:rest`, any scheme other than `pack:`). Preserved verbatim
+     * on round-trip so a newer document survives an older composer; the
+     * runtime degrades the view rather than rejecting the app.
+     */
+    @Serializable
+    data class Unknown(val raw: String) : SourceRef
 }
 
 @Serializable

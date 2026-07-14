@@ -83,6 +83,10 @@ fun NewAppWizard(onCreate: (AppSpec) -> Unit, onDismiss: () -> Unit) {
                 external = true
                 backendPath = "pack:${src.packId}/${src.source}"
             }
+            is SourceRef.Unknown -> {
+                external = true
+                backendPath = src.raw
+            }
             null -> {
                 external = false
                 backendPath = "/sdcard/org/data.org"

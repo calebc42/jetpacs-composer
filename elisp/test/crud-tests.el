@@ -293,6 +293,71 @@ as an `unknown' marker (rendered as text) instead of erroring."
     (should (equal (plist-get view :coltypes)
                    '(text (ref "Customers" "NAME"))))))
 
+;; ─── Pack + unknown sources (S4.0: preserve, degrade, fail closed) ──────────
+
+(ert-deftest jetpacs-crud-parse-pack-source ()
+  "A well-formed pack: source parses to its (:pack ID :source NAME) shape."
+  (let* ((spec (jetpacs-crud-parse-app
+                (expand-file-name "parser-parity-pack.org"
+                                  jetpacs-crud-tests--fixtures)))
+         (view (car (plist-get spec :views))))
+    (should (equal (plist-get view :source)
+                   '(:pack "glasspane" :source "glasspane.notes")))
+    (should (equal (plist-get view :actions)
+                   "pack:glasspane/heading.todo-cycle todo(DONE)"))))
+
+(ert-deftest jetpacs-crud-parse-unknown-source-scheme ()
+  "A source scheme this runtime doesn't know is preserved, not rejected."
+  (let* ((spec (jetpacs-crud-parse-app
+                (expand-file-name "parser-parity-unknown-source.org"
+                                  jetpacs-crud-tests--fixtures)))
+         (view (car (plist-get spec :views))))
+    (should (equal (plist-get view :source) '(:unknown "zzz:mystery/feed")))))
+
+(ert-deftest jetpacs-crud-pack-view-degrades-and-fails-closed ()
+  "A pack-source view renders the unavailable placeholder and dispatches
+no mutation: no FAB, no export affordances, and every wire handler that
+could touch a source file signals `user-error' before doing anything."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-register-file
+     (jetpacs-crud-tests--stage "parser-parity-pack.org"))
+    (let* ((spec (jetpacs-crud--app "packdemo"))
+           (view (jetpacs-crud--view spec "linked-notes"))
+           (built (jetpacs-crud--build-view "packdemo" "linked-notes" nil))
+           (json (json-serialize built
+                                 :null-object :null :false-object :false)))
+      (should view)
+      (should (null (jetpacs-lint-spec built)))
+      (should (string-match-p "is unavailable" json))
+      (should (string-match-p "pack:glasspane/glasspane.notes" json))
+      (should (null (jetpacs-crud--fab spec view)))
+      (should (null (jetpacs-crud--export-matrix spec view)))
+      (let ((args '((app . "packdemo") (view . "linked-notes"))))
+        (should-error (jetpacs-crud-action-record-add args nil)
+                      :type 'user-error)
+        (should-error (jetpacs-crud-action-apply
+                       (append args '((token . "todo") (options . "DONE")
+                                      (id . "deadbeef")))
+                       nil)
+                      :type 'user-error)))))
+
+(ert-deftest jetpacs-crud-unknown-source-view-degrades ()
+  "An unknown-scheme source degrades identically (future vocabulary)."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-register-file
+     (jetpacs-crud-tests--stage "parser-parity-unknown-source.org"))
+    (let* ((spec (jetpacs-crud--app "mystery"))
+           (view (jetpacs-crud--view spec "feed"))
+           (built (jetpacs-crud--build-view "mystery" "feed" nil))
+           (json (json-serialize built
+                                 :null-object :null :false-object :false)))
+      (should (null (jetpacs-lint-spec built)))
+      (should (string-match-p "is unavailable" json))
+      (should (null (jetpacs-crud--fab spec view)))
+      (should-error (jetpacs-crud-action-record-add
+                     '((app . "mystery") (view . "feed")) nil)
+                    :type 'user-error))))
+
 (ert-deftest jetpacs-crud-parse-depends ()
   "A valid `#+JETPACS_DEPENDS:' parses to the :depends package list."
   (let ((file (make-temp-file
@@ -618,6 +683,23 @@ are preserved verbatim around them."
           (should (string-match-p "| Milk |" written))    ; table data intact
           (when (jetpacs-crud--vulpea-p)                   ; ids adopted for the index
             (should (string-match-p ":ID:" written))))))))
+
+(ert-deftest jetpacs-crud-install-preserves-pack-doc-bytes ()
+  "A document whose only view reads a pack: source survives install and
+redeploy byte-faithfully — the runtime preserves vocabulary it cannot
+serve instead of touching it."
+  (jetpacs-crud-tests--with-clean-state
+    (jetpacs-crud-tests--with-apps-dir dir
+      (let ((text (jetpacs-crud-tests--slurp
+                   (expand-file-name "parser-parity-pack.org"
+                                     jetpacs-crud-tests--fixtures)))
+            (file (expand-file-name "packdemo.org" dir)))
+        (jetpacs-crud-install "packdemo" text)
+        (should (equal (jetpacs-crud-orgapp--slurp file) text))
+        ;; Redeploy the identical document: the merge path must also be
+        ;; byte-faithful (nothing adopted, nothing rewritten).
+        (jetpacs-crud-install "packdemo" text)
+        (should (equal (jetpacs-crud-orgapp--slurp file) text))))))
 
 (ert-deftest jetpacs-crud-install-keeps-old-on-bad-merge ()
   "A structurally invalid redeploy leaves the on-device document intact."

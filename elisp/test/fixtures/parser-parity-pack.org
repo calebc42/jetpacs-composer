@@ -1,0 +1,12 @@
+#+JETPACS_APP: packdemo
+#+JETPACS_APP_FORMAT: 3
+
+* Linked notes
+:PROPERTIES:
+:ORDER: 10
+:KIND: records
+:SOURCE: pack:glasspane/glasspane.notes
+:SCHEMA: %ITEM(Name) %TAGS
+:COLTYPES: text text
+:ACTIONS: pack:glasspane/heading.todo-cycle todo(DONE)
+:END:

@@ -137,7 +137,16 @@ records' `:GROUP_BY:`, which lanes a single board's records.
   vulpea vault directory, where every `.org` note file is one record
   (see Notes views).
 - `pack:<pack-id>/<source>` — an external pack datasource, bound to a
-  `jetpacs-defsource` registry entry.
+  `jetpacs-defsource` registry entry. Both halves must be non-empty
+  (`pack:` with no `/<source>` is a malformed document); whether the
+  named pack actually exists is a *runtime* question — a device without
+  it renders the view as unavailable and dispatches nothing, it never
+  rejects the app.
+- Any other `scheme:` prefix is **future source vocabulary**: parsers
+  accept it, preserve the value verbatim on round-trip, and render the
+  view as unavailable. (`::` continuations don't count — `file.org::*H`
+  stays a file source.) New source types therefore never need a format
+  version bump.
 
 If an external source file does not exist at registration time, the
 runtime creates it when it can: table views need `:COLUMNS:` (for the
@@ -309,11 +318,15 @@ Actions are a closed, space-separated vocabulary attached to each record card:
 - `todo(KEYWORD)` · `schedule` · `deadline`
 - `tags` or `tags(a,b)` · `priority` or `priority(A)`
 - `refile` or `refile(TARGET)` · `archive` or `archive(STYLE)`
-- `pack:<pack-id>/<action>` or `pack:<pack-id>/<action>(args)`
+- `pack:<pack-id>/<action>` or `pack:<pack-id>/<action>(args)` — both
+  halves non-empty (`pack:` with no `/<action>` is malformed and rejects
+  the document); a device without the named pack shows the button but
+  dispatches nothing.
 
-They dispatch through the single closed `crud.action.apply` handler and map to
-org's own mutation commands. Unknown future tokens are preserved and ignored by
-an older runtime rather than preventing the whole app from loading.
+They dispatch through the single closed `crud.action.apply` handler (pack
+tokens through `crud.pack.action`) and map to org's own mutation commands.
+Unknown future tokens are preserved and ignored by an older runtime rather
+than preventing the whole app from loading.
 
 Table and record-like views also expose explicit top-bar export actions: copy
 CSV, copy org-table text, and share CSV. CSV cells beginning with optional

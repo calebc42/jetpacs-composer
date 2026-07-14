@@ -409,6 +409,37 @@ class OrgCodecTest {
     }
 
     @Test
+    fun packReferencesRoundTripByteFaithfully() {
+        val text = fixture("parser-parity-pack.org")
+        val spec = OrgCodec.parse(text)
+        val view = spec.views.single()
+        assertEquals(
+            com.calebc42.composer.model.SourceRef.Pack("glasspane", "glasspane.notes"),
+            view.source,
+        )
+        assertEquals(
+            listOf(
+                com.calebc42.composer.model.ActionDef.PackAction(
+                    "glasspane", "heading.todo-cycle"),
+                com.calebc42.composer.model.ActionDef.SetTodo("DONE"),
+            ),
+            view.actions,
+        )
+        assertEquals(text, OrgCodec.write(spec), "pack round-trip drifted")
+    }
+
+    @Test
+    fun unknownSourceSchemeRoundTripsByteFaithfully() {
+        val text = fixture("parser-parity-unknown-source.org")
+        val spec = OrgCodec.parse(text)
+        assertEquals(
+            com.calebc42.composer.model.SourceRef.Unknown("zzz:mystery/feed"),
+            spec.views.single().source,
+        )
+        assertEquals(text, OrgCodec.write(spec), "unknown-source round-trip drifted")
+    }
+
+    @Test
     fun rejectsMalformed() {
         for (name in listOf("malformed-no-app.org", "malformed-dup.org")) {
             assertFailsWith<OrgCodec.FormatException>(name) {
