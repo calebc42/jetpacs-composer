@@ -1,11 +1,22 @@
 # Plan: rearchitect jetpacs-composer on vulpea + MELPA engines
 
-**STATUS (2026-07-13): Phases 0–1 landed.** The `jetpacs` submodule is
-bumped to the commit shipping `jetpacs-org.el`/`jetpacs-source.el`; the
-full ERT suite (68/68) and bundle smoke (pantry + hello-world) are green
-under `VULPEA_DIR`-enabled WSL. Phase 1 (M9) added `#+JETPACS_DEPENDS:`,
-the composer's engine-install bootstrap, and the FORMAT.md fixes.
-Phases 2–5 below are the remaining work, not yet started.
+**STATUS (2026-07-13): Phases 0–3 landed.** The full ERT suite (74/74)
+and bundle smoke (pantry + hello-world) are green under `VULPEA_DIR`-enabled
+WSL. **Every datasource kind now reads from vulpea:** heading-family kinds
+(records/board/calendar/gallery/tree/dashboard/gantt/notes) from the note
+index, and `table`/`checklist` from a plugin extractor. Registration
+id-adopts source files; writes re-index; all kinds degrade to a "needs
+vulpea" placeholder on bare core. Records address by their stable `:ID:`
+(resolved live, robust to offset shifts) and the record/note cards are
+unified. Phase 1 (M9) added `#+JETPACS_DEPENDS:` + the composer's
+engine-install bootstrap. Phases 4–5 (Kotlin alignment, module split +
+dead-code sweep) remain.
+
+Deferred (optional hardening, not blocking): table/checklist mutations
+address by a `pos` hint from the fresh index (reindex-on-write keeps it
+current) rather than the plan's full `(heading, tbl, row, col)` logical
+addressing; and the vulpea code still lives in `jetpacs-crud.el` rather
+than a split-out `jetpacs-crud-vulpea.el` (Phase 5).
 
 **Known pre-existing failures (not introduced here, tracked for later):**
 three JVM `OrgCodecTest` cases are red from before Phase 1 —
