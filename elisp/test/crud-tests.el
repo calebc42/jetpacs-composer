@@ -783,7 +783,18 @@ Only for intentional wire changes; review the diff."
 ;; ─── Records views (headings + property drawers) ────────────────────────────
 
 (defun jetpacs-crud-tests--record-pos (id view-name title)
-  "Position of the record whose ITEM is TITLE in ID's VIEW-NAME."
+  "Buffer position of the record heading whose ITEM is TITLE in ID's VIEW-NAME.
+Records address by `:ID:' now, so this reads the live position from the
+source file directly (exercising the resolver's `pos' fallback path)."
+  (let* ((spec (jetpacs-crud--app id))
+         (view (jetpacs-crud--view spec view-name))
+         (file (car (jetpacs-crud--view-source spec view))))
+    (jetpacs-crud--with-source file
+      ;; POS-ONLY t -> returns a bare position, not a marker.
+      (org-find-exact-headline-in-buffer title nil t))))
+
+(defun jetpacs-crud-tests--record-id (id view-name title)
+  "The stable `:ID:' of the record whose ITEM is TITLE in ID's VIEW-NAME."
   (let* ((spec (jetpacs-crud--app id))
          (view (jetpacs-crud--view spec view-name)))
     (plist-get
@@ -791,7 +802,7 @@ Only for intentional wire changes; review the diff."
               :key (lambda (r)
                      (alist-get "ITEM" (plist-get r :fields) nil nil #'equal))
               :test #'equal)
-     :pos)))
+     :id)))
 
 (ert-deftest jetpacs-crud-records-parse-and-scan ()
   (jetpacs-crud-tests--with-clean-state
@@ -889,18 +900,47 @@ in both whole-file and subtree (`::*Heading') scopes."
         (should (string-match-p "Notes about Ada that must survive" content))
         (should (string-match-p "Prose before any heading" content))))))
 
+(ert-deftest jetpacs-crud-field-edit-by-id-survives-offset-shift ()
+  "A record edit addressed by :ID: resolves live, robust to a shifted file.
+Prepending content moves every record's offset; a stale `pos' would land
+in the wrong place, but id resolution finds the record in the current
+file.  This is the id-addressing hardening."
+  (skip-unless (require 'vulpea nil t))
+  (jetpacs-crud-tests--with-clean-state
+    (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
+           (data (expand-file-name "people.org" (file-name-directory file))))
+      (jetpacs-crud-register-file file)
+      (let ((id (jetpacs-crud-tests--record-id "crm" "people" "Ada Lovelace")))
+        (should (stringp id))
+        ;; Externally prepend a heading, shifting every record's offset down.
+        (jetpacs-crud-orgapp--write
+         data (concat "* Injected decoy\nlots of text that moves offsets\n\n"
+                      (jetpacs-crud-orgapp--slurp data)))
+        ;; Edit by id only (no pos): resolution must relocate Ada in the new file.
+        (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "555-9999")))
+          (jetpacs-crud-action-field-edit
+           `((app . "crm") (view . "people") (id . ,id) (prop . "Phone")) nil))
+        (let ((content (jetpacs-crud-tests--slurp data)))
+          (should (string-match-p "Injected decoy" content))     ; the shift stuck
+          ;; Ada — the id target — got the new phone; her old one is gone.
+          (should (string-match-p ":Phone: *555-9999" content))
+          (should-not (string-match-p "555-0100" content))
+          (should (string-match-p "Notes about Ada that must survive" content))
+          ;; Grace (a sibling record) is untouched — the edit hit exactly one.
+          (should (string-match-p ":Phone: *555-0199" content)))))))
+
 (ert-deftest jetpacs-crud-record-detail-includes-fields-and-entry-prose ()
   (jetpacs-crud-tests--with-clean-state
     (let* ((file (jetpacs-crud-tests--stage "crm.org" "people.org"))
            (dialog nil)
            (style nil))
       (jetpacs-crud-register-file file)
-      (let ((pos (jetpacs-crud-tests--record-pos "crm" "people" "Ada Lovelace")))
+      (let ((id (jetpacs-crud-tests--record-id "crm" "people" "Ada Lovelace")))
         (cl-letf (((symbol-function 'jetpacs-send-dialog)
                    (lambda (node &optional dialog-style)
                      (setq dialog node style dialog-style))))
           (jetpacs-crud-action-record-detail
-           `((app . "crm") (view . "people") (pos . ,pos)) nil)))
+           `((app . "crm") (view . "people") (id . ,id)) nil)))
       (let ((json (json-serialize (jetpacs-render-to-json dialog))))
         (should (equal style "sheet_full"))
         (should (string-match-p "555-0100" json))

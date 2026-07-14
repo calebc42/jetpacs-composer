@@ -482,10 +482,10 @@ STATE is the checkbox character; POS the item's line start."
 Read from the vulpea index via the shared `jetpacs-crud--view-notes-records'
 — the records are the id-adopted direct children of the source heading
 (the file's level-1 headings when the source names none), kept when they
-match the view's `:FILTER:'.  The `:id' is dropped here so the record
-binding keeps addressing by `:pos' (the note's indexed heading position);
-callers gate on `jetpacs-crud--vulpea-p' and degrade when it is absent."
-  (mapcar (lambda (r) (list :pos (plist-get r :pos)
+match the view's `:FILTER:'.  Records address by their stable `:ID:' (like
+notes); callers gate on `jetpacs-crud--vulpea-p' and degrade when it is
+absent."
+  (mapcar (lambda (r) (list :id (plist-get r :id)
                             :done (plist-get r :done)
                             :fields (plist-get r :fields)))
           (jetpacs-crud--view-notes-records spec view)))
@@ -608,52 +608,63 @@ and note records."
                                   :args (funcall args-for "TAGS"))
                   :content-description "Edit tags")))))))))
 
-(defun jetpacs-crud--record-card (spec view record &optional footer)
-  "The card node for RECORD of VIEW in SPEC.
-If FOOTER is provided, it is appended as the last child of the card's column."
+(defun jetpacs-crud--record-card (spec view record &optional footer notep detailp)
+  "The card node for a heading RECORD (:id :fields) of VIEW in SPEC.
+Records and vulpea notes share this one card — both address by the stable
+`:ID:'.  NOTEP selects the `crud.note.*' action vocabulary (delete-note,
+note.field.edit) over the record one (duplicate + delete-record,
+field.edit); DETAILP (notes' inline detail sheet) makes the title tap
+edit ITEM rather than open the detail view.  FOOTER, when given, becomes
+the column's last child."
   (let* ((fields (plist-get record :fields))
-         (pos (plist-get record :pos))
+         (id (plist-get record :id))
          (schema (jetpacs-crud--schema-props view))
          (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
                   (if (and item (not (string-empty-p item))) item "Untitled")))
          (actions (jetpacs-crud--action-tokens (plist-get view :actions)))
+         (edit-action-name (if notep "crud.note.field.edit" "crud.field.edit"))
          (args-for (lambda (prop)
                      `((app . ,(plist-get spec :id))
                        (view . ,(plist-get view :name))
-                       (pos . ,pos)
+                       (id . ,id)
                        ,@(when prop `((prop . ,prop)))))))
     (jetpacs-card
      (list
       (jetpacs-column
-
        (jetpacs-row
         (jetpacs-box
          (list (jetpacs-crud--record-title-node record fields title))
          :weight 1
-         :on-tap (jetpacs-action "crud.record.detail"
-                              :args (funcall args-for nil)))
+         :on-tap (if (and notep detailp)
+                     (when (cl-find "ITEM" schema :key #'car :test #'equal)
+                       (jetpacs-action edit-action-name
+                                    :args (funcall args-for "ITEM")))
+                   (jetpacs-action "crud.record.detail"
+                                :args (funcall args-for nil))))
         (jetpacs-menu
          (append
           (delq nil (mapcar (lambda (a) (jetpacs-crud--action-menu a args-for)) actions))
-          (list (jetpacs-menu-item "Duplicate record"
-                                (jetpacs-action "crud.record.duplicate"
-                                             :args (funcall args-for nil))
-                                :icon "content_copy")
-                (jetpacs-menu-item "Delete record"
-                                (jetpacs-action "crud.record.menu"
+          (unless notep
+            (list (jetpacs-menu-item "Duplicate record"
+                                  (jetpacs-action "crud.record.duplicate"
+                                               :args (funcall args-for nil))
+                                  :icon "content_copy")))
+          (list (jetpacs-menu-item (if notep "Delete note" "Delete record")
+                                (jetpacs-action (if notep "crud.note.menu"
+                                                  "crud.record.menu")
                                              :args (funcall args-for nil))
                                 :icon "delete")))))
        (apply #'jetpacs-column
               (append
                (jetpacs-crud--record-meta-nodes
-                spec view fields args-for "crud.field.edit")
+                spec view fields args-for edit-action-name)
                (cl-loop for (prop . label) in schema
                         unless (member prop jetpacs-crud--card-special-props)
                         collect
                         (let* ((value (alist-get prop fields nil nil #'equal))
                                (ctype (jetpacs-crud--field-type view prop))
                                (refp (and (consp ctype) (eq (car ctype) 'ref)))
-                               (edit-action (jetpacs-action "crud.field.edit"
+                               (edit-action (jetpacs-action edit-action-name
                                                             :args (funcall args-for prop))))
                           (jetpacs-box
                            (list
@@ -687,10 +698,8 @@ If FOOTER is provided, it is appended as the last child of the card's column."
                                       `((app . ,(plist-get spec :id))
                                         (view . ,(plist-get view :name)))))
          (records (mapcar (lambda (item)
-                            (let* ((id-str (alist-get "id" item nil nil #'equal))
-                                   (pos (and id-str (string-to-number id-str))))
-                              (list :pos pos
-                                    :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item))))
+                            (list :id (alist-get "id" item nil nil #'equal)
+                                  :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item)))
                           items))
          (search-id (format "search_%s" (plist-get view :name)))
          (search-input (jetpacs-text-input search-id
@@ -1312,22 +1321,20 @@ address by their stable `:ID:', so `:pos'/`:done' are dropped here."
                   (view (jetpacs-crud--view spec (alist-get 'view params))))
              (mapcar (lambda (record)
                        (let ((alist nil))
-                         (push (cons "id" (or (plist-get record :id) (number-to-string (plist-get record :pos)))) alist)
+                         (push (cons "id" (plist-get record :id)) alist)
                          (dolist (f (plist-get record :fields))
                            (push (cons (car f) (cdr f)) alist))
                          alist))
                      (jetpacs-crud--scan-records-impl spec view)))))
 
 (defun jetpacs-crud--scan-records (spec view)
-  "VIEW's records via the core binding layer."
+  "VIEW's records via the core binding layer; each addressed by its `:id'."
   (let ((items (jetpacs-source-query "crud.records"
                                      `((app . ,(plist-get spec :id))
                                        (view . ,(plist-get view :name))))))
     (mapcar (lambda (item)
-              (let* ((id-str (alist-get "id" item nil nil #'equal))
-                     (pos (and id-str (string-to-number id-str))))
-                (list :pos pos
-                      :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item))))
+              (list :id (alist-get "id" item nil nil #'equal)
+                    :fields (cl-remove-if (lambda (c) (equal (car c) "id")) item)))
             items)))
 
 (jetpacs-defsource "crud.notes"
@@ -1356,78 +1363,9 @@ address by their stable `:ID:', so `:pos'/`:done' are dropped here."
             items)))
 
 (defun jetpacs-crud--note-card (spec view record &optional footer detailp)
-  "The card node for note RECORD (:id :fields) of VIEW in SPEC.
-Mirrors the records card, but taps carry the stable note `:ID:' and
-fire the `crud.note.*' actions."
-  (let* ((fields (plist-get record :fields))
-         (id (plist-get record :id))
-         (schema (jetpacs-crud--schema-props view))
-         (title (let ((item (alist-get "ITEM" fields nil nil #'equal)))
-                  (if (and item (not (string-empty-p item))) item "Untitled")))
-         (actions (jetpacs-crud--action-tokens (plist-get view :actions)))
-         (args-for (lambda (prop)
-                     `((app . ,(plist-get spec :id))
-                       (view . ,(plist-get view :name))
-                       (id . ,id)
-                       ,@(when prop `((prop . ,prop)))))))
-    (jetpacs-card
-     (list
-      (jetpacs-column
-       (jetpacs-row
-        (jetpacs-box
-         (list (jetpacs-crud--record-title-node record fields title))
-         :weight 1
-         :on-tap (if detailp
-                     (when (cl-find "ITEM" schema :key #'car :test #'equal)
-                       (jetpacs-action "crud.note.field.edit"
-                                    :args (funcall args-for "ITEM")))
-                   (jetpacs-action "crud.record.detail"
-                                :args (funcall args-for nil))))
-        (jetpacs-menu
-         (append
-          (delq nil (mapcar (lambda (a) (jetpacs-crud--action-menu a args-for))
-                            actions))
-          (list (jetpacs-menu-item "Delete note"
-                                (jetpacs-action "crud.note.menu"
-                                             :args (funcall args-for nil))
-                                :icon "delete")))))
-       (apply #'jetpacs-column
-              (append
-               (jetpacs-crud--record-meta-nodes
-                spec view fields args-for "crud.note.field.edit")
-               (cl-loop for (prop . label) in schema
-                       unless (member prop jetpacs-crud--card-special-props)
-                       collect
-                       (let* ((value (alist-get prop fields nil nil #'equal))
-                              (ctype (jetpacs-crud--field-type view prop))
-                              (refp (and (consp ctype) (eq (car ctype) 'ref)))
-                              (edit-action (jetpacs-action "crud.note.field.edit"
-                                                           :args (funcall args-for prop))))
-                         (jetpacs-box
-                          (list
-                           (apply #'jetpacs-row
-                                  (delq nil
-                                        (list
-                                         (jetpacs-text (or label prop) 'caption nil nil nil 1)
-                                         (jetpacs-spacer :width 12)
-                                         (jetpacs-text (if (string-empty-p value)
-                                                           "—"
-                                                         (if refp
-                                                             (jetpacs-crud--ref-resolve
-                                                              spec (cadr ctype) value (caddr ctype))
-                                                           value))
-                                                       'body 1)
-                                         (when refp
-                                           (jetpacs-icon-button
-                                            "edit" edit-action
-                                            :content-description
-                                            (format "Edit %s reference" (or label prop))))))))
-                          :on-tap (or (jetpacs-crud--ref-action spec ctype value)
-                                      edit-action)
-                          :padding 2)))
-               (when footer (list footer))))))
-     :swipe-start (jetpacs-crud--action-swipe (nth 0 actions) args-for)
-     :swipe-end (jetpacs-crud--action-swipe (nth 1 actions) args-for))))
+  "The card for a vulpea note RECORD — the shared record card in note mode.
+Taps carry the stable note `:ID:' and fire the `crud.note.*' actions."
+  (jetpacs-crud--record-card spec view record footer t detailp))
 
 (defun jetpacs-crud--notes-body (spec view)
   "The body node for a notes VIEW of SPEC (vulpea-backed, degrades)."
@@ -1938,19 +1876,36 @@ The wire supplies only the app id and never a path or mutation position."
       (let ((save-silently t)) (save-buffer)))
     (jetpacs-shell-push)))
 
+(defun jetpacs-crud--resolve-id-pos (file id pos-hint)
+  "The live buffer position of heading ID in FILE, or POS-HINT if not found.
+Searches the declared source FILE itself (never a wire path), so an id can
+only ever address a heading inside the view's own source — and the offset
+is recomputed against the current contents, robust to edits that shifted
+positions since the wire was rendered."
+  (jetpacs-crud--with-source file
+    (or (org-find-entry-with-id id) pos-hint)))
+
 (defun jetpacs-crud--resolve (args &optional need-pos)
   "Resolve wire ARGS to (SPEC VIEW FILE POS); validate everything.
 The file comes from the registered spec, never from the wire, so a
-handler can only ever touch a declared source.  Signals `user-error'
-on anything unknown."
-  (let* ((id (alist-get 'app args))
+handler can only ever touch a declared source.  A record `id' on the wire
+is resolved to a live position in that source
+\(`jetpacs-crud--resolve-id-pos'), which is robust to external edits that
+shifted offsets; a bare `pos' (table cells, or an id-less caller) is used
+as-is.  Signals `user-error' on anything unknown."
+  (let* ((appid (alist-get 'app args))
          (name (alist-get 'view args))
-         (pos (alist-get 'pos args))
-         (spec (or (jetpacs-crud--app id)
-                   (user-error "Unknown CRUD app: %S" id)))
+         (nid (alist-get 'id args))
+         (pos-hint (alist-get 'pos args))
+         (spec (or (jetpacs-crud--app appid)
+                   (user-error "Unknown CRUD app: %S" appid)))
          (view (or (jetpacs-crud--view spec name)
-                   (user-error "Unknown view %S in app %s" name id)))
-         (file (car (jetpacs-crud--view-source spec view))))
+                   (user-error "Unknown view %S in app %s" name appid)))
+         (file (car (jetpacs-crud--view-source spec view)))
+         (pos (if (and (stringp nid) (not (string-empty-p nid))
+                       (file-readable-p file))
+                  (jetpacs-crud--resolve-id-pos file nid pos-hint)
+                pos-hint)))
     (when (and need-pos (not (integerp pos)))
       (user-error "Missing position in %S" args))
     (unless (file-readable-p file)
@@ -2468,9 +2423,7 @@ declares them, else from the declared column type."
           (lambda (prop)
             `((app . ,(plist-get spec :id))
               (view . ,(plist-get view :name))
-              ,(if notep
-                   `(id . ,(plist-get record :id))
-                 `(pos . ,(plist-get record :pos)))
+              (id . ,(plist-get record :id))
               ,@(when prop `((prop . ,prop)))))))
     (apply
      #'jetpacs-lazy-column
@@ -2563,7 +2516,6 @@ VALUE is its current preview-local draft, ALLOWED is org's optional
 Opens a dedicated typed detail composition inside a full bottom sheet."
   (let* ((app (alist-get 'app args))
          (view-name (alist-get 'view args))
-         (pos (alist-get 'pos args))
          (id (alist-get 'id args))
          (spec (jetpacs-crud--app app))
          (view (jetpacs-crud--view spec view-name)))
@@ -2583,16 +2535,12 @@ Opens a dedicated typed detail composition inside a full bottom sheet."
             t)
            "sheet_full"))
       (let* ((records (jetpacs-crud--scan-records spec view))
-             (record (if pos
-                         (cl-find pos records :key (lambda (r) (plist-get r :pos)))
-                       (cl-find id records
-                                :key (lambda (r)
-                                       (alist-get "ID" (plist-get r :fields)
-                                                  nil nil #'equal))
-                                :test #'equal))))
+             (record (cl-find id records
+                              :key (lambda (r) (plist-get r :id))
+                              :test #'equal)))
         (unless record (user-error "Record not found"))
-        (let* ((record-pos (plist-get record :pos))
-               (file (car (jetpacs-crud--view-source spec view))))
+        (let* ((file (car (jetpacs-crud--view-source spec view)))
+               (record-pos (jetpacs-crud--resolve-id-pos file id nil)))
           (jetpacs-send-dialog
            (jetpacs-crud--record-detail-node
             spec view record
