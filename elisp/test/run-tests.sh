@@ -57,6 +57,11 @@ smoke () { # smoke APP-ID EXPECTED-VIEW-COUNT
 rc=0
 smoke pantry 2 || rc=1
 smoke hello-world 8 || rc=1
+# The pack-backed app: builds against the staged glasspane manifest (the
+# bundle embeds a trusted jetpacs-crud-pack-register), and on BARE core —
+# no glasspane feature — its one view must still register, lint clean,
+# and render the fail-closed unavailable placeholder.
+smoke packdemo 1 || rc=1
 rm -rf "$TMP"
 [ "$rc" -eq 0 ] || { echo "bundle smoke FAILED"; exit 1; }
 echo "All suites passed."

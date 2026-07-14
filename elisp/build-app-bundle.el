@@ -34,6 +34,36 @@
       (insert-file-contents file))
     (buffer-string)))
 
+(defun jetpacs-crud-bundle--uses-pack-p (spec)
+  "Non-nil when SPEC uses any pack feature (declaration, source, action)."
+  (or (plist-get spec :pack)
+      (cl-some (lambda (view)
+                 (or (plist-get (plist-get view :source) :pack)
+                     (let ((actions (plist-get view :actions)))
+                       (and actions (string-match-p "\\_<pack:" actions)))))
+               (plist-get spec :views))))
+
+(defun jetpacs-crud-bundle--pack-registration (json-text)
+  "The trusted `jetpacs-crud-pack-register' form for manifest JSON-TEXT.
+The bundle is generated against the locally installed manifest, so the
+registration it carries is trusted code — the document alone can never
+choose a feature (SPEC §5).  Must stay byte-identical to
+BundleExporter.packRegistration (the JVM twin)."
+  (let* ((m (json-parse-string json-text))
+         (id (gethash "pack_id" m))
+         (feature (gethash "feature" m))
+         (version (gethash "pack_version" m))
+         (sources (mapcar (lambda (s) (gethash "name" s))
+                          (append (gethash "sources" m) nil)))
+         (actions (mapcar (lambda (a) (gethash "action" a))
+                          (append (gethash "actions" m) nil))))
+    (concat (format "(jetpacs-crud-pack-register %S" id)
+            (when (stringp feature) (format " :feature '%s" feature))
+            (format " :version %S" version)
+            (when sources (format " :sources '%S" sources))
+            (when actions (format " :actions '%S" actions))
+            ")\n")))
+
 (defun jetpacs-crud-build-bundle (app-file &optional out-dir)
   "Build the single-file bundle for APP-FILE into OUT-DIR (default: its dir).
 Validates the document first — a bundle is only ever built from a spec
@@ -50,6 +80,23 @@ that parses.  Returns the output path."
   (let* ((spec (jetpacs-crud-parse-app app-file))
          (id (plist-get spec :id))
          (text (jetpacs-crud-bundle--slurp app-file))
+         ;; A pack-backed app exports only against its locally installed
+         ;; manifest — <pack-id>-pack.json beside the document (fail
+         ;; closed: no manifest, no bundle).  The registration the bundle
+         ;; carries is derived from that manifest, never from app data.
+         (manifest
+          (when (jetpacs-crud-bundle--uses-pack-p spec)
+            (let* ((pack-id (or (plist-get (plist-get spec :pack) :id)
+                                (user-error
+                                 "%s: uses pack references but declares no #+JETPACS_PACK:"
+                                 app-file)))
+                   (mf (expand-file-name
+                        (concat pack-id "-pack.json")
+                        (file-name-directory (expand-file-name app-file)))))
+              (unless (file-readable-p mf)
+                (user-error "%s: pack-backed app needs its installed manifest %s"
+                            app-file mf))
+              (jetpacs-crud-bundle--slurp mf))))
          (out (expand-file-name
                (format "jetpacs-app-%s.el" id)
                (or out-dir (file-name-directory (expand-file-name app-file)))))
@@ -71,6 +118,12 @@ that parses.  Returns the output path."
         (insert (jetpacs-crud-bundle--slurp
                  (expand-file-name part jetpacs-crud-bundle--here)))
         (insert "\n"))
+      (when manifest
+        (insert ";;; ==================================================================\n"
+                ";;; The pack manifest (trusted registration; exported against it)\n"
+                ";;; ==================================================================\n\n"
+                (jetpacs-crud-bundle--pack-registration manifest)
+                "\n"))
       (insert ";;; ==================================================================\n"
               ";;; The app document\n"
               ";;; ==================================================================\n\n"

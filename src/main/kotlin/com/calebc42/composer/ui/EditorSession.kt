@@ -7,6 +7,9 @@ import androidx.compose.runtime.setValue
 import com.calebc42.composer.export.BundleExporter
 import com.calebc42.composer.model.AppSpec
 import com.calebc42.composer.model.ModelOps
+import com.calebc42.composer.model.PackManifest
+import com.calebc42.composer.model.PackRegistry
+import com.calebc42.composer.model.usesPackFeatures
 import com.calebc42.composer.org.OrgCodec
 import com.calebc42.composer.project.RecentFiles
 import java.io.File
@@ -48,6 +51,18 @@ class EditorSession private constructor(
      * itself via `#+JETPACS_PACK:`.
      */
     var selectedPackId by mutableStateOf<String?>(null)
+
+    /** The installed-manifest store; the editor screen keeps it current. */
+    var packs: PackRegistry = PackRegistry.EMPTY
+
+    /**
+     * The manifest a pack-backed export binds against: the document's
+     * declared pack, resolved in the installed store. null for pack-free
+     * apps — and for a declared pack with no installed manifest, which
+     * [export] then fails closed on.
+     */
+    fun exportManifest(): PackManifest? =
+        spec.pack?.let { packs.byId(it.packId) }
 
     /**
      * Apply one edit. Consecutive edits with the same non-null [coalesceKey]
@@ -111,7 +126,8 @@ class EditorSession private constructor(
 
     fun documentText(): String = OrgCodec.write(spec)
 
-    fun bundleText(): String = BundleExporter.assemble(spec, documentText())
+    fun bundleText(): String =
+        BundleExporter.assemble(spec, documentText(), exportManifest())
 
     /** Write the canonical document to [target] (default: current file). */
     fun save(target: File? = null): String? {
@@ -158,12 +174,26 @@ class EditorSession private constructor(
             lastError = message
             return Result.failure(IllegalStateException(message, cause))
         }
+        // Fail closed on the pack lifecycle: a pack-backed app exports
+        // only against a locally installed manifest for its declared pack.
+        if (spec.usesPackFeatures() && exportManifest() == null) {
+            val message = if (spec.pack == null)
+                "Bundle export blocked: this app uses pack references but " +
+                    "declares no #+JETPACS_PACK:"
+            else
+                "Bundle export blocked: no installed manifest for the " +
+                    "declared pack \"${spec.pack!!.packId}\" (Settings → " +
+                    "pack manifest directory)"
+            lastError = message
+            return Result.failure(IllegalStateException(message))
+        }
         save()?.let { return Result.failure(Exception(it)) }
         val doc = file!!
         return runCatching {
             val out = File(exportDir?.takeIf { it.path.isNotBlank() } ?: doc.parentFile,
                            BundleExporter.bundleFileName(spec))
-            out.writeText(BundleExporter.assemble(spec, document), Charsets.UTF_8)
+            out.writeText(BundleExporter.assemble(spec, document, exportManifest()),
+                          Charsets.UTF_8)
             out
         }.onFailure { lastError = it.message }
     }

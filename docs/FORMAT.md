@@ -75,6 +75,36 @@ The composer declares the pack automatically when a view references
 one. Like `DEPENDS`, the declaration itself never blocks an app from
 loading anywhere.
 
+### Pack binding at runtime (fail closed)
+
+The bundle a pack-backed app exports embeds one
+`jetpacs-crud-pack-register` form derived from the **locally installed
+manifest the export ran against** (export refuses to run without it).
+That registration — pack id, feature, version, declared source/action
+names — is *trusted generated code*; the document alone can never
+register a pack, choose a feature, or trigger an install (SPEC §5).
+
+Rendering a `pack:` view resolves, in order: the pack is registered and
+uncontested (two manifests claiming one id serve nothing), the installed
+version satisfies the document's `#+JETPACS_PACK:` minimum, the pack's
+feature `require`s, the source name is declared by the manifest AND
+present in the core source registry. Any failure renders the
+unavailable-view placeholder naming the reason, with no mutation
+affordances. Source params bind from the view's `:FILTER:` string: if
+every whitespace token is `key=value` with declared param keys, each
+binds by name; otherwise the raw string binds the source's `query`
+param when it declares one. A required param the view cannot bind fails
+the query — and the view degrades — rather than guessing.
+
+Pack actions dispatch through the closed `crud.pack.action` handler:
+the token must be declared by the **registered** view's `:ACTIONS:`
+(the wire cannot invent one), the pack must resolve as above, and the
+action name must be in the manifest's declared list AND registered in
+the device's action registry. Static args come from the token's
+`(key=value,…)` options; dynamic args (like the tapped record's `ref`)
+ride the wire and never override static ones. Anything short of all of
+it is a clean error with nothing dispatched.
+
 ### Device setup — what installs the engines
 
 The composer provisions a device once, either by pasting its **install

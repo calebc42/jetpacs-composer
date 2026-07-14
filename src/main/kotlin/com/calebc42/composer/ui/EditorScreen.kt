@@ -84,6 +84,7 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
     val packRegistry = remember(config.packDirectory) {
         PackRegistry.load(config.packDirectory?.let(::File))
     }
+    session.packs = packRegistry
     val problems = ModelOps.validate(
         session.spec,
         nodeTypes = ContractManifest.contract.node_types.toSet(),
@@ -142,7 +143,10 @@ fun EditorScreen(session: EditorSession, config: ComposerConfig,
             OutlinedButton(onClick = { sourcePreviewDialog = session.documentText() to "org" }) {
                 Text("app.org")
             }
-            OutlinedButton(onClick = { sourcePreviewDialog = session.bundleText() to "elisp" }) {
+            OutlinedButton(onClick = {
+                sourcePreviewDialog = runCatching { session.bundleText() }
+                    .getOrElse { ";; Export blocked: ${it.message}" } to "elisp"
+            }) {
                 Text("Exported elisp")
             }
             Button(onClick = {

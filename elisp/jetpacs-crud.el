@@ -1332,33 +1332,216 @@ WHAT names the view in the title."
     :title (format "%s needs vulpea" (or what "This view"))
     :caption "Install the vulpea package on this device to use this view.")))
 
+;; ─── Pack binding (manifest-backed engine packs; SPEC §5, fail closed) ──────
+;;
+;; A `pack:<id>/<name>' source or action resolves against a pack the
+;; DEVICE has: `jetpacs-crud-pack-register' is called from trusted elisp
+;; only — a generated app bundle (the composer emits the registration
+;; from the locally installed *-pack.json it exported against) or the
+;; pack's own package.  App data (the .org document) can name a pack but
+;; can never register one, choose a feature, or trigger an install: an
+;; unregistered/contested/version-gated/unloadable pack renders the view
+;; unavailable and dispatches nothing.
+
+(defvar jetpacs-crud--packs (make-hash-table :test 'equal)
+  "Registered pack manifest facts: PACK-ID -> plist or the symbol `contested'.
+The plist keys are :feature (the Emacs feature the runtime requires
+before binding), :version (the pack's version string), :sources and
+:actions (the manifest's declared name lists).")
+
+(cl-defun jetpacs-crud-pack-register (pack-id &key feature version sources actions)
+  "Register engine pack PACK-ID's manifest facts (trusted callers only).
+FEATURE is the Emacs feature required before any binding; VERSION the
+pack's version string; SOURCES and ACTIONS the manifest's declared name
+lists.  Re-registering identical facts is idempotent (a bundle reload);
+a conflicting claim marks the id CONTESTED and every resolution for it
+fails closed — two manifests claiming one id is never silently decided."
+  (let ((entry (list :feature feature :version version
+                     :sources sources :actions actions))
+        (existing (gethash pack-id jetpacs-crud--packs)))
+    (cond
+     ((null existing) (puthash pack-id entry jetpacs-crud--packs))
+     ((equal existing entry) nil)
+     (t (puthash pack-id 'contested jetpacs-crud--packs)
+        (display-warning
+         'jetpacs-crud
+         (format "pack id %S claimed twice with different manifests — failing closed"
+                 pack-id)
+         :warning)))
+    pack-id))
+
+(defun jetpacs-crud--pack-resolve (spec pack-id)
+  "Resolve PACK-ID to its servable registry entry for app SPEC.
+Returns (ENTRY . nil) when servable, or (nil . REASON) when the binding
+must fail closed: unregistered, contested, below the app's declared
+`#+JETPACS_PACK:' minimum version, or the feature won't load."
+  (let ((entry (gethash pack-id jetpacs-crud--packs))
+        (declared-min (and (equal pack-id
+                                  (plist-get (plist-get spec :pack) :id))
+                           (plist-get (plist-get spec :pack) :min-version))))
+    (cond
+     ((null entry)
+      (cons nil (format "pack %s is not installed on this device" pack-id)))
+     ((eq entry 'contested)
+      (cons nil (format "pack id %s is claimed by two different manifests"
+                        pack-id)))
+     ((and declared-min
+           (condition-case nil
+               (version< (or (plist-get entry :version) "0") declared-min)
+             (error t)))                ; unparsable versions fail closed
+      (cons nil (format "this app needs pack %s >= %s (installed: %s)"
+                        pack-id declared-min
+                        (or (plist-get entry :version) "unknown"))))
+     ((not (and (plist-get entry :feature)
+                (require (plist-get entry :feature) nil t)))
+      (cons nil (format "pack %s's feature `%s' is not available on this device"
+                        pack-id (plist-get entry :feature))))
+     (t (cons entry nil)))))
+
+(defun jetpacs-crud--pack-binding (spec view)
+  "Resolve VIEW's `pack:' source to a live source binding.
+Returns (:source NAME) on success, else (:error REASON).  On top of
+`jetpacs-crud--pack-resolve', the source name must be declared by the
+manifest AND registered in the core source registry — a closed
+vocabulary end to end, never a lookup the document invented."
+  (let* ((src (plist-get view :source))
+         (pack-id (plist-get src :pack))
+         (name (plist-get src :source)))
+    (pcase-let ((`(,entry . ,reason) (jetpacs-crud--pack-resolve spec pack-id)))
+      (cond
+       (reason (list :error reason))
+       ((not (member name (plist-get entry :sources)))
+        (list :error (format "pack %s does not provide source %s" pack-id name)))
+       ((not (jetpacs-source-p name))
+        (list :error (format "pack %s did not register source %s" pack-id name)))
+       (t (list :source name))))))
+
+(defun jetpacs-crud--pack-params (view name)
+  "Bind VIEW's `:FILTER:' string onto source NAME's declared params.
+When every whitespace-separated token of the filter is `key=value' with
+a declared param key, each binds that param; otherwise the whole raw
+string binds the declared `query' param when the source has one.  No
+filter binds nothing — `jetpacs-source-query' still enforces required
+params, so an unbindable required param fails the query and the view
+degrades instead of guessing."
+  (let* ((filter (plist-get view :filter))
+         (entry (cl-find name (jetpacs-source-catalog)
+                         :key (lambda (e) (alist-get 'name e)) :test #'equal))
+         (declared (mapcar (lambda (p) (alist-get 'name p))
+                           (append (alist-get 'params entry) nil))))
+    (when (and filter (not (string-empty-p (string-trim filter))))
+      (let ((pairs (mapcar (lambda (tok)
+                             (and (string-match
+                                   "\\`\\([a-z][a-z0-9_-]*\\)=\\(.*\\)\\'" tok)
+                                  (cons (match-string 1 tok)
+                                        (match-string 2 tok))))
+                           (split-string filter "[ \t]+" t))))
+        (if (and pairs (cl-every #'identity pairs)
+                 (cl-every (lambda (kv) (member (car kv) declared)) pairs))
+            (mapcar (lambda (kv) (cons (intern (car kv)) (cdr kv))) pairs)
+          (when (member "query" declared)
+            (list (cons 'query (string-trim filter)))))))))
+
+(defun jetpacs-crud--pack-field (item prop)
+  "PROP's value in pack ITEM (a string-keyed alist), case-insensitively."
+  (or (alist-get prop item nil nil #'equal)
+      (cdr (cl-assoc prop item
+                     :test (lambda (a b)
+                             (and (stringp a) (stringp b)
+                                  (string-equal (downcase a) (downcase b))))))))
+
+(defun jetpacs-crud--pack-value-string (value)
+  "VALUE rendered for a pack card: joins list/vector fields."
+  (cond ((null value) "")
+        ((stringp value) value)
+        ((or (listp value) (vectorp value))
+         (mapconcat (lambda (v) (format "%s" v)) (append value nil) ", "))
+        (t (format "%s" value))))
+
+(defun jetpacs-crud--pack-card-actions (spec view ref)
+  "Buttons for VIEW's declared `pack:' actions, carrying the item's REF."
+  (delq nil
+        (mapcar
+         (lambda (token-cons)
+           (let ((token (car token-cons)))
+             (when (string-prefix-p "pack:" token)
+               (jetpacs-button
+                (substring token (1+ (string-search "/" token)))
+                (jetpacs-action "crud.pack.action"
+                                :args `((app . ,(plist-get spec :id))
+                                        (view . ,(plist-get view :name))
+                                        (token . ,token)
+                                        (options . ,(cdr token-cons))
+                                        ,@(when ref `((ref . ,ref)))))
+                :icon "extension" :variant "outlined"))))
+         (jetpacs-crud--action-tokens (plist-get view :actions)))))
+
+(defun jetpacs-crud--pack-card (spec view item)
+  "A read-only record card for pack ITEM in VIEW.
+Fields come from the view's schema, matched case-insensitively against
+the item's declared field names; mutation is pack actions only."
+  (let* ((schema (jetpacs-crud--schema-props view))
+         (title (or (jetpacs-crud--pack-field item "ITEM")
+                    (jetpacs-crud--pack-field item "title")
+                    (jetpacs-crud--pack-field item "headline")
+                    "Untitled"))
+         (ref (or (jetpacs-crud--pack-field item "ref")
+                  (jetpacs-crud--pack-field item "id"))))
+    (jetpacs-card
+     (append
+      (list (jetpacs-text (jetpacs-crud--pack-value-string title) 'title))
+      (cl-loop for (prop . label) in schema
+               unless (string-equal (upcase prop) "ITEM")
+               for value = (jetpacs-crud--pack-field item prop)
+               unless (or (null value) (equal value ""))
+               collect (jetpacs-text
+                        (format "%s: %s" (or label prop)
+                                (jetpacs-crud--pack-value-string value))
+                        'body))
+      (jetpacs-crud--pack-card-actions spec view ref))
+     :padding 12)))
+
+(defun jetpacs-crud--pack-body (spec view source-name)
+  "VIEW's body from bound pack source SOURCE-NAME (read-only cards).
+A query error — including a required param the view cannot bind —
+degrades to the unavailable placeholder rather than half-rendering."
+  (let* ((params (jetpacs-crud--pack-params view source-name))
+         (items (condition-case err
+                    (jetpacs-source-query source-name params)
+                  (error (list 'jetpacs-crud--query-error
+                               (error-message-string err))))))
+    (if (eq (car-safe items) 'jetpacs-crud--query-error)
+        (jetpacs-crud--unavailable-source-body view (cadr items))
+      (apply #'jetpacs-lazy-column
+             (or (mapcar (lambda (item)
+                           (jetpacs-crud--pack-card spec view item))
+                         items)
+                 (list (jetpacs-empty-state
+                        :icon "extension"
+                        :title "Nothing here yet"
+                        :caption "The pack source returned no items")))))))
+
 (defun jetpacs-crud--source-unserved-p (view)
-  "Non-nil when VIEW declares a `:SOURCE:' this runtime cannot serve.
-That is a `pack:' source with no live binding (see
-`jetpacs-crud--pack-source-served-p', the S4.3 seam) or an unknown
-future source scheme.  Such a view degrades to a diagnostic body and
-every mutation path fails closed — the app itself still loads."
+  "Non-nil when VIEW's `:SOURCE:' offers no file-backed mutation path.
+True for every `pack:' source (pack views mutate through declared pack
+actions only, never `crud.*' file handlers) and for unknown source
+schemes.  Gates the FAB, exports, reminders, and `--resolve'."
   (let ((source (plist-get view :source)))
     (or (plist-get source :unknown)
-        (and (plist-get source :pack)
-             (not (jetpacs-crud--pack-source-served-p view))))))
+        (plist-get source :pack))))
 
-(defun jetpacs-crud--pack-source-served-p (_view)
-  "Non-nil when VIEW's `pack:' source resolves to a live runtime binding.
-The base runtime serves none; the pack binding layer (jetpacs-crud-pack)
-overrides this when a selected manifest provides the source."
-  nil)
-
-(defun jetpacs-crud--unavailable-source-body (view)
+(defun jetpacs-crud--unavailable-source-body (view &optional reason)
   "The diagnostic placeholder body for a VIEW whose source is unserved.
-The unavailable-view degradation pattern: name what is missing, render a
-valid empty-state, dispatch nothing."
+The unavailable-view degradation pattern: name what is missing (REASON
+when given), render a valid empty-state, dispatch nothing."
   (let* ((source (plist-get view :source))
          (caption
           (cond
            ((plist-get source :pack)
-            (format "This view reads pack:%s/%s — that pack is not available on this device."
-                    (plist-get source :pack) (plist-get source :source)))
+            (format "This view reads pack:%s/%s — %s."
+                    (plist-get source :pack) (plist-get source :source)
+                    (or reason "that pack is not available on this device")))
+           (reason reason)
            (t
             (format "This view's source %s is not understood by this runtime version."
                     (plist-get source :unknown))))))
@@ -1369,19 +1552,26 @@ valid empty-state, dispatch nothing."
       :caption caption))))
 
 (defun jetpacs-crud--build-body (spec view)
-  "Build VIEW's body node, gating vulpea-backed kinds on vulpea's presence.
-A vulpea-backed kind on a device without vulpea renders the placeholder
-rather than calling into an absent index — the bundle still loads and
-lints clean on bare jetpacs-core.  A view whose declared source this
-runtime cannot serve (a pack without a live binding, or an unknown
-source scheme) degrades the same way."
-  (cond
-   ((jetpacs-crud--source-unserved-p view)
-    (jetpacs-crud--unavailable-source-body view))
-   ((and (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
-         (not (jetpacs-crud--vulpea-p)))
-    (jetpacs-crud--needs-vulpea-body (plist-get view :title)))
-   (t (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view))))
+  "Build VIEW's body node, gating each datasource on what the device has.
+A vulpea-backed kind without vulpea renders the placeholder rather than
+calling into an absent index; a `pack:' source renders from its bound
+pack source or degrades with the binding's reason; an unknown source
+scheme always degrades.  The bundle still loads and lints clean on bare
+jetpacs-core in every case."
+  (let ((source (plist-get view :source)))
+    (cond
+     ((plist-get source :unknown)
+      (jetpacs-crud--unavailable-source-body view))
+     ((plist-get source :pack)
+      (let ((binding (jetpacs-crud--pack-binding spec view)))
+        (if (plist-get binding :error)
+            (jetpacs-crud--unavailable-source-body
+             view (plist-get binding :error))
+          (jetpacs-crud--pack-body spec view (plist-get binding :source)))))
+     ((and (memq (plist-get view :kind) jetpacs-crud--vulpea-kinds)
+           (not (jetpacs-crud--vulpea-p)))
+      (jetpacs-crud--needs-vulpea-body (plist-get view :title)))
+     (t (funcall (plist-get (jetpacs-crud--kind-plist view) :body) spec view)))))
 
 (defun jetpacs-crud--build-view (id name snackbar)
   "Build the full scaffold view for app ID's view NAME."
@@ -1911,6 +2101,69 @@ never toggle the wrong item."
            (jetpacs-crud--action-apply-at-point token options))
           (let ((save-silently t)) (save-buffer)))
         (jetpacs-shell-push)))))
+
+(defun jetpacs-crud--pack-action-args (options args)
+  "The argument alist a pack action handler receives.
+Static args come from the declared token's OPTIONS — comma-separated
+`key=value' pairs; anything else binds nothing.  Dynamic args are the
+wire ARGS minus the crud bookkeeping keys, and never override a static
+binding (the document's declaration wins over the tap)."
+  (let ((static
+         (when (and options (not (string-empty-p (string-trim options))))
+           (delq nil
+                 (mapcar
+                  (lambda (tok)
+                    (and (string-match
+                          "\\`\\([a-z][a-z0-9_-]*\\)=\\(.*\\)\\'"
+                          (string-trim tok))
+                         (cons (intern (match-string 1 (string-trim tok)))
+                               (match-string 2 (string-trim tok)))))
+                  (split-string options ",")))))
+        (dynamic
+         (cl-remove-if (lambda (cell)
+                         (memq (car cell) '(app view token options)))
+                       args)))
+    (append static
+            (cl-remove-if (lambda (cell) (assq (car cell) static)) dynamic))))
+
+(defun jetpacs-crud-action-pack-apply (args payload)
+  "Dispatch one declared pack action — the `crud.pack.action' handler.
+Fail-closed, end to end: the token must be one the REGISTERED view's
+`:ACTIONS:' declares (the wire cannot invent one); the pack must resolve
+(`jetpacs-crud--pack-resolve': registered, uncontested, version-gated,
+feature loaded); the action name must be in the manifest's declared
+action list AND registered in `jetpacs-action-handlers'.  Dispatch is a
+registry lookup by that name — never an arbitrary funcall.  Anything
+short of all of it is a clean `user-error' with nothing dispatched."
+  (let* ((appid (alist-get 'app args))
+         (view-name (alist-get 'view args))
+         (token (alist-get 'token args))
+         (options (alist-get 'options args))
+         (spec (or (jetpacs-crud--app appid)
+                   (user-error "Unknown CRUD app: %S" appid)))
+         (view (or (jetpacs-crud--view spec view-name)
+                   (user-error "Unknown view %S in app %s" view-name appid))))
+    (unless (and (stringp token) (string-prefix-p "pack:" token)
+                 (cl-find token
+                          (jetpacs-crud--action-tokens (plist-get view :actions))
+                          :key #'car :test #'equal))
+      (user-error "Action %S is not declared by view %s" token view-name))
+    (let* ((rest (substring token (length "pack:")))
+           (slash (string-search "/" rest))
+           (pack-id (and slash (substring rest 0 slash)))
+           (name (and slash (substring rest (1+ slash)))))
+      (unless (and pack-id name (> (length pack-id) 0) (> (length name) 0))
+        (user-error "Malformed pack action token: %s" token))
+      (pcase-let ((`(,entry . ,reason)
+                   (jetpacs-crud--pack-resolve spec pack-id)))
+        (when reason (user-error "%s" reason))
+        (unless (member name (plist-get entry :actions))
+          (user-error "Pack %s does not declare action %s" pack-id name))
+        (let ((fn (gethash name jetpacs-action-handlers)))
+          (unless fn
+            (user-error "Pack %s's action %s is not registered on this device"
+                        pack-id name))
+          (funcall fn (jetpacs-crud--pack-action-args options args) payload))))))
 
 (defun jetpacs-crud-action-view-share (args _payload)
   "Share a freshly rendered CSV export of the declared app/view."
@@ -2785,6 +3038,7 @@ Re-renders the add-record dialog to reflect the picked value."
   (jetpacs-defaction "crud.view.search-set" #'jetpacs-crud-action-view-search-set)
   (jetpacs-defaction "crud.field.state-sink" #'jetpacs-crud-action-field-state-sink)
   (jetpacs-defaction "crud.action.apply"    #'jetpacs-crud-action-apply)
+  (jetpacs-defaction "crud.pack.action"     #'jetpacs-crud-action-pack-apply)
   (jetpacs-defaction "crud.view.share"      #'jetpacs-crud-action-view-share)
   (jetpacs-defaction "crud.view.import-csv" #'jetpacs-crud-action-view-import-csv)
   (jetpacs-defaction "crud.node.move"       #'jetpacs-crud-action-node-move)

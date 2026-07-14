@@ -100,6 +100,7 @@
          (jetpacs-apps--current nil)
          (jetpacs-apps--fabs nil)
          (jetpacs-crud--apps nil)
+         (jetpacs-crud--packs (make-hash-table :test 'equal))
          (jetpacs--registration-owners (make-hash-table :test 'equal))
          ;; Pushes bump the persisted revision counter; keep the test
          ;; runs out of the real ~/.emacs.d.
@@ -370,6 +371,185 @@ could touch a source file signals `user-error' before doing anything."
       (should-error (jetpacs-crud-action-record-add
                      '((app . "mystery") (view . "feed")) nil)
                     :type 'user-error))))
+
+;; ─── The pack binding layer (S4.3: fake pack, fail-closed paths) ────────────
+
+(defconst jetpacs-crud-tests--toypack-doc
+  (concat "#+JETPACS_APP: toy\n#+JETPACS_APP_FORMAT: 4\n"
+          "#+JETPACS_PACK: toypack 1.0\n\n"
+          "* Things\n:PROPERTIES:\n:KIND: records\n"
+          ":SOURCE: pack:toypack/toypack.things\n"
+          ":SCHEMA: %ITEM(Name) %COUNT(Count)\n:COLTYPES: text number\n"
+          ":FILTER: hello\n"
+          ":ACTIONS: pack:toypack/toy.ping(mode=fast)\n:END:\n")
+  "A records view over a test-local pack source with one pack action.")
+
+(defmacro jetpacs-crud-tests--with-toypack (&rest body)
+  "Run BODY with a live fake pack: a registered source, action, and
+manifest facts, in registries isolated from the suite's real ones.
+Binds `calls' to the list of arg-alists the toy action received."
+  (declare (indent 0) (debug (body)))
+  `(jetpacs-crud-tests--with-clean-state
+     (let ((jetpacs--sources (make-hash-table :test 'equal))
+           (jetpacs--source-cache (make-hash-table :test 'equal))
+           (jetpacs-action-handlers (copy-hash-table jetpacs-action-handlers))
+           (jetpacs--action-catalog (copy-hash-table jetpacs--action-catalog))
+           (calls nil))
+       (ignore calls)
+       (provide 'jetpacs-crud-tests-toypack) ; the pack's loadable feature
+       (jetpacs-defsource "toypack.things"
+         :params '((:name query :type "text"))
+         :fields '((:name "ITEM" :type "text") (:name "COUNT" :type "number")
+                   (:name "ref" :type "ref"))
+         :query (lambda (params)
+                  (list (list (cons "ITEM" (or (alist-get 'query params)
+                                               "a thing"))
+                              (cons "COUNT" "42")
+                              (cons "ref" "toy-1")))))
+       (jetpacs-defaction "toy.ping"
+                          (lambda (args _payload) (push args calls)))
+       (jetpacs-crud-pack-register "toypack"
+                                   :feature 'jetpacs-crud-tests-toypack
+                                   :version "1.0"
+                                   :sources '("toypack.things")
+                                   :actions '("toy.ping"))
+       (jetpacs-crud-tests--with-apps-dir _dir
+         (jetpacs-crud-install "toy" jetpacs-crud-tests--toypack-doc)
+         ,@body))))
+
+(ert-deftest jetpacs-crud-pack-binding-round-trips-render-and-action ()
+  "A registered, available pack renders its source and dispatches its
+action: the full render + action round-trip over a fake pack."
+  (jetpacs-crud-tests--with-toypack
+    (let* ((built (jetpacs-crud--build-view "toy" "things" nil))
+           (json (json-serialize built
+                                 :null-object :null :false-object :false)))
+      (should (null (jetpacs-lint-spec built)))
+      ;; The :FILTER: string bound the source's `query' param.
+      (should (string-match-p "hello" json))
+      (should (string-match-p "42" json))
+      (should (string-match-p "crud.pack.action" json))
+      (should-not (string-match-p "is unavailable" json))
+      ;; Dispatch: declared token + declared action + registered handler.
+      (jetpacs-crud-action-pack-apply
+       '((app . "toy") (view . "things")
+         (token . "pack:toypack/toy.ping") (options . "mode=fast")
+         (ref . "toy-1"))
+       nil)
+      (should (= (length calls) 1))
+      (should (equal (alist-get 'mode (car calls)) "fast"))
+      (should (equal (alist-get 'ref (car calls)) "toy-1"))
+      ;; Bookkeeping keys never reach the pack handler.
+      (should-not (assq 'token (car calls)))
+      (should-not (assq 'app (car calls))))))
+
+(ert-deftest jetpacs-crud-pack-key-value-filter-binds-named-params ()
+  "A key=value :FILTER: binds declared params by name."
+  (jetpacs-crud-tests--with-toypack
+    (let ((view (jetpacs-crud--view (jetpacs-crud--app "toy") "things")))
+      (should (equal (jetpacs-crud--pack-params
+                      (plist-put (copy-sequence view) :filter "query=exact")
+                      "toypack.things")
+                     '((query . "exact"))))
+      ;; A non-declared key falls back to the raw-query rule.
+      (should (equal (jetpacs-crud--pack-params
+                      (plist-put (copy-sequence view) :filter "nope=x")
+                      "toypack.things")
+                     '((query . "nope=x")))))))
+
+(ert-deftest jetpacs-crud-pack-missing-feature-fails-closed ()
+  "An unloadable feature degrades the view and dispatches nothing."
+  (jetpacs-crud-tests--with-toypack
+    ;; Re-point the pack at a feature that can never load.
+    (puthash "toypack"
+             (list :feature 'jetpacs-crud-tests-no-such-feature
+                   :version "1.0"
+                   :sources '("toypack.things") :actions '("toy.ping"))
+             jetpacs-crud--packs)
+    (let* ((built (jetpacs-crud--build-view "toy" "things" nil))
+           (json (json-serialize built
+                                 :null-object :null :false-object :false)))
+      (should (null (jetpacs-lint-spec built)))
+      (should (string-match-p "is unavailable" json))
+      (should (string-match-p "not available" json)))
+    (should-error (jetpacs-crud-action-pack-apply
+                   '((app . "toy") (view . "things")
+                     (token . "pack:toypack/toy.ping") (ref . "toy-1"))
+                   nil)
+                  :type 'user-error)
+    (should (null calls))))
+
+(ert-deftest jetpacs-crud-pack-action-vocabulary-is-closed ()
+  "Dispatch refuses tokens the view doesn't declare and actions the
+manifest doesn't declare — provably nothing runs."
+  (jetpacs-crud-tests--with-toypack
+    ;; A token the registered view never declared (wire-invented).
+    (should-error (jetpacs-crud-action-pack-apply
+                   '((app . "toy") (view . "things")
+                     (token . "pack:toypack/toy.evil"))
+                   nil)
+                  :type 'user-error)
+    ;; An action outside the manifest's declared list: re-register the
+    ;; app with a view declaring it, then dispatch.
+    (jetpacs-crud-install
+     "toy" (replace-regexp-in-string
+            "toy\\.ping(mode=fast)" "toy.undeclared"
+            jetpacs-crud-tests--toypack-doc))
+    (should-error (jetpacs-crud-action-pack-apply
+                   '((app . "toy") (view . "things")
+                     (token . "pack:toypack/toy.undeclared"))
+                   nil)
+                  :type 'user-error)
+    (should (null calls))))
+
+(ert-deftest jetpacs-crud-pack-version-gate-fails-closed ()
+  "A document demanding a newer pack than installed degrades."
+  (jetpacs-crud-tests--with-toypack
+    (jetpacs-crud-install
+     "toy" (replace-regexp-in-string
+            "toypack 1\\.0" "toypack 2.0" jetpacs-crud-tests--toypack-doc))
+    (let ((json (json-serialize
+                 (jetpacs-crud--build-view "toy" "things" nil)
+                 :null-object :null :false-object :false)))
+      (should (string-match-p "is unavailable" json))
+      (should (string-match-p "needs pack" json)))
+    (should-error (jetpacs-crud-action-pack-apply
+                   '((app . "toy") (view . "things")
+                     (token . "pack:toypack/toy.ping") (options . "mode=fast"))
+                   nil)
+                  :type 'user-error)
+    (should (null calls))))
+
+(ert-deftest jetpacs-crud-pack-duplicate-id-fails-closed ()
+  "Two different manifests claiming one pack id serve nothing."
+  (jetpacs-crud-tests--with-toypack
+    (jetpacs-crud-pack-register "toypack"
+                                :feature 'other-feature :version "9.9"
+                                :sources '("other.things") :actions nil)
+    (let ((json (json-serialize
+                 (jetpacs-crud--build-view "toy" "things" nil)
+                 :null-object :null :false-object :false)))
+      (should (string-match-p "is unavailable" json))
+      (should (string-match-p "claimed by two" json)))
+    (should-error (jetpacs-crud-action-pack-apply
+                   '((app . "toy") (view . "things")
+                     (token . "pack:toypack/toy.ping") (options . "mode=fast"))
+                   nil)
+                  :type 'user-error)
+    (should (null calls))))
+
+(ert-deftest jetpacs-crud-pack-register-is-idempotent-for-identical-facts ()
+  "Re-registering the exact same manifest (a bundle reload) stays served."
+  (jetpacs-crud-tests--with-toypack
+    (jetpacs-crud-pack-register "toypack"
+                                :feature 'jetpacs-crud-tests-toypack
+                                :version "1.0"
+                                :sources '("toypack.things")
+                                :actions '("toy.ping"))
+    (should-not (string-match-p
+                 "is unavailable"
+                 (json-serialize (jetpacs-crud--build-view "toy" "things" nil)
+                                 :null-object :null :false-object :false)))))
 
 (ert-deftest jetpacs-crud-parse-depends ()
   "A valid `#+JETPACS_DEPENDS:' parses to the :depends package list."
