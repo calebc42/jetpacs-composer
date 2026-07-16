@@ -453,9 +453,13 @@ address by their stable `:ID:', so `:pos'/`:done' are dropped here."
 (declare-function vulpea-parse-ctx-file-node "vulpea-db-extract" (ctx))
 (declare-function emacsql "emacsql" (db sql &rest args))
 
-(defconst jetpacs-crud-vulpea--extractor-version 1
+(defconst jetpacs-crud-vulpea--extractor-version 2
   "Schema/behaviour version of the jetpacs tables+checklist extractor.
-Bump to force a rebuild of the plugin tables on the next sync.")
+Recorded in vulpea's schema-registry at registration.  v2 declares
+`:requires-ast' (v1 silently indexed nothing under vulpea 2.6, which
+hands undeclared AST readers a nil AST).  Note vulpea only consults
+this for schema creation — a bump does NOT re-extract already-indexed
+files; those pick up the fix on their next sync.")
 
 (defvar jetpacs-crud-vulpea--extractor-registered nil
   "Non-nil once the jetpacs extractor is registered in this session.")
@@ -565,19 +569,33 @@ call repeatedly (e.g. after a refresh-hook re-probe)."
   (when (and (fboundp 'vulpea-db-register-extractor)
              (not jetpacs-crud-vulpea--extractor-registered))
     (vulpea-db-register-extractor
-     (make-vulpea-extractor
-      :name 'jetpacs-crud
-      :version jetpacs-crud-vulpea--extractor-version
-      :priority 100
-      :schema '((jetpacs-tables
-                 [(note-id :not-null) heading tbl-index begin ncols rows-json]
-                 (:foreign-key [note-id] :references notes [id]
-                  :on-delete :cascade))
-                (jetpacs-checklist
-                 [(note-id :not-null) heading ordinal state item-text pos]
-                 (:foreign-key [note-id] :references notes [id]
-                  :on-delete :cascade)))
-      :extract-fn #'jetpacs-crud-vulpea--extract))
+     (apply #'make-vulpea-extractor
+            :name 'jetpacs-crud
+            :version jetpacs-crud-vulpea--extractor-version
+            :priority 100
+            :schema '((jetpacs-tables
+                       [(note-id :not-null) heading tbl-index begin ncols rows-json]
+                       (:foreign-key [note-id] :references notes [id]
+                        :on-delete :cascade))
+                      (jetpacs-checklist
+                       [(note-id :not-null) heading ordinal state item-text pos]
+                       (:foreign-key [note-id] :references notes [id]
+                        :on-delete :cascade)))
+            :extract-fn #'jetpacs-crud-vulpea--extract
+            ;; `jetpacs-crud-vulpea--extract' maps the AST (tables,
+            ;; checkbox items, table-cell objects).  vulpea 2.6 hands an
+            ;; undeclared AST reader a context whose AST slot is nil —
+            ;; the table/checklist kinds would silently index nothing —
+            ;; so the declaration is mandatory there.  Its cost is real:
+            ;; `:requires-ast t' forces the whole sync to parse at
+            ;; object granularity (2-3x slower than element granularity)
+            ;; and keeps this extractor out of vulpea's async worker (an
+            ;; AST cannot cross the process boundary).  Probed because
+            ;; pre-2.6 vulpea has no such slot (its AST is always
+            ;; populated, so omitting it is correct there) and a
+            ;; cl-defstruct constructor signals on unknown keywords.
+            (when (fboundp 'vulpea-extractor-requires-ast-p)
+              '(:requires-ast t))))
     (setq jetpacs-crud-vulpea--extractor-registered t)))
 
 (defun jetpacs-crud-vulpea--file-note-id (file)
