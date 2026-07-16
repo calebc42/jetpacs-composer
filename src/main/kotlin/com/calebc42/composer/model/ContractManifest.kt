@@ -6,7 +6,10 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class Contract(
-    val api_version: String,
+    // contract_format 3 (the eabp extraction) renamed api_version to
+    // reference_api_version: informational — the elisp reference client's
+    // Tier-1 surface at generation time, not a wire number.
+    val reference_api_version: String,
     val protocol_version: Int,
     val node_types: List<String>,
     val action_hook_keys: List<String>,
