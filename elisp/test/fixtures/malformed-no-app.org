@@ -1,7 +1,0 @@
-#+TITLE: Not an app
-
-* Just a heading
-
-| A | B |
-|---+---|
-| 1 | 2 |

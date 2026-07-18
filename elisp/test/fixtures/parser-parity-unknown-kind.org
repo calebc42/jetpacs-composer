@@ -1,7 +1,0 @@
-#+JETPACS_APP: parser-parity-kind
-#+JETPACS_APP_FORMAT: 2
-
-* Unknown
-:PROPERTIES:
-:KIND: future-dashboard
-:END:

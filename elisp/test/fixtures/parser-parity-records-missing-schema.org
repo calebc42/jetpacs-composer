@@ -1,7 +1,0 @@
-#+JETPACS_APP: parser-parity-records
-#+JETPACS_APP_FORMAT: 2
-
-* Records
-:PROPERTIES:
-:KIND: records
-:END:
